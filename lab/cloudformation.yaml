@@ -83,7 +83,7 @@ Resources:
               go build -o /usr/local/bin/awsportal ./cmd/awsportal
               go build -o /usr/local/bin/awsportal-admin ./cmd/awsportal-admin
               PASS="${LabPassword}"
-              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role portal_admin > /tmp/admin.txt
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role user > /tmp/admin.txt\n              sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET role=\x27portal_admin\x27, totp_secret=\x27${LabTOTPSecret}\x27 WHERE username=\x27labadmin\x27;"
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host 127.0.0.1
               chown -R awsportal:awsportal /var/lib/awsportal
               cat >/var/lib/awsportal/lab-login.txt <<EOF
