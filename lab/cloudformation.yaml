@@ -5,6 +5,7 @@ Parameters:
   ProjectTag: {Type: String, Default: awsportal-lab}
   LabPassword: {Type: String, NoEcho: true, MinLength: 12}
   LabTOTPSecret: {Type: String, NoEcho: true, MinLength: 16}
+  InstanceType: {Type: String, Default: t4g.micro}
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -49,7 +50,7 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id}}'
-      InstanceType: t4g.nano
+      InstanceType: {Ref: InstanceType}
       SubnetId: {Ref: Subnet}
       SecurityGroupIds: [{Ref: TestSG}]
       MetadataOptions: {HttpTokens: required}
@@ -60,7 +61,7 @@ Resources:
     DependsOn: [TestInstance]
     Properties:
       ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id}}'
-      InstanceType: t4g.micro
+      InstanceType: {Ref: InstanceType}
       IamInstanceProfile: {Ref: PortalProfile}
       SubnetId: {Ref: Subnet}
       SecurityGroupIds: [{Ref: PortalSG}]
