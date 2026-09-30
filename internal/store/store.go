@@ -4,6 +4,7 @@ import (
  "context"
  "database/sql"
  "time"
+ "fmt"
  _ "modernc.org/sqlite"
 )
 
@@ -11,6 +12,7 @@ type Store struct{ DB *sql.DB }
 type User struct{ ID int64; Username, PasswordHash, Role, TOTPSecret string; Enabled, MustChangePassword bool; TempPasswordExpires int64 }
 type Instance struct{ ID int64; InstanceID, Name, DCVHost, DCVSessionID string; CanControl bool }
 type Schedule struct{ ID, InstanceDBID, OwnerUserID int64; Action, TimeHHMM, Weekdays, Timezone string; Enabled bool }
+type MFADevice struct{ ID int64; Name, Secret string; Verified bool; CreatedAt string }
 
 func Open(path string)(*Store,error){ db,e:=sql.Open("sqlite",path); if e!=nil{return nil,e}; db.SetMaxOpenConns(1); return &Store{DB:db},nil }
 func(s *Store)Close()error{return s.DB.Close()}
@@ -44,6 +46,7 @@ CREATE TABLE IF NOT EXISTS instance_users(instance_id INTEGER NOT NULL REFERENCE
 CREATE TABLE IF NOT EXISTS instance_groups(instance_id INTEGER NOT NULL REFERENCES instances(id),group_id INTEGER NOT NULL REFERENCES groups(id),can_control INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(instance_id,group_id));
 CREATE TABLE IF NOT EXISTS schedules(id INTEGER PRIMARY KEY,instance_id INTEGER NOT NULL REFERENCES instances(id),owner_user_id INTEGER NOT NULL REFERENCES users(id),action TEXT NOT NULL CHECK(action IN ('start','stop')),time_hhmm TEXT NOT NULL,weekdays TEXT NOT NULL DEFAULT '1,2,3,4,5',timezone TEXT NOT NULL DEFAULT 'Asia/Tokyo',enabled INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS dcv_tokens(id INTEGER PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,user_id INTEGER NOT NULL REFERENCES users(id),instance_id INTEGER NOT NULL REFERENCES instances(id),session_id TEXT NOT NULL,expires_at INTEGER NOT NULL,used_at INTEGER);
+CREATE TABLE IF NOT EXISTS mfa_devices(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,name TEXT NOT NULL,secret TEXT NOT NULL,verified INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(user_id,name));
 CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY,at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,actor TEXT NOT NULL,action TEXT NOT NULL,target TEXT,result TEXT NOT NULL,detail TEXT);`
 
 func(s *Store)IssueDCVToken(ctx context.Context,u User,awsID,tokenHash string,expires time.Time)(Instance,error){var x Instance;err:=s.DB.QueryRowContext(ctx,"SELECT id,instance_id,name,dcv_host,dcv_session_id FROM instances WHERE instance_id=? AND enabled=1",awsID).Scan(&x.ID,&x.InstanceID,&x.Name,&x.DCVHost,&x.DCVSessionID);if err!=nil{return x,err};_,err=s.DB.ExecContext(ctx,"INSERT INTO dcv_tokens(token_hash,user_id,instance_id,session_id,expires_at) VALUES(?,?,?,?,?)",tokenHash,u.ID,x.ID,x.DCVSessionID,expires.Unix());return x,err}
@@ -53,3 +56,10 @@ func(s *Store)ListResettableUsers(ctx context.Context)([]User,error){rows,e:=s.D
 func(s *Store)SetTemporaryPassword(ctx context.Context,username,hash string,expires time.Time)error{res,e:=s.DB.ExecContext(ctx,"UPDATE users SET password_hash=?,must_change_password=1,temp_password_expires=? WHERE username=? AND enabled=1 AND role!='portal_admin'",hash,expires.Unix(),username);if e!=nil{return e};n,_:=res.RowsAffected();if n!=1{return sql.ErrNoRows};return nil}
 func(s *Store)ChangePassword(ctx context.Context,userID int64,hash string)error{_,e:=s.DB.ExecContext(ctx,"UPDATE users SET password_hash=?,must_change_password=0,temp_password_expires=0 WHERE id=?",hash,userID);return e}
 func(s *Store)BreakGlassResetAdmin(ctx context.Context,username,hash,totpSecret string)error{res,e:=s.DB.ExecContext(ctx,"UPDATE users SET password_hash=?,totp_secret=?,must_change_password=1,temp_password_expires=0 WHERE username=? AND role='portal_admin'",hash,totpSecret,username);if e!=nil{return e};n,_:=res.RowsAffected();if n!=1{return sql.ErrNoRows};return nil}
+
+func(s *Store)MFADevices(ctx context.Context,userID int64)([]MFADevice,error){rows,e:=s.DB.QueryContext(ctx,"SELECT id,name,secret,verified,created_at FROM mfa_devices WHERE user_id=? ORDER BY created_at",userID);if e!=nil{return nil,e};defer rows.Close();var out []MFADevice;for rows.Next(){var d MFADevice;var v int;if e=rows.Scan(&d.ID,&d.Name,&d.Secret,&v,&d.CreatedAt);e!=nil{return nil,e};d.Verified=v==1;out=append(out,d)};return out,rows.Err()}
+func(s *Store)AddMFADevice(ctx context.Context,userID int64,name,secret string)(int64,error){var n int;if e:=s.DB.QueryRowContext(ctx,"SELECT COUNT(*) FROM mfa_devices WHERE user_id=? AND verified=1",userID).Scan(&n);e!=nil{return 0,e};if n>=3{return 0,fmt.Errorf("MFA device limit reached")};res,e:=s.DB.ExecContext(ctx,"INSERT INTO mfa_devices(user_id,name,secret,verified) VALUES(?,?,?,0)",userID,name,secret);if e!=nil{return 0,e};return res.LastInsertId()}
+func(s *Store)MFADevice(ctx context.Context,userID,id int64)(MFADevice,error){var d MFADevice;var v int;e:=s.DB.QueryRowContext(ctx,"SELECT id,name,secret,verified,created_at FROM mfa_devices WHERE id=? AND user_id=?",id,userID).Scan(&d.ID,&d.Name,&d.Secret,&v,&d.CreatedAt);d.Verified=v==1;return d,e}
+func(s *Store)VerifyMFADevice(ctx context.Context,userID,id int64)error{res,e:=s.DB.ExecContext(ctx,"UPDATE mfa_devices SET verified=1 WHERE id=? AND user_id=?",id,userID);if e!=nil{return e};n,_:=res.RowsAffected();if n!=1{return sql.ErrNoRows};return nil}
+func(s *Store)DeleteMFADevice(ctx context.Context,userID,id int64)error{res,e:=s.DB.ExecContext(ctx,"DELETE FROM mfa_devices WHERE id=? AND user_id=?",id,userID);if e!=nil{return e};n,_:=res.RowsAffected();if n!=1{return sql.ErrNoRows};return nil}
+func(s *Store)VerifyMFASecrets(ctx context.Context,userID int64)([]string,error){rows,e:=s.DB.QueryContext(ctx,"SELECT secret FROM mfa_devices WHERE user_id=? AND verified=1",userID);if e!=nil{return nil,e};defer rows.Close();var out []string;for rows.Next(){var x string;if e=rows.Scan(&x);e!=nil{return nil,e};out=append(out,x)};return out,rows.Err()}
