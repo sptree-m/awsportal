@@ -13,7 +13,8 @@ type session struct{User store.User;Expires time.Time}
 type app struct{db *store.Store;ec2 awsapi.Controller;tpl *template.Template;mu sync.Mutex;sessions map[string]session}
 func main(){ctx:=context.Background();db,e:=store.Open(env("AWSPORTAL_DB","./awsportal.db"));if e!=nil{log.Fatal(e)};defer db.Close();if e=db.Migrate(ctx);e!=nil{log.Fatal(e)}
  cfg,e:=config.LoadDefaultConfig(ctx);if e!=nil{log.Fatal(e)};a:=&app{db:db,ec2:awsapi.New(cfg),tpl:template.Must(template.ParseFS(web,"web/*.html")),sessions:map[string]session{}}
- go a.scheduler(ctx)\n mux:=http.NewServeMux();mux.HandleFunc("GET /healthz",health);mux.HandleFunc("GET /login",a.loginPage);mux.HandleFunc("POST /login",a.login);mux.HandleFunc("POST /logout",a.logout);mux.HandleFunc("GET /",a.require(a.dashboard));mux.HandleFunc("POST /instance/{id}/{action}",a.require(a.instanceAction));mux.HandleFunc("POST /schedule",a.require(a.addSchedule));mux.HandleFunc("GET /dcv/{id}",a.require(a.dcv));mux.Handle("GET /static/",http.FileServer(http.FS(web)))
+ go a.scheduler(ctx)
+ mux:=http.NewServeMux();mux.HandleFunc("GET /healthz",health);mux.HandleFunc("GET /login",a.loginPage);mux.HandleFunc("POST /login",a.login);mux.HandleFunc("POST /logout",a.logout);mux.HandleFunc("GET /",a.require(a.dashboard));mux.HandleFunc("POST /instance/{id}/{action}",a.require(a.instanceAction));mux.HandleFunc("POST /schedule",a.require(a.addSchedule));mux.HandleFunc("GET /dcv/{id}",a.require(a.dcv));mux.Handle("GET /static/",http.FileServer(http.FS(web)))
  s:=&http.Server{Addr:env("AWSPORTAL_ADDR",":8080"),Handler:headers(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second};log.Printf("listen %s",s.Addr);log.Fatal(s.ListenAndServe())}
 func health(w http.ResponseWriter,_ *http.Request){w.Write([]byte("ok"))}
 func(a *app)loginPage(w http.ResponseWriter,r *http.Request){a.tpl.ExecuteTemplate(w,"login.html",nil)}
