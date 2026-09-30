@@ -6,6 +6,7 @@ Parameters:
   LabPassword: {Type: String, NoEcho: true, MinLength: 12}
   LabTOTPSecret: {Type: String, NoEcho: true, MinLength: 16}
   InstanceType: {Type: String, Default: t4g.micro}
+  BinaryURL: {Type: String}
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -75,20 +76,17 @@ Resources:
               #!/bin/bash
               set -euxo pipefail
               export DEBIAN_FRONTEND=noninteractive
-              export GOPATH=/root/go
-              export GOMODCACHE=/root/go/pkg/mod
-              export GOCACHE=/root/.cache/go-build
-              mkdir -p "$GOMODCACHE" "$GOCACHE"
               apt-get update
-              apt-get install -y git golang-go sqlite3
+              apt-get install -y curl sqlite3 ca-certificates
               useradd --system --home /var/lib/awsportal --create-home awsportal
-              cd /opt
-              git clone --depth 1 https://github.com/sptree-m/awsportal.git
-              cd awsportal
-              go build -o /usr/local/bin/awsportal ./cmd/awsportal
-              go build -o /usr/local/bin/awsportal-admin ./cmd/awsportal-admin
+              mkdir -p /tmp/awsportal-bin
+              curl -fL --retry 5 --retry-delay 2 "${BinaryURL}" -o /tmp/awsportal.tar.gz
+              tar -xzf /tmp/awsportal.tar.gz -C /tmp/awsportal-bin
+              install -m 0755 /tmp/awsportal-bin/awsportal /usr/local/bin/awsportal
+              install -m 0755 /tmp/awsportal-bin/awsportal-admin /usr/local/bin/awsportal-admin
               PASS="${LabPassword}"
-              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role user > /tmp/admin.txt\n              sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET role=\x27portal_admin\x27, totp_secret=\x27${LabTOTPSecret}\x27 WHERE username=\x27labadmin\x27;"
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role user > /tmp/admin.txt
+              sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET role='portal_admin', totp_secret='${LabTOTPSecret}' WHERE username='labadmin';"
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host 127.0.0.1
               chown -R awsportal:awsportal /var/lib/awsportal
               cat >/var/lib/awsportal/lab-login.txt <<EOF
@@ -114,7 +112,7 @@ Resources:
               UNIT
               systemctl daemon-reload
               systemctl enable --now awsportal
-            - {TestId: {Ref: TestInstance}, LabPassword: {Ref: LabPassword}, LabTOTPSecret: {Ref: LabTOTPSecret}}
+            - {TestId: {Ref: TestInstance}, LabPassword: {Ref: LabPassword}, LabTOTPSecret: {Ref: LabTOTPSecret}, BinaryURL: {Ref: BinaryURL}}
 Outputs:
   PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
   PortalInstanceId: {Value: {Ref: PortalInstance}}
