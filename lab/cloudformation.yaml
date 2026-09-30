@@ -75,6 +75,10 @@ Resources:
               #!/bin/bash
               set -euxo pipefail
               export DEBIAN_FRONTEND=noninteractive
+              export GOPATH=/root/go
+              export GOMODCACHE=/root/go/pkg/mod
+              export GOCACHE=/root/.cache/go-build
+              mkdir -p "$GOMODCACHE" "$GOCACHE"
               apt-get update
               apt-get install -y git golang-go sqlite3
               useradd --system --home /var/lib/awsportal --create-home awsportal
