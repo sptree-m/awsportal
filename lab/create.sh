@@ -9,10 +9,13 @@ if [[ -z "$CIDR" ]]; then
   IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '\n')"
   CIDR="$IP/32"
 fi
+TYPE="${INSTANCE_TYPE:-$(aws ec2 describe-instance-types --region "$REGION" --filters Name=free-tier-eligible,Values=true Name=processor-info.supported-architecture,Values=arm64 --query "InstanceTypes[?starts_with(InstanceType, \x27t4g.\x27)].InstanceType | sort(@) | [0]" --output text)}"
+if [[ -z "$TYPE" || "$TYPE" == "None" ]]; then echo "No Free Tier eligible ARM64 instance type found in $REGION"; exit 1; fi
+echo "EC2 instance type: $TYPE"
 PASS="Lab-$(openssl rand -hex 12)-A1!"
 TOTP="$(openssl rand 20 | base32 | tr -d "=\\n")"
 echo "[2/4] deploy $STACK in $REGION; browser=$CIDR"
-aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP"
+aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE"
 echo "[3/4] outputs"
 aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs' --output table
 echo "[4/4] login"
