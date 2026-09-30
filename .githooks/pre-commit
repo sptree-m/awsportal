@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo '=== awsportal: コミット前必須テスト ==='
+./scripts/test-all.sh
+echo '=== 全テスト成功: コミットを許可します ==='

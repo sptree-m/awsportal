@@ -1,0 +1,4 @@
+# Validate against the installed Amazon DCV version before production rollout.
+[permissions]
+%any% allow display keyboard mouse pointer audio-out
+%any% deny file-download file-upload clipboard-copy clipboard-paste printer usb screenshot
