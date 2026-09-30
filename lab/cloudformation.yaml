@@ -4,6 +4,7 @@ Parameters:
   AllowedCidr: {Type: String}
   ProjectTag: {Type: String, Default: awsportal-lab}
   LabPassword: {Type: String, NoEcho: true, MinLength: 12}
+  LabTOTPSecret: {Type: String, NoEcho: true, MinLength: 16}
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -74,7 +75,7 @@ Resources:
               set -euxo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
-              apt-get install -y git golang-go awscli
+              apt-get install -y git golang-go sqlite3
               useradd --system --home /var/lib/awsportal --create-home awsportal
               cd /opt
               git clone --depth 1 https://github.com/sptree-m/awsportal.git
@@ -108,7 +109,7 @@ Resources:
               UNIT
               systemctl daemon-reload
               systemctl enable --now awsportal
-            - {TestId: {Ref: TestInstance}, LabPassword: {Ref: LabPassword}}
+            - {TestId: {Ref: TestInstance}, LabPassword: {Ref: LabPassword}, LabTOTPSecret: {Ref: LabTOTPSecret}}
 Outputs:
   PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
   PortalInstanceId: {Value: {Ref: PortalInstance}}
