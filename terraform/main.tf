@@ -76,6 +76,12 @@ resource "aws_iam_role_policy" "portal" {
         Resource = "*"
       },
       {
+        Sid      = "ReadCostExplorer"
+        Effect   = "Allow"
+        Action   = ["ce:GetCostAndUsage"]
+        Resource = "*"
+      },
+      {
         Sid      = "ControlManagedInstances"
         Effect   = "Allow"
         Action   = ["ec2:StartInstances", "ec2:StopInstances"]
