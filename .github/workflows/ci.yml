@@ -9,9 +9,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: {go-version: '1.23.x'}
+        with:
+          go-version: '1.23.x'
+          cache: false
       - uses: hashicorp/setup-terraform@v3
-      - run: ./scripts/test-all.sh
+      - run: bash scripts/test-all.sh
 
   t4g-micro-arm64:
     name: t4g-micro-arm64
@@ -19,6 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: {go-version: '1.23.x'}
+        with:
+          go-version: '1.23.x'
+          cache: false
       - name: t4g.micro相当リソース制約テスト
-        run: ./scripts/test-t4g-micro.sh
+        run: bash scripts/test-t4g-micro.sh

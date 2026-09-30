@@ -1,33 +1,31 @@
 package main
 
-import (
- "context"
- "embed"
- "html/template"
- "log"
- "net/http"
- "os"
- "time"
-
+import(
+ "context";"crypto/rand";"embed";"encoding/base64";"html/template";"log";"net/http";"os";"strings";"sync";"time";"fmt";"strconv"
+ "github.com/aws/aws-sdk-go-v2/config"
+ "github.com/sptree-m/awsportal/internal/auth"
+ awsapi "github.com/sptree-m/awsportal/internal/aws"
  "github.com/sptree-m/awsportal/internal/store"
 )
-
 //go:embed web/*
 var web embed.FS
-
-type app struct{ db *store.Store; tpl *template.Template }
-
-func main() {
- db, err := store.Open(env("AWSPORTAL_DB", "./awsportal.db")); if err != nil { log.Fatal(err) }; defer db.Close()
- if err := db.Migrate(context.Background()); err != nil { log.Fatal(err) }
- tpl := template.Must(template.ParseFS(web, "web/*.html"))
- a := &app{db: db, tpl: tpl}
- mux := http.NewServeMux()
- mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request){ w.WriteHeader(http.StatusOK); _, _ = w.Write([]byte("ok")) })
- mux.HandleFunc("GET /", a.dashboard)
- s := &http.Server{Addr: env("AWSPORTAL_ADDR", ":8080"), Handler: securityHeaders(mux), ReadHeaderTimeout: 5*time.Second, IdleTimeout: 60*time.Second}
- log.Printf("awsportal listening on %s", s.Addr); log.Fatal(s.ListenAndServe())
-}
-func (a *app) dashboard(w http.ResponseWriter, r *http.Request){ _ = a.tpl.ExecuteTemplate(w, "index.html", map[string]any{"Title":"Infrastructure Portal"}) }
-func securityHeaders(next http.Handler) http.Handler { return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){ w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'"); w.Header().Set("X-Content-Type-Options","nosniff"); w.Header().Set("Referrer-Policy","no-referrer"); next.ServeHTTP(w,r) }) }
-func env(k,d string) string { if v:=os.Getenv(k); v!="" { return v }; return d }
+type session struct{User store.User;Expires time.Time}
+type app struct{db *store.Store;ec2 awsapi.Controller;tpl *template.Template;mu sync.Mutex;sessions map[string]session}
+func main(){ctx:=context.Background();db,e:=store.Open(env("AWSPORTAL_DB","./awsportal.db"));if e!=nil{log.Fatal(e)};defer db.Close();if e=db.Migrate(ctx);e!=nil{log.Fatal(e)}
+ cfg,e:=config.LoadDefaultConfig(ctx);if e!=nil{log.Fatal(e)};a:=&app{db:db,ec2:awsapi.New(cfg),tpl:template.Must(template.ParseFS(web,"web/*.html")),sessions:map[string]session{}}
+ go a.scheduler(ctx)
+ mux:=http.NewServeMux();mux.HandleFunc("GET /healthz",health);mux.HandleFunc("GET /login",a.loginPage);mux.HandleFunc("POST /login",a.login);mux.HandleFunc("POST /logout",a.logout);mux.HandleFunc("GET /",a.require(a.dashboard));mux.HandleFunc("POST /instance/{id}/{action}",a.require(a.instanceAction));mux.HandleFunc("POST /schedule",a.require(a.addSchedule));mux.HandleFunc("GET /dcv/{id}",a.require(a.dcv));mux.Handle("GET /static/",http.FileServer(http.FS(web)))
+ s:=&http.Server{Addr:env("AWSPORTAL_ADDR",":8080"),Handler:headers(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second};log.Printf("listen %s",s.Addr);log.Fatal(s.ListenAndServe())}
+func health(w http.ResponseWriter,_ *http.Request){w.Write([]byte("ok"))}
+func(a *app)loginPage(w http.ResponseWriter,r *http.Request){a.tpl.ExecuteTemplate(w,"login.html",nil)}
+func(a *app)login(w http.ResponseWriter,r *http.Request){_ = r.ParseForm();u,e:=a.db.UserByName(r.Context(),r.FormValue("username"));if e!=nil||!u.Enabled||!auth.CheckPassword(u.PasswordHash,r.FormValue("password"))||(u.Role=="portal_admin"&&!auth.VerifyTOTP(u.TOTPSecret,r.FormValue("totp"))){a.db.Audit(r.Context(),r.FormValue("username"),"login","", "deny","");http.Error(w,"認証に失敗しました",http.StatusUnauthorized);return};b:=make([]byte,32);rand.Read(b);tok:=base64.RawURLEncoding.EncodeToString(b);a.mu.Lock();a.sessions[tok]=session{u,time.Now().Add(8*time.Hour)};a.mu.Unlock();http.SetCookie(w,&http.Cookie{Name:"awsportal_session",Value:tok,Path:"/",HttpOnly:true,Secure:env("AWSPORTAL_COOKIE_SECURE","1")=="1",SameSite:http.SameSiteStrictMode,MaxAge:28800});a.db.Audit(r.Context(),u.Username,"login","","ok","");http.Redirect(w,r,"/",http.StatusSeeOther)}
+func(a *app)logout(w http.ResponseWriter,r *http.Request){if c,e:=r.Cookie("awsportal_session");e==nil{a.mu.Lock();delete(a.sessions,c.Value);a.mu.Unlock()};http.SetCookie(w,&http.Cookie{Name:"awsportal_session",Path:"/",MaxAge:-1});http.Redirect(w,r,"/login",http.StatusSeeOther)}
+func(a *app)require(next http.HandlerFunc)http.HandlerFunc{return func(w http.ResponseWriter,r *http.Request){c,e:=r.Cookie("awsportal_session");if e!=nil{http.Redirect(w,r,"/login",303);return};a.mu.Lock();s,ok:=a.sessions[c.Value];a.mu.Unlock();if !ok||time.Now().After(s.Expires){http.Redirect(w,r,"/login",303);return};next(w,r.WithContext(context.WithValue(r.Context(),"user",s.User)))}}
+func(a *app)dashboard(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);xs,e:=a.db.VisibleInstances(r.Context(),u);if e!=nil{http.Error(w,"DB error",500);return};a.tpl.ExecuteTemplate(w,"index.html",map[string]any{"User":u,"Instances":xs})}
+func(a *app)instanceAction(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id,act:=r.PathValue("id"),r.PathValue("action");if !a.db.CanControl(r.Context(),u,id){http.Error(w,"権限がありません",403);return};var e error;if act=="start"{e=a.ec2.Start(r.Context(),id)}else if act=="stop"{e=a.ec2.Stop(r.Context(),id)}else{http.Error(w,"invalid action",400);return};res:="ok";if e!=nil{res="error"};a.db.Audit(r.Context(),u.Username,"ec2."+act,id,res,errorText(e));if e!=nil{http.Error(w,"AWS操作に失敗しました",502);return};http.Redirect(w,r,"/",303)}
+func(a *app)addSchedule(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);_ = r.ParseForm();id:=r.FormValue("instance_id");if !a.db.CanControl(r.Context(),u,id){http.Error(w,"権限がありません",403);return};if e:=a.db.AddSchedule(r.Context(),u,id,r.FormValue("action"),r.FormValue("time"),r.FormValue("weekdays"),"Asia/Tokyo");e!=nil{http.Error(w,"登録失敗",400);return};a.db.Audit(r.Context(),u.Username,"schedule.add",id,"ok","");http.Redirect(w,r,"/",303)}
+func(a *app)dcv(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id:=r.PathValue("id");xs,_:=a.db.VisibleInstances(r.Context(),u);for _,x:=range xs{if x.InstanceID==id{a.db.Audit(r.Context(),u.Username,"dcv.connect",id,"ok","");http.Redirect(w,r,"https://"+x.DCVHost+":8443/",302);return}};http.Error(w,"権限がありません",403)}
+func(a *app)scheduler(ctx context.Context){tick:=time.NewTicker(30*time.Second);defer tick.Stop();seen:=map[string]string{};for{select{case <-ctx.Done():return;case now:=<-tick.C:xs,e:=a.db.DueSchedules(ctx,now);if e!=nil{log.Printf("scheduler: %v",e);continue};for _,x:=range xs{loc,e:=time.LoadLocation(x.Timezone);if e!=nil{continue};n:=now.In(loc);wd:=int(n.Weekday());if wd==0{wd=7};if !containsCSV(x.Weekdays,wd)||n.Format("15:04")!=x.TimeHHMM{continue};key:=fmt.Sprintf("%d:%s",x.ID,n.Format("2006-01-02 15:04"));if seen[key]!=""{continue};var runErr error;if x.Action=="start"{runErr=a.ec2.Start(ctx,x.InstanceID)}else{runErr=a.ec2.Stop(ctx,x.InstanceID)};res:="ok";if runErr!=nil{res="error"};a.db.Audit(ctx,"scheduler","ec2."+x.Action,x.InstanceID,res,errorText(runErr));seen[key]="1"};if len(seen)>1000{seen=map[string]string{}}}}}
+func containsCSV(s string,n int)bool{want:=strconv.Itoa(n);for _,v:=range strings.Split(s,","){if strings.TrimSpace(v)==want{return true}};return false}
+func headers(n http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Header().Set("Content-Security-Policy","default-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'");w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("Referrer-Policy","no-referrer");w.Header().Set("Cache-Control","no-store");n.ServeHTTP(w,r)})}
+func env(k,d string)string{if v:=os.Getenv(k);v!=""{return v};return d};func errorText(e error)string{if e==nil{return ""};return e.Error()};var _=strings.TrimSpace
