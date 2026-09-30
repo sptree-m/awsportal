@@ -71,7 +71,9 @@ Resources:
       Tags: [{Key: Name, Value: awsportal-lab-portal}, {Key: Project, Value: {Ref: ProjectTag}}, {Key: awsportal-user, Value: portal}]
       UserData:
         Fn::Base64:
-          Fn::Sub: |
+          Fn::Sub:
+            - |
+
             #!/bin/bash
             set -euxo pipefail
             export DEBIAN_FRONTEND=noninteractive
@@ -106,6 +108,7 @@ Resources:
             UNIT
             systemctl daemon-reload
             systemctl enable --now awsportal
+            - {TestId: {Ref: TestInstance}, Region: {Ref: 'AWS::Region'}}
 Outputs:
   PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
   PortalInstanceId: {Value: {Ref: PortalInstance}}
