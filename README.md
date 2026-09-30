@@ -12,6 +12,14 @@ AWS上のEC2/DCV環境を管理する、イントラネット向け超軽量ポ�
 - 一般ユーザーのDCVではファイル転送、クリップボード、印刷、USB等を制限します。
 - 管理者によるデータ持ち出しは別権限とし、監査ログを残します。
 
+## UI設計原則
+- 超軽量・高速を最優先し、Go SSR + HTML + 自前CSSを基本とします。
+- Bootstrap、Tailwind、React、Vue、jQuery、Google Fonts、CDNなどの外部UIリソースを使用しません。
+- 1366x768のPC、小さいブラウザウィンドウ、狭幅画面でも主要操作が画面外へ消えないことを必須とします。
+- 横長の一覧はページ全体ではなく一覧領域だけを横スクロール可能にします。
+- 見栄えのためだけのJavaScriptや外部ダウンロード依存を追加しません。
+- CIでHTML/CSSの外部URL、外部script、CSS importを検出して拒否します。
+
 ## 開発時の必須テスト
 `./scripts/setup-dev.sh` を一度実行すると、Gitのpre-commit hookを有効化します。
 以後は `./scripts/test-all.sh` が成功しない限りコミットできません。
