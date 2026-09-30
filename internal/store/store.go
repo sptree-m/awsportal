@@ -8,7 +8,7 @@ import (
 )
 
 type Store struct{ DB *sql.DB }
-type User struct{ ID int64; Username, PasswordHash, Role, TOTPSecret string; Enabled bool }
+type User struct{ ID int64; Username, PasswordHash, Role, TOTPSecret string; Enabled, MustChangePassword bool; TempPasswordExpires int64 }
 type Instance struct{ ID int64; InstanceID, Name, DCVHost, DCVSessionID string; CanControl bool }
 type Schedule struct{ ID, InstanceDBID, OwnerUserID int64; Action, TimeHHMM, Weekdays, Timezone string; Enabled bool }
 
@@ -16,7 +16,7 @@ func Open(path string)(*Store,error){ db,e:=sql.Open("sqlite",path); if e!=nil{r
 func(s *Store)Close()error{return s.DB.Close()}
 func(s *Store)Migrate(ctx context.Context)error{ _,e:=s.DB.ExecContext(ctx,schema); return e }
 
-func(s *Store)UserByName(ctx context.Context,n string)(User,error){var u User;var en int;err:=s.DB.QueryRowContext(ctx,"SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled FROM users WHERE username=?",n).Scan(&u.ID,&u.Username,&u.PasswordHash,&u.Role,&u.TOTPSecret,&en);u.Enabled=en==1;return u,err}
+func(s *Store)UserByName(ctx context.Context,n string)(User,error){var u User;var en int;err:=s.DB.QueryRowContext(ctx,"SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires FROM users WHERE username=?",n).Scan(&u.ID,&u.Username,&u.PasswordHash,&u.Role,&u.TOTPSecret,&en,&u.MustChangePassword,&u.TempPasswordExpires);u.Enabled=en==1;return u,err}
 func(s *Store)CreateUser(ctx context.Context,n,h,role,totp string)error{_,e:=s.DB.ExecContext(ctx,"INSERT INTO users(username,password_hash,role,totp_secret,enabled) VALUES(?,?,?,?,1)",n,h,role,totp);return e}
 func(s *Store)VisibleInstances(ctx context.Context,u User)([]Instance,error){
  q:=`SELECT DISTINCT i.id,i.instance_id,i.name,i.dcv_host,i.dcv_session_id,
@@ -36,7 +36,7 @@ func(s *Store)DueSchedules(ctx context.Context,t time.Time)([]struct{Schedule;In
 func(s *Store)Audit(ctx context.Context,actor,action,target,result,detail string){_,_=s.DB.ExecContext(ctx,"INSERT INTO audit_log(actor,action,target,result,detail) VALUES(?,?,?,?,?)",actor,action,target,result,detail)}
 
 const schema=`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
-CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('user','group_admin','portal_admin')),totp_secret TEXT,enabled INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('user','group_admin','portal_admin')),totp_secret TEXT,enabled INTEGER NOT NULL DEFAULT 1,must_change_password INTEGER NOT NULL DEFAULT 0,temp_password_expires INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL);
 CREATE TABLE IF NOT EXISTS group_members(user_id INTEGER NOT NULL REFERENCES users(id),group_id INTEGER NOT NULL REFERENCES groups(id),PRIMARY KEY(user_id,group_id));
 CREATE TABLE IF NOT EXISTS instances(id INTEGER PRIMARY KEY,instance_id TEXT UNIQUE NOT NULL,name TEXT NOT NULL,dcv_host TEXT NOT NULL,dcv_session_id TEXT NOT NULL DEFAULT 'console',enabled INTEGER NOT NULL DEFAULT 1);
@@ -48,3 +48,8 @@ CREATE TABLE IF NOT EXISTS audit_log(id INTEGER PRIMARY KEY,at TEXT NOT NULL DEF
 
 func(s *Store)IssueDCVToken(ctx context.Context,u User,awsID,tokenHash string,expires time.Time)(Instance,error){var x Instance;err:=s.DB.QueryRowContext(ctx,"SELECT id,instance_id,name,dcv_host,dcv_session_id FROM instances WHERE instance_id=? AND enabled=1",awsID).Scan(&x.ID,&x.InstanceID,&x.Name,&x.DCVHost,&x.DCVSessionID);if err!=nil{return x,err};_,err=s.DB.ExecContext(ctx,"INSERT INTO dcv_tokens(token_hash,user_id,instance_id,session_id,expires_at) VALUES(?,?,?,?,?)",tokenHash,u.ID,x.ID,x.DCVSessionID,expires.Unix());return x,err}
 func(s *Store)ConsumeDCVToken(ctx context.Context,tokenHash,sessionID string,now time.Time)(string,bool){tx,e:=s.DB.BeginTx(ctx,nil);if e!=nil{return "",false};defer tx.Rollback();var id int64;var username string;var expires int64;var used sql.NullInt64;e=tx.QueryRowContext(ctx,`SELECT t.id,u.username,t.expires_at,t.used_at FROM dcv_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.session_id=? AND u.enabled=1`,tokenHash,sessionID).Scan(&id,&username,&expires,&used);if e!=nil||used.Valid||now.Unix()>expires{return "",false};res,e:=tx.ExecContext(ctx,"UPDATE dcv_tokens SET used_at=? WHERE id=? AND used_at IS NULL",now.Unix(),id);if e!=nil{return "",false};n,_:=res.RowsAffected();if n!=1{return "",false};if e=tx.Commit();e!=nil{return "",false};return username,true}
+
+func(s *Store)ListResettableUsers(ctx context.Context)([]User,error){rows,e:=s.DB.QueryContext(ctx,"SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires FROM users WHERE enabled=1 AND role!='portal_admin' ORDER BY username");if e!=nil{return nil,e};defer rows.Close();var out []User;for rows.Next(){var u User;var en,must int;if e=rows.Scan(&u.ID,&u.Username,&u.PasswordHash,&u.Role,&u.TOTPSecret,&en,&must,&u.TempPasswordExpires);e!=nil{return nil,e};u.Enabled=en==1;u.MustChangePassword=must==1;out=append(out,u)};return out,rows.Err()}
+func(s *Store)SetTemporaryPassword(ctx context.Context,username,hash string,expires time.Time)error{res,e:=s.DB.ExecContext(ctx,"UPDATE users SET password_hash=?,must_change_password=1,temp_password_expires=? WHERE username=? AND enabled=1 AND role!='portal_admin'",hash,expires.Unix(),username);if e!=nil{return e};n,_:=res.RowsAffected();if n!=1{return sql.ErrNoRows};return nil}
+func(s *Store)ChangePassword(ctx context.Context,userID int64,hash string)error{_,e:=s.DB.ExecContext(ctx,"UPDATE users SET password_hash=?,must_change_password=0,temp_password_expires=0 WHERE id=?",hash,userID);return e}
+func(s *Store)BreakGlassResetAdmin(ctx context.Context,username,hash,totpSecret string)error{res,e:=s.DB.ExecContext(ctx,"UPDATE users SET password_hash=?,totp_secret=?,must_change_password=1,temp_password_expires=0 WHERE username=? AND role='portal_admin'",hash,totpSecret,username);if e!=nil{return e};n,_:=res.RowsAffected();if n!=1{return sql.ErrNoRows};return nil}
