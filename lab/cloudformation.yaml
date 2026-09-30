@@ -73,41 +73,40 @@ Resources:
         Fn::Base64:
           Fn::Sub:
             - |
-
-            #!/bin/bash
-            set -euxo pipefail
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update
-            apt-get install -y git golang-go awscli
-            useradd --system --home /var/lib/awsportal --create-home awsportal
-            cd /opt
-            git clone --depth 1 https://github.com/sptree-m/awsportal.git
-            cd awsportal
-            go build -o /usr/local/bin/awsportal ./cmd/awsportal
-            go build -o /usr/local/bin/awsportal-admin ./cmd/awsportal-admin
-            PASS="Lab-$(cat /proc/sys/kernel/random/uuid)-A1!"
-            /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role portal_admin > /tmp/admin.txt
-            /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestInstance} -name "Ubuntu test" -host 127.0.0.1
-            chown -R awsportal:awsportal /var/lib/awsportal
-            TOTP="$(sed -n 's/^TOTP URI: //p' /tmp/admin.txt)"
-            aws ssm put-parameter --name /awsportal-lab/bootstrap --type String --overwrite --value "username=labadmin password=$PASS totp=$TOTP" --region ${AWS::Region}
-            cat >/etc/systemd/system/awsportal.service <<'UNIT'
-            [Unit]
-            After=network-online.target
-            [Service]
-            User=awsportal
-            WorkingDirectory=/var/lib/awsportal
-            Environment=AWSPORTAL_DB=/var/lib/awsportal/awsportal.db
-            Environment=AWSPORTAL_ADDR=:8080
-            Environment=AWSPORTAL_COOKIE_SECURE=0
-            ExecStart=/usr/local/bin/awsportal
-            Restart=always
-            RestartSec=2
-            [Install]
-            WantedBy=multi-user.target
-            UNIT
-            systemctl daemon-reload
-            systemctl enable --now awsportal
+              #!/bin/bash
+              set -euxo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y git golang-go awscli
+              useradd --system --home /var/lib/awsportal --create-home awsportal
+              cd /opt
+              git clone --depth 1 https://github.com/sptree-m/awsportal.git
+              cd awsportal
+              go build -o /usr/local/bin/awsportal ./cmd/awsportal
+              go build -o /usr/local/bin/awsportal-admin ./cmd/awsportal-admin
+              PASS="Lab-$(cat /proc/sys/kernel/random/uuid)-A1!"
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role portal_admin > /tmp/admin.txt
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host 127.0.0.1
+              chown -R awsportal:awsportal /var/lib/awsportal
+              TOTP="$(sed -n 's/^TOTP URI: //p' /tmp/admin.txt)"
+              aws ssm put-parameter --name /awsportal-lab/bootstrap --type String --overwrite --value "username=labadmin password=$PASS totp=$TOTP" --region ${Region}
+              cat >/etc/systemd/system/awsportal.service <<'UNIT'
+              [Unit]
+              After=network-online.target
+              [Service]
+              User=awsportal
+              WorkingDirectory=/var/lib/awsportal
+              Environment=AWSPORTAL_DB=/var/lib/awsportal/awsportal.db
+              Environment=AWSPORTAL_ADDR=:8080
+              Environment=AWSPORTAL_COOKIE_SECURE=0
+              ExecStart=/usr/local/bin/awsportal
+              Restart=always
+              RestartSec=2
+              [Install]
+              WantedBy=multi-user.target
+              UNIT
+              systemctl daemon-reload
+              systemctl enable --now awsportal
             - {TestId: {Ref: TestInstance}, Region: {Ref: 'AWS::Region'}}
 Outputs:
   PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
