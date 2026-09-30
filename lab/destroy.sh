@@ -15,11 +15,22 @@ if ! aws cloudformation wait stack-delete-complete --region "$REGION" --stack-na
 fi
 
 echo "CloudFormation stack deleted."
-echo "Residual tagged resources:"
-LEFT="$(aws resourcegroupstaggingapi get-resources --region "$REGION" --tag-filters Key=Project,Values=awsportal-lab --query 'ResourceTagMappingList[].ResourceARN' --output text || true)"
-if [[ -n "$LEFT" ]]; then
-  echo "$LEFT"
-  echo "WARNING: tagged resources remain."
+echo "Residual tagged resources (informational; API may lag):"
+aws resourcegroupstaggingapi get-resources --region "$REGION" --tag-filters Key=Project,Values=awsportal-lab --query 'ResourceTagMappingList[].ResourceARN' --output text || true
+
+echo "EC2/EBS residual check:"
+EC2="$(aws ec2 describe-instances --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Reservations[].Instances[?State.Name!=\`terminated\`].InstanceId' --output text || true)"
+EBS="$(aws ec2 describe-volumes --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Volumes[].VolumeId' --output text || true)"
+if [[ -n "$EC2$EBS" ]]; then
+  echo "instances=$EC2 volumes=$EBS"
+  exit 2
+fi
+
+echo "VPC/SG residual check:"
+VPCS="$(aws ec2 describe-vpcs --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Vpcs[].VpcId' --output text || true)"
+SGS="$(aws ec2 describe-security-groups --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'SecurityGroups[].GroupId' --output text || true)"
+if [[ -n "$VPCS$SGS" ]]; then
+  echo "vpcs=$VPCS security-groups=$SGS"
   exit 2
 fi
 
@@ -30,4 +41,4 @@ if [[ -n "$IAM$PROFILES" ]]; then
   echo "roles=$IAM profiles=$PROFILES"
   exit 2
 fi
-echo "OK: no tagged or IAM lab resources found."
+echo "OK: no live EC2/EBS/VPC/SG or IAM lab resources found."
