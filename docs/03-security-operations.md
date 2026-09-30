@@ -1,13 +1,14 @@
-# Security and operations
+# セキュリティ・運用手順
 
-- Portal admin != AWS infrastructure admin. Keep the roles separate.
-- Require TOTP for portal_admin and recovery procedures with dual control.
-- Hash passwords with bcrypt; encrypt TOTP seeds at rest with a production key-management design before launch.
-- Use IMDSv2 and an EC2 instance profile. No static AWS keys.
-- Tag managed instances and scope IAM to the intended resources where AWS APIs support resource-level permissions.
-- Treat SQLite backups, audit logs and TOTP secrets as sensitive.
-- Review Security Groups for accidental 22/3389 exposure.
-- Do not enable Session Manager interactive access as an end-user bypass.
-- Enforce outbound allowlisting with the organization's approved firewall/proxy architecture. The sample Terraform intentionally does not pretend its simple 443 egress rule is production DLP.
-- CloudTrail, VPC Flow Logs and central log retention should be enabled by the platform account baseline or added before production.
-- Emergency access must be documented, time-limited and audited.
+- ポータル管理者とAWS基盤管理者は別ロールとして扱います。
+- `portal_admin` はTOTPを必須とし、復旧手順は複数人承認を前提にします。
+- パスワードはbcryptでハッシュ化します。TOTP Secretは本番導入までにKMS等を利用した暗号化方式へ移行します。
+- IMDSv2とEC2 Instance Profileを使用し、固定AWS Access Keyを保存しません。
+- 管理対象EC2をタグ等で識別し、AWS APIが対応する範囲でIAM Resourceを限定します。
+- SQLiteバックアップ、監査ログ、TOTP Secretを機密情報として扱います。
+- Security Groupに22/3389が誤って開放されていないことを自動テストします。
+- 一般ユーザーの迂回路となるSession Manager対話アクセスを許可しません。
+- 外向き通信は社内承認済みFirewall/ProxyでAllowlist制御します。
+- CloudTrail、VPC Flow Logs、中央ログ保管を本番要件とします。
+- 緊急管理アクセスは期限付き・記録必須とします。
+- `--no-verify` によるローカルテスト回避を運用上禁止し、mainへのマージはGitHubの必須CIチェック成功後だけ許可します。
