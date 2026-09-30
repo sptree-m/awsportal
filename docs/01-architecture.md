@@ -1,18 +1,18 @@
-# Architecture
+# アーキテクチャ設計
 
-## Identity boundary
-End users have no AWS account, IAM user, access key, console or CLI credentials. Portal users and AWS identities are separate concepts.
+## ID管理境界
+一般ユーザーにはAWSアカウント、IAMユーザー、Access Key、Console/CLI認証情報を付与しません。ポータルユーザーとAWS Identityは完全に分離します。
 
-Roles: user, group_admin, portal_admin. Portal administrators require TOTP MFA. Users see instances assigned directly to them plus instances assigned to their groups. portal_admin sees all registered managed instances.
+ポータルのロールは `user`、`group_admin`、`portal_admin` とします。管理者はTOTP MFA必須です。一般ユーザーは本人に直接割り当てられたEC2と、所属グループに割り当てられたEC2だけを参照・操作できます。管理者は全管理対象EC2を参照できます。
 
-## Access boundary
-Managed desktops expose DCV TCP/8443 only to approved corporate/VPN CIDRs. Do not create inbound SSH/22 or RDP/3389 rules. Do not grant interactive SSM access to portal users. DCV is the intended desktop access path.
+## 接続境界
+管理対象デスクトップは、承認済み社内/VPNネットワークからDCV TCP/8443だけを公開します。SSH/22、RDP/3389は開放しません。一般ユーザーにはSSMによる対話アクセスも許可しません。
 
-## DLP layers
-1. DCV normal-user permissions deny download/upload, clipboard, printing, USB and screenshot features.
-2. Network egress must be allowlisted separately. DCV permissions alone are not DLP.
-3. Portal and AWS activity are audited.
-4. Administrator export is a distinct audited privilege.
+## データ漏洩防止
+1. 一般ユーザーのDCV権限でファイル送受信、クリップボード、印刷、USB等を禁止します。
+2. 外向き通信は別レイヤーでAllowlist制御します。DCV制限だけではDLPとして不十分です。
+3. ポータル操作とAWS操作を監査します。
+4. 管理者のデータ持ち出しは独立した権限として監査します。
 
-## Portal
-ARM64 t4g.micro target, Go server-side rendering, SQLite, local static assets only, no CDN/npm runtime dependency. Use 4 GiB swap only as OOM protection, not capacity replacement.
+## ポータル
+ARM64のt4g.microを基本ターゲットとします。Goのサーバーサイドレンダリング、SQLite、ローカル静的ファイルのみで構成し、CDNや外部JavaScript/CSSを実行時に読み込みません。4 GiB swapはOOM対策であり、1 GiB RAM不足を常時補う設計にはしません。
