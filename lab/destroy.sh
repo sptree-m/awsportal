@@ -3,8 +3,7 @@ set -euo pipefail
 STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 echo "Deleting $STACK in $REGION ..."
-aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"
-aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"
+aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"\nif ! aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"; then\n  FAILED="$(aws cloudformation describe-stack-events --region "$REGION" --stack-name "$STACK" --query "StackEvents[?ResourceStatus==\`DELETE_FAILED\`].LogicalResourceId" --output text 2>/dev/null | tr "\\t" " ")"\n  echo "Initial delete failed: $FAILED"\n  if [[ -n "$FAILED" ]]; then\n    aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK" --retain-resources $FAILED\n    aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"\n  fi\nfi
 echo "CloudFormation stack deleted."
 echo "Residual tagged resources:"
 LEFT="$(aws resourcegroupstaggingapi get-resources --region "$REGION" --tag-filters Key=Project,Values=awsportal-lab --query 'ResourceTagMappingList[].ResourceARN' --output text || true)"
