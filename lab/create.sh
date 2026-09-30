@@ -13,10 +13,6 @@ echo "[2/4] deploy $STACK in $REGION; browser=$CIDR"
 aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR"
 echo "[3/4] outputs"
 aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs' --output table
-echo "[4/4] waiting for portal bootstrap"
-for i in $(seq 1 40); do
-  V="$(aws ssm get-parameter --region "$REGION" --name /awsportal-lab/bootstrap --query Parameter.Value --output text 2>/dev/null || true)"
-  if [[ "$V" != "pending" && -n "$V" ]]; then echo; echo "LOGIN: $V"; exit 0; fi
-  sleep 10
-done
-echo "Portal EC2 is still bootstrapping. Run: aws ssm get-parameter --name /awsportal-lab/bootstrap --query Parameter.Value --output text"
+echo "[4/4] portal bootstrap status"
+echo "Portal starts asynchronously. Login credentials stay only on the Portal EC2 root volume."
+echo "Use the portal URL above after 2-4 minutes. Lab login retrieval will be added through a non-SSM path."
