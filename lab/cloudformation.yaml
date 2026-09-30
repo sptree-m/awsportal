@@ -3,6 +3,7 @@ Description: awsportal isolated disposable lab
 Parameters:
   AllowedCidr: {Type: String}
   ProjectTag: {Type: String, Default: awsportal-lab}
+  LabPassword: {Type: String, NoEcho: true, MinLength: 12}
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -80,7 +81,7 @@ Resources:
               cd awsportal
               go build -o /usr/local/bin/awsportal ./cmd/awsportal
               go build -o /usr/local/bin/awsportal-admin ./cmd/awsportal-admin
-              PASS="Lab-$(cat /proc/sys/kernel/random/uuid)-A1!"
+              PASS="${LabPassword}"
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role portal_admin > /tmp/admin.txt
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host 127.0.0.1
               chown -R awsportal:awsportal /var/lib/awsportal
@@ -107,7 +108,7 @@ Resources:
               UNIT
               systemctl daemon-reload
               systemctl enable --now awsportal
-            - {TestId: {Ref: TestInstance}}
+            - {TestId: {Ref: TestInstance}, LabPassword: {Ref: LabPassword}}
 Outputs:
   PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
   PortalInstanceId: {Value: {Ref: PortalInstance}}
