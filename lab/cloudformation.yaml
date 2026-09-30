@@ -42,11 +42,7 @@ Resources:
               - {Effect: Allow, Action: ['ec2:DescribeInstances','ec2:DescribeInstanceStatus'], Resource: '*'}
               - {Effect: Allow, Action: ['ec2:StartInstances','ec2:StopInstances'], Resource: '*', Condition: {StringEquals: {'ec2:ResourceTag/Project': {Ref: ProjectTag}}}}
               - {Effect: Allow, Action: 'ce:GetCostAndUsage', Resource: '*'}
-              - {Effect: Allow, Action: 'ssm:PutParameter', Resource: {Fn::Sub: 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/awsportal-lab/bootstrap'}}
   PortalProfile: {Type: AWS::IAM::InstanceProfile, Properties: {Roles: [{Ref: PortalRole}]}}
-  Bootstrap:
-    Type: AWS::SSM::Parameter
-    Properties: {Name: /awsportal-lab/bootstrap, Type: String, Value: pending, Tags: {Project: {Ref: ProjectTag}}}
   TestInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -59,7 +55,7 @@ Resources:
       Tags: [{Key: Name, Value: awsportal-lab-test}, {Key: Project, Value: {Ref: ProjectTag}}, {Key: awsportal-user, Value: test-user01}]
   PortalInstance:
     Type: AWS::EC2::Instance
-    DependsOn: [TestInstance, Bootstrap]
+    DependsOn: [TestInstance]
     Properties:
       ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id}}'
       InstanceType: t4g.micro
@@ -88,8 +84,12 @@ Resources:
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role portal_admin > /tmp/admin.txt
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host 127.0.0.1
               chown -R awsportal:awsportal /var/lib/awsportal
-              TOTP="$(sed -n 's/^TOTP URI: //p' /tmp/admin.txt)"
-              aws ssm put-parameter --name /awsportal-lab/bootstrap --type String --overwrite --value "username=labadmin password=$PASS totp=$TOTP" --region ${Region}
+              cat >/var/lib/awsportal/lab-login.txt <<EOF
+              username=labadmin
+              password=$PASS
+              $(cat /tmp/admin.txt)
+              EOF
+              chmod 600 /var/lib/awsportal/lab-login.txt
               cat >/etc/systemd/system/awsportal.service <<'UNIT'
               [Unit]
               After=network-online.target
@@ -107,9 +107,8 @@ Resources:
               UNIT
               systemctl daemon-reload
               systemctl enable --now awsportal
-            - {TestId: {Ref: TestInstance}, Region: {Ref: 'AWS::Region'}}
+            - {TestId: {Ref: TestInstance}}
 Outputs:
   PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
   PortalInstanceId: {Value: {Ref: PortalInstance}}
   TestInstanceId: {Value: {Ref: TestInstance}}
-  BootstrapParameter: {Value: /awsportal-lab/bootstrap}
