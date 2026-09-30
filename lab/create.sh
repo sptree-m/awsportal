@@ -14,8 +14,9 @@ if [[ -z "$TYPE" || "$TYPE" == "None" ]]; then echo "No Free Tier eligible ARM64
 echo "EC2 instance type: $TYPE"
 PASS="Lab-$(openssl rand -hex 12)-A1!"
 TOTP="$(openssl rand 20 | base32 | tr -d "=\\n")"
+BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/lab-bootstrap/awsportal-linux-arm64.tar.gz}"
 echo "[2/4] deploy $STACK in $REGION; browser=$CIDR"
-aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE"
+aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE" BinaryURL="$BINARY_URL"
 echo "[3/4] outputs"
 aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs' --output table
 echo "[4/4] login"
