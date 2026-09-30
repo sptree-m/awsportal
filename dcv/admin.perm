@@ -1,0 +1,4 @@
+# Apply only to audited administrator sessions.
+[permissions]
+%any% allow display keyboard mouse pointer audio-out file-download
+%any% deny file-upload clipboard-copy clipboard-paste printer usb screenshot
