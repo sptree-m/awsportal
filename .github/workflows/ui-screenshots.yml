@@ -1,0 +1,25 @@
+name: UI screenshots
+on:
+  push:
+    branches: [work/ui-screenshots]
+    paths:
+      - cmd/awsportal/web/**
+      - scripts/capture-ui.sh
+      - .github/workflows/ui-screenshots.yml
+permissions:
+  contents: write
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capture
+        run: bash scripts/capture-ui.sh
+      - name: Store screenshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/screenshots/*.png
+          git diff --cached --quiet && exit 0
+          git commit -m "docs: UI screenshots"
+          git push
