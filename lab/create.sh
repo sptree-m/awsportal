@@ -3,7 +3,7 @@ set -Eeuo pipefail
 STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.1.2/awsportal-v1.1.2-linux-arm64.tar.gz}"
+BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.1.3/awsportal-v1.1.3-linux-arm64.tar.gz}"
 fail(){ rc=$?; echo; echo "RESULT: FAIL - create/verification failed (exit=$rc)"; exit "$rc"; }
 trap fail ERR
 
@@ -38,11 +38,21 @@ echo "[OK] Test EC2:   $TEST_ID / arm64 / running"
 
 echo "[6/6] Application health"
 HEALTH=""
-for _ in $(seq 1 60); do
+for attempt in $(seq 1 60); do
   if [[ "$(curl -fsS --max-time 3 "$URL/healthz" 2>/dev/null || true)" == "ok" ]]; then HEALTH=ok; break; fi
+  echo "  waiting for /healthz... $((attempt * 5))s"
   sleep 5
 done
-[[ "$HEALTH" == "ok" ]]
+if [[ "$HEALTH" != "ok" ]]; then
+  echo "[ERROR] /healthz did not become ready"
+  echo "[DIAG] Collecting cloud-init/systemd diagnostics via SSM"
+  CMD_ID="$(aws ssm send-command --region "$REGION" --instance-ids "$PORTAL_ID" --document-name AWS-RunShellScript --parameters '{"commands":["sudo cloud-init status --long || true","sudo systemctl status awsportal --no-pager -l || true","sudo journalctl -u awsportal -n 80 --no-pager || true","sudo tail -n 100 /var/log/cloud-init-output.log || true","ls -l /usr/local/bin/awsportal* /var/lib/awsportal 2>&1 || true"]}' --query 'Command.CommandId' --output text || true)"
+  if [[ -n "$CMD_ID" && "$CMD_ID" != "None" ]]; then
+    aws ssm wait command-executed --region "$REGION" --command-id "$CMD_ID" --instance-id "$PORTAL_ID" || true
+    aws ssm get-command-invocation --region "$REGION" --command-id "$CMD_ID" --instance-id "$PORTAL_ID" --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' --output json || true
+  fi
+  false
+fi
 echo "[OK] /healthz: ok"
 
 echo "------------------------------------------------------------"
