@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: awsportal isolated disposable lab
+Parameters:
+  AllowedCidr: {Type: String}
+  ProjectTag: {Type: String, Default: awsportal-lab}
+  LabPassword: {Type: String, NoEcho: true, MinLength: 12}
+  LabTOTPSecret: {Type: String, NoEcho: true, MinLength: 16}
+  InstanceType: {Type: String, Default: t4g.micro}
+  BinaryURL: {Type: String}
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties: {CidrBlock: 10.77.0.0/24, EnableDnsSupport: true, EnableDnsHostnames: true, Tags: [{Key: Project, Value: {Ref: ProjectTag}}]}
+  Igw: {Type: AWS::EC2::InternetGateway, Properties: {Tags: [{Key: Project, Value: {Ref: ProjectTag}}]}}
+  Attach: {Type: AWS::EC2::VPCGatewayAttachment, Properties: {VpcId: {Ref: Vpc}, InternetGatewayId: {Ref: Igw}}}
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties: {VpcId: {Ref: Vpc}, CidrBlock: 10.77.0.0/26, MapPublicIpOnLaunch: true, Tags: [{Key: Project, Value: {Ref: ProjectTag}}]}
+  RouteTable: {Type: AWS::EC2::RouteTable, Properties: {VpcId: {Ref: Vpc}, Tags: [{Key: Project, Value: {Ref: ProjectTag}}]}}
+  Route: {Type: AWS::EC2::Route, DependsOn: Attach, Properties: {RouteTableId: {Ref: RouteTable}, DestinationCidrBlock: 0.0.0.0/0, GatewayId: {Ref: Igw}}}
+  Assoc: {Type: AWS::EC2::SubnetRouteTableAssociation, Properties: {SubnetId: {Ref: Subnet}, RouteTableId: {Ref: RouteTable}}}
+  PortalSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: awsportal lab browser only
+      VpcId: {Ref: Vpc}
+      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 8080, ToPort: 8080, CidrIp: {Ref: AllowedCidr}}]
+      SecurityGroupEgress: [{IpProtocol: -1, CidrIp: 0.0.0.0/0}]
+      Tags: [{Key: Project, Value: {Ref: ProjectTag}}]
+  TestSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: awsportal lab test host no ingress
+      VpcId: {Ref: Vpc}
+      SecurityGroupEgress: [{IpProtocol: -1, CidrIp: 0.0.0.0/0}]
+      Tags: [{Key: Project, Value: {Ref: ProjectTag}}]
+  PortalRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {Version: '2012-10-17', Statement: [{Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: 'sts:AssumeRole'}]}
+      Policies:
+        - PolicyName: awsportal-lab
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - {Effect: Allow, Action: ['ec2:DescribeInstances','ec2:DescribeInstanceStatus'], Resource: '*'}
+              - {Effect: Allow, Action: ['ec2:StartInstances','ec2:StopInstances'], Resource: '*', Condition: {StringEquals: {'ec2:ResourceTag/Project': {Ref: ProjectTag}}}}
+              - {Effect: Allow, Action: 'ce:GetCostAndUsage', Resource: '*'}
+  PortalProfile: {Type: AWS::IAM::InstanceProfile, Properties: {Roles: [{Ref: PortalRole}]}}
+  TestInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id}}'
+      InstanceType: {Ref: InstanceType}
+      SubnetId: {Ref: Subnet}
+      SecurityGroupIds: [{Ref: TestSG}]
+      MetadataOptions: {HttpTokens: required}
+      BlockDeviceMappings: [{DeviceName: /dev/sda1, Ebs: {VolumeType: gp3, VolumeSize: 8, Encrypted: true, DeleteOnTermination: true}}]
+      Tags: [{Key: Name, Value: awsportal-lab-test}, {Key: Project, Value: {Ref: ProjectTag}}, {Key: awsportal-user, Value: test-user01}]
+  PortalInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: [TestInstance]
+    Properties:
+      ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id}}'
+      InstanceType: {Ref: InstanceType}
+      IamInstanceProfile: {Ref: PortalProfile}
+      SubnetId: {Ref: Subnet}
+      SecurityGroupIds: [{Ref: PortalSG}]
+      MetadataOptions: {HttpTokens: required}
+      BlockDeviceMappings: [{DeviceName: /dev/sda1, Ebs: {VolumeType: gp3, VolumeSize: 8, Encrypted: true, DeleteOnTermination: true}}]
+      Tags: [{Key: Name, Value: awsportal-lab-portal}, {Key: Project, Value: {Ref: ProjectTag}}, {Key: awsportal-user, Value: portal}]
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              set -euxo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y curl sqlite3 ca-certificates
+              useradd --system --home /var/lib/awsportal --create-home awsportal
+              mkdir -p /tmp/awsportal-bin
+              curl -fL --retry 5 --retry-delay 2 "${BinaryURL}" -o /tmp/awsportal.tar.gz
+              tar -xzf /tmp/awsportal.tar.gz -C /tmp/awsportal-bin
+              install -m 0755 /tmp/awsportal-bin/awsportal /usr/local/bin/awsportal
+              install -m 0755 /tmp/awsportal-bin/awsportal-admin /usr/local/bin/awsportal-admin
+              PASS="${LabPassword}"
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role user > /tmp/admin.txt
+              sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET role='portal_admin', totp_secret='${LabTOTPSecret}' WHERE username='labadmin';"
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host 127.0.0.1
+              chown -R awsportal:awsportal /var/lib/awsportal
+              cat >/var/lib/awsportal/lab-login.txt <<EOF
+              username=labadmin
+              password=$PASS
+              $(cat /tmp/admin.txt)
+              EOF
+              chmod 600 /var/lib/awsportal/lab-login.txt
+              cat >/etc/systemd/system/awsportal.service <<'UNIT'
+              [Unit]
+              After=network-online.target
+              [Service]
+              User=awsportal
+              WorkingDirectory=/var/lib/awsportal
+              Environment=AWSPORTAL_DB=/var/lib/awsportal/awsportal.db
+              Environment=AWSPORTAL_ADDR=:8080
+              Environment=AWSPORTAL_COOKIE_SECURE=0
+              ExecStart=/usr/local/bin/awsportal
+              Restart=always
+              RestartSec=2
+              [Install]
+              WantedBy=multi-user.target
+              UNIT
+              systemctl daemon-reload
+              systemctl enable --now awsportal
+            - {TestId: {Ref: TestInstance}, LabPassword: {Ref: LabPassword}, LabTOTPSecret: {Ref: LabTOTPSecret}, BinaryURL: {Ref: BinaryURL}}
+Outputs:
+  PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
+  PortalInstanceId: {Value: {Ref: PortalInstance}}
+  TestInstanceId: {Value: {Ref: TestInstance}}
