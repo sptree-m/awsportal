@@ -2,6 +2,10 @@
 set -euo pipefail
 echo '[1/7] Go modules'
 go mod tidy
+if ! git diff --exit-code -- go.mod go.sum; then
+  echo 'ERROR: go.mod/go.sum is not committed or not tidy'
+  exit 1
+fi
 echo '[2/7] Go format'
 gofmt -w cmd internal
 echo '[3/7] Go test'
