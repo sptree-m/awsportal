@@ -19,24 +19,24 @@ echo "Residual tagged resources (informational; API may lag):"
 aws resourcegroupstaggingapi get-resources --region "$REGION" --tag-filters Key=Project,Values=awsportal-lab --query 'ResourceTagMappingList[].ResourceARN' --output text || true
 
 echo "EC2/EBS residual check:"
-EC2="$(aws ec2 describe-instances --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Reservations[].Instances[?State.Name!=\`terminated\`].InstanceId' --output text || true)"
-EBS="$(aws ec2 describe-volumes --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Volumes[].VolumeId' --output text || true)"
+EC2="$(aws ec2 describe-instances --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Reservations[].Instances[?State.Name!=\`terminated\`].InstanceId' --output text)"
+EBS="$(aws ec2 describe-volumes --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Volumes[].VolumeId' --output text)"
 if [[ -n "$EC2$EBS" ]]; then
   echo "instances=$EC2 volumes=$EBS"
   exit 2
 fi
 
 echo "VPC/SG residual check:"
-VPCS="$(aws ec2 describe-vpcs --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Vpcs[].VpcId' --output text || true)"
-SGS="$(aws ec2 describe-security-groups --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'SecurityGroups[].GroupId' --output text || true)"
+VPCS="$(aws ec2 describe-vpcs --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Vpcs[].VpcId' --output text)"
+SGS="$(aws ec2 describe-security-groups --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'SecurityGroups[].GroupId' --output text)"
 if [[ -n "$VPCS$SGS" ]]; then
   echo "vpcs=$VPCS security-groups=$SGS"
   exit 2
 fi
 
 echo "IAM residual check:"
-IAM="$(aws iam list-roles --query "Roles[?contains(RoleName, 'awsportal-lab')].RoleName" --output text || true)"
-PROFILES="$(aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, 'awsportal-lab')].InstanceProfileName" --output text || true)"
+IAM="$(aws iam list-roles --query "Roles[?contains(RoleName, 'awsportal-lab')].RoleName" --output text)"
+PROFILES="$(aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, 'awsportal-lab')].InstanceProfileName" --output text)"
 if [[ -n "$IAM$PROFILES" ]]; then
   echo "roles=$IAM profiles=$PROFILES"
   exit 2
