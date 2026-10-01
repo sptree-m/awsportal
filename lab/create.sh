@@ -4,10 +4,11 @@ STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "[1/4] caller"; aws sts get-caller-identity
-CIDR="${ALLOWED_CIDR:-}"
-if [[ -z "$CIDR" ]]; then
-  IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '\n')"
-  CIDR="$IP/32"
+# Disposable debug lab: allow PC browser access by default.
+# Override with ALLOWED_CIDR=x.x.x.x/32 when source-IP restriction is desired.
+CIDR="${ALLOWED_CIDR:-0.0.0.0/0}"
+if [[ "$CIDR" == "0.0.0.0/0" ]]; then
+  echo "WARNING: debug lab Portal TCP/8080 is open to the Internet."
 fi
 TYPE="${INSTANCE_TYPE:-$(aws ec2 describe-instance-types --region "$REGION" --filters Name=free-tier-eligible,Values=true Name=processor-info.supported-architecture,Values=arm64 --query "InstanceTypes[].InstanceType" --output text | tr "\\t" "\\n" | grep "^t4g\\." | sort | head -1)}"
 if [[ -z "$TYPE" || "$TYPE" == "None" ]]; then echo "No Free Tier eligible ARM64 instance type found in $REGION"; exit 1; fi
