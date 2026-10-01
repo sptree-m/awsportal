@@ -22,5 +22,5 @@ test "$(wc -c < cmd/awsportal/web/dashboard.js)" -lt 12000
 ! grep -R -E -i 'setInterval|EventSource|WebSocket' cmd/awsportal/web --include='*.js'
 grep -q 'max-age=86400' cmd/awsportal/main.go
 grep -q 'Rounded Mplus 1mn' cmd/awsportal/web/app.css
-if [ "${CI:-}" != "true" ]; then test -s cmd/awsportal/web/fonts/rounded-mplus-1mn-regular.ttf || echo 'WARN: Rounded M+ binary must be imported before release'; fi
+test -s cmd/awsportal/web/fonts/rounded-mplus-1mn-regular.ttf
 echo 'UI network-weight checks: PASS'
