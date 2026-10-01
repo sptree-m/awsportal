@@ -24,3 +24,13 @@
 .power-control{display:flex;align-items:center;gap:6px;min-height:36px}.power-control form{margin:0}.power-control button[hidden]{display:none}.power-control button:disabled{cursor:wait;opacity:.55}.power-stop{border-color:#c7a9a9;color:#8a3030}.btn.disabled{pointer-events:none;opacity:.45}
 @keyframes state-pulse{50%{opacity:.35}}
 @media(max-width:680px){.instance-table{min-width:720px}}
+
+/* Operations console v2: dense, fast, unambiguous */
+.nav-disabled{opacity:.42;cursor:not-allowed}
+.dense-form{display:grid;grid-template-columns:minmax(180px,320px) 170px auto;gap:7px;align-items:center}
+.dense-table{font-size:12px;min-width:760px}.dense-table th,.dense-table td{padding:7px 9px;height:35px}.dense-table th{position:sticky;top:0;background:#f8fafb;z-index:1;text-transform:none;letter-spacing:.01em}
+.dense-table button{min-height:29px;padding:4px 9px;font-size:11px}.dense-table form{margin:0}
+.audit-table{min-width:900px}.audit-table .detail{white-space:normal;min-width:180px;max-width:360px}.result{font-weight:700;font-size:11px}.result-ok{color:#176b3a}.result-error,.result-deny{color:#9b3434}
+.admin-create{padding:14px 16px}.admin-create .section-head{margin-bottom:9px}
+.user-status{font-weight:650}
+@media(max-width:680px){.dense-form{grid-template-columns:1fr}.dense-form>*{width:100%}}
