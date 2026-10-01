@@ -4,6 +4,12 @@ echo '[1/7] Go modules'
 go mod tidy
 if ! git diff --exit-code -- go.mod go.sum; then
   echo 'ERROR: go.mod/go.sum is not committed or not tidy'
+  echo '--- GO_MOD_BEGIN ---'
+  cat go.mod
+  echo '--- GO_MOD_END ---'
+  echo '--- GO_SUM_BEGIN ---'
+  cat go.sum
+  echo '--- GO_SUM_END ---'
   exit 1
 fi
 echo '[2/7] Go format'
