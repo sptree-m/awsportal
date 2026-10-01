@@ -41,7 +41,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal-admin ./cmd/awsportal-admin
           test -x dist/pkg/awsportal
           test -x dist/pkg/awsportal-admin
-          tar -C dist/pkg -czf "dist/$ASSET" awsportal
+          tar -C dist/pkg -czf "dist/$ASSET" awsportal awsportal-admin
           sha256sum "dist/$ASSET" > "dist/$ASSET.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
