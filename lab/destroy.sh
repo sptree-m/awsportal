@@ -27,9 +27,18 @@ fi
 # Stack must be gone.
 if aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>&1; then bad "CloudFormation stack" "still exists"; else ok "CloudFormation stack" "not found"; fi
 
-# Project-tagged regional resources.
+# Tagging API can temporarily retain terminated EC2 ARNs. Report them, but
+# determine failure from the authoritative service APIs below.
 TAGGED="$(aws resourcegroupstaggingapi get-resources --region "$REGION" --tag-filters Key=Project,Values="$PROJECT" --query 'ResourceTagMappingList[].ResourceARN' --output text 2>/dev/null || true)"
-[[ -z "$TAGGED" ]] && ok "Project-tagged resources" "0" || bad "Project-tagged resources" "$TAGGED"
+TAGGED_COUNT="$(wc -w <<<"$TAGGED" | tr -d ' ')"
+[[ -z "$TAGGED" ]] && TAGGED_COUNT=0
+ok "Tag API references" "$TAGGED_COUNT (informational)"
+
+TERMINATED="$(aws ec2 describe-instances --region "$REGION" --filters Name=tag:Project,Values="$PROJECT" Name=instance-state-name,Values=terminated --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
+TERMINATED_COUNT="$(wc -w <<<"$TERMINATED" | tr -d ' ')"
+[[ -z "$TERMINATED" ]] && TERMINATED_COUNT=0
+ok "EC2 terminated (history)" "$TERMINATED_COUNT"
+[[ "$TERMINATED_COUNT" -gt 0 ]] && printf '       %s\n' "$TERMINATED"
 
 EC2="$(aws ec2 describe-instances --region "$REGION" --filters Name=tag:Project,Values="$PROJECT" --query 'Reservations[].Instances[?State.Name!=`terminated`].InstanceId' --output text 2>/dev/null || true)"
 EBS="$(aws ec2 describe-volumes --region "$REGION" --filters Name=tag:Project,Values="$PROJECT" --query 'Volumes[].VolumeId' --output text 2>/dev/null || true)"
@@ -59,5 +68,5 @@ done <"$TMP/resources"
 
 echo "------------------------------------------------------------"
 if (( FAIL )); then echo "RESULT: FAIL - residual resources or deletion errors detected"; exit 2; fi
-echo "RESULT: PASS - no awsportal-lab resources detected"
+echo "RESULT: PASS - no live awsportal-lab resources detected (terminated EC2 history is informational)"
 echo "============================================================"
