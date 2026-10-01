@@ -14,16 +14,8 @@ echo "[1/6] AWS credentials"
 aws sts get-caller-identity >/dev/null
 echo "[OK] AWS credentials"
 
-if [[ -n "${ALLOWED_CIDR:-}" ]]; then
-  CIDR="$ALLOWED_CIDR"
-else
-  IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com | tr -d '[:space:]')"
-  [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
-  CIDR="$IP/32"
-fi
-[[ "$CIDR" != "0.0.0.0/0" ]]
+CIDR="${ALLOWED_CIDR:-0.0.0.0/0}"
 echo "[2/6] Browser CIDR: $CIDR"
-
 TYPE="${INSTANCE_TYPE:-t4g.micro}"
 ARCH="$(aws ec2 describe-instance-types --region "$REGION" --instance-types "$TYPE" --query 'InstanceTypes[0].ProcessorInfo.SupportedArchitectures' --output text)"
 grep -qw arm64 <<<"$ARCH"
