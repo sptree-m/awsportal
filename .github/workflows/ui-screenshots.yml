@@ -1,7 +1,7 @@
 name: UI screenshots
 on:
   push:
-    branches: [work/ui-screenshots]
+    branches: [work/ui-screenshots, ui/admin-operations-v2]
     paths:
       - cmd/awsportal/web/**
       - scripts/capture-ui.sh
