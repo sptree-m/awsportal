@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - VERSION
+      - .github/workflows/release.yml
   workflow_dispatch:
 permissions:
   contents: write
@@ -25,14 +26,22 @@ jobs:
           TAG="v$V"
           ASSET="awsportal-$TAG-linux-arm64.tar.gz"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "$TAG already exists"
-            exit 0
+            ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            if grep -Fxq "$ASSET" <<<"$ASSETS" && grep -Fxq "$ASSET.sha256" <<<"$ASSETS"; then
+              echo "$TAG already exists with required assets"
+              exit 0
+            fi
+            echo "$TAG exists but required assets are incomplete; rebuilding/uploading"
           fi
           mkdir -p dist/pkg
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal ./cmd/awsportal
           tar -C dist/pkg -czf "dist/$ASSET" awsportal
           sha256sum "dist/$ASSET" > "dist/$ASSET.sha256"
-          gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
+          else
+            gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          fi
 
       - name: Verify published release assets
         env:
