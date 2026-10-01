@@ -1,0 +1,46 @@
+name: Import bundled Rounded M+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ui/admin-operations-v2]
+    paths:
+      - .github/workflows/import-rounded-mplus.yml
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui/admin-operations-v2
+      - name: Download verified upstream archive
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 -o /tmp/rounded-mplus.7z https://ftp.iij.ad.jp/pub/osdn.jp/users/8/8569/rounded-mplus-20150529.7z
+          echo "e746736c8ded99fe9a9dd72a241ec59435eaa282a18e7ac33a26dc0578c06ff7  /tmp/rounded-mplus.7z" | sha256sum -c -
+      - name: Extract only required font and license
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+          mkdir -p /tmp/rounded
+          7z x -y -o/tmp/rounded /tmp/rounded-mplus.7z >/dev/null
+          FONT="$(find /tmp/rounded -type f -name 'rounded-mplus-1mn-regular.ttf' -print -quit)"
+          test -n "$FONT"
+          mkdir -p cmd/awsportal/web/fonts
+          cp "$FONT" cmd/awsportal/web/fonts/rounded-mplus-1mn-regular.ttf
+          LIC="$(find /tmp/rounded -type f \( -name 'LICENSE_E' -o -name 'LICENSE*' \) -print -quit)"
+          test -n "$LIC"
+          cp "$LIC" cmd/awsportal/web/fonts/LICENSE_MPLUS.txt
+          file cmd/awsportal/web/fonts/rounded-mplus-1mn-regular.ttf
+          test "$(stat -c%s cmd/awsportal/web/fonts/rounded-mplus-1mn-regular.ttf)" -gt 100000
+      - name: Commit bundled assets
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cmd/awsportal/web/fonts/rounded-mplus-1mn-regular.ttf cmd/awsportal/web/fonts/LICENSE_MPLUS.txt
+          git diff --cached --quiet && exit 0
+          git commit -m "font: bundle Rounded M+ 1mn regular"
+          git push

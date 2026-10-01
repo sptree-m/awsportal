@@ -19,4 +19,6 @@ cat >"$TMP/login" <<'HTML'
 HTML
 render "$TMP/dashboard" "$OUT/dashboard-1366x768.png" "1366,768"
 render "$TMP/dashboard" "$OUT/dashboard-1920x1080.png" "1920,1080"
+render "$TMP/dashboard" "$OUT/dashboard-2560x1440.png" "2560,1440"
+render "$TMP/dashboard" "$OUT/dashboard-3840x2160.png" "3840,2160"
 render "$TMP/login" "$OUT/login-1366x768.png" "1366,768"
