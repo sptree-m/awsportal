@@ -24,8 +24,8 @@ if [[ -z "$PORTAL_ID" || "$PORTAL_ID" == "None" ]]; then
 fi
 
 if [[ "$MODE" == "off" ]]; then
-  SQL="UPDATE users SET enabled=1 WHERE username='labdebug';"
-  echo "MFAなしデバッグログインを有効化します"
+  SQL="UPDATE users SET enabled=1, role='portal_admin' WHERE username='labdebug';"
+  echo "MFAなしPortal Adminデバッグログインを有効化します"
 else
   SQL="UPDATE users SET enabled=0 WHERE username='labdebug';"
   echo "MFAなしデバッグログインを無効化します"
@@ -53,7 +53,7 @@ aws ssm get-command-invocation \
 
 echo
 if [[ "$MODE" == "off" ]]; then
-  echo "DEBUG AUTH: OFF (labdebug有効 / MFA不要)"
+  echo "DEBUG AUTH: OFF (labdebug有効 / portal_admin / MFA不要)"
   echo
   echo "=== Debug login ==="
 
