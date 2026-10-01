@@ -16,4 +16,4 @@ cd ~/awsportal && bash lab/destroy.sh
 
 Portalの8080/TCPはcreate.sh実行元のグローバルIPv4 /32だけに許可します。テストEC2はinbound 0です。両EC2のEBSはDeleteOnTermination=trueです。
 
-destroy.shはCloudFormation削除完了まで待機し、Project=awsportal-labタグとIAM role/profileの残存検査を行います。
+destroy.shは削除前にCloudFormationの物理Resource IDを記録し、削除完了後にStack消滅、Project=awsportal-labタグ、EC2/EBS/ENI/VPC/SG、IAM role/profile、および記録済みVPC/Subnet/SG/IGW/RouteTable等を再検査します。残留または削除エラーが1件でもあれば `RESULT: FAIL` と終了コード2、全検査合格時のみ `RESULT: PASS` を出力します。

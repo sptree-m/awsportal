@@ -1,44 +1,63 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
+PROJECT="${PROJECT:-awsportal-lab}"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+FAIL=0
+ok(){ printf '[OK]   %-28s %s\n' "$1" "${2:-}"; }
+bad(){ printf '[FAIL] %-28s %s\n' "$1" "${2:-}"; FAIL=1; }
 
-echo "Deleting $STACK in $REGION ..."
-aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"
-if ! aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"; then
-  FAILED="$(aws cloudformation describe-stack-events --region "$REGION" --stack-name "$STACK" --query 'StackEvents[?ResourceStatus==`DELETE_FAILED`].LogicalResourceId' --output text 2>/dev/null | tr '\t' ' ')"
-  echo "Initial delete failed: $FAILED"
-  if [[ -n "$FAILED" ]]; then
-    aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK" --retain-resources $FAILED
-    aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"
-  fi
+echo "============================================================"
+echo " AWSPORTAL LAB DESTROY VERIFICATION"
+echo "============================================================"
+aws sts get-caller-identity >/dev/null 2>&1 || { bad "AWS credentials" "unavailable"; exit 2; }
+ok "AWS credentials"
+
+# Snapshot CloudFormation physical IDs before deletion so verification is not tag-only.
+if aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>&1; then
+  aws cloudformation list-stack-resources --region "$REGION" --stack-name "$STACK" \
+    --query 'StackResourceSummaries[].[ResourceType,PhysicalResourceId]' --output text >"$TMP/resources" || true
+  aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"
+  if aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"; then ok "CloudFormation delete" "complete"; else bad "CloudFormation delete" "wait failed"; fi
+else
+  : >"$TMP/resources"; ok "CloudFormation stack" "already absent"
 fi
 
-echo "CloudFormation stack deleted."
-echo "Residual tagged resources (informational; API may lag):"
-aws resourcegroupstaggingapi get-resources --region "$REGION" --tag-filters Key=Project,Values=awsportal-lab --query 'ResourceTagMappingList[].ResourceARN' --output text || true
+# Stack must be gone.
+if aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" >/dev/null 2>&1; then bad "CloudFormation stack" "still exists"; else ok "CloudFormation stack" "not found"; fi
 
-echo "EC2/EBS residual check:"
-EC2="$(aws ec2 describe-instances --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Reservations[].Instances[?State.Name!=\`terminated\`].InstanceId' --output text)"
-EBS="$(aws ec2 describe-volumes --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Volumes[].VolumeId' --output text)"
-if [[ -n "$EC2$EBS" ]]; then
-  echo "instances=$EC2 volumes=$EBS"
-  exit 2
-fi
+# Project-tagged regional resources.
+TAGGED="$(aws resourcegroupstaggingapi get-resources --region "$REGION" --tag-filters Key=Project,Values="$PROJECT" --query 'ResourceTagMappingList[].ResourceARN' --output text 2>/dev/null || true)"
+[[ -z "$TAGGED" ]] && ok "Project-tagged resources" "0" || bad "Project-tagged resources" "$TAGGED"
 
-echo "VPC/SG residual check:"
-VPCS="$(aws ec2 describe-vpcs --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'Vpcs[].VpcId' --output text)"
-SGS="$(aws ec2 describe-security-groups --region "$REGION" --filters Name=tag:Project,Values=awsportal-lab --query 'SecurityGroups[].GroupId' --output text)"
-if [[ -n "$VPCS$SGS" ]]; then
-  echo "vpcs=$VPCS security-groups=$SGS"
-  exit 2
-fi
+EC2="$(aws ec2 describe-instances --region "$REGION" --filters Name=tag:Project,Values="$PROJECT" --query 'Reservations[].Instances[?State.Name!=`terminated`].InstanceId' --output text 2>/dev/null || true)"
+EBS="$(aws ec2 describe-volumes --region "$REGION" --filters Name=tag:Project,Values="$PROJECT" --query 'Volumes[].VolumeId' --output text 2>/dev/null || true)"
+ENI="$(aws ec2 describe-network-interfaces --region "$REGION" --filters Name=tag:Project,Values="$PROJECT" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null || true)"
+VPC="$(aws ec2 describe-vpcs --region "$REGION" --filters Name=tag:Project,Values="$PROJECT" --query 'Vpcs[].VpcId' --output text 2>/dev/null || true)"
+SG="$(aws ec2 describe-security-groups --region "$REGION" --filters Name=tag:Project,Values="$PROJECT" --query 'SecurityGroups[].GroupId' --output text 2>/dev/null || true)"
+for pair in "EC2:$EC2" "EBS:$EBS" "ENI:$ENI" "VPC:$VPC" "Security Groups:$SG"; do n="${pair%%:*}"; v="${pair#*:}"; [[ -z "$v" ]] && ok "$n" "0" || bad "$n" "$v"; done
 
-echo "IAM residual check:"
-IAM="$(aws iam list-roles --query "Roles[?contains(RoleName, 'awsportal-lab')].RoleName" --output text)"
-PROFILES="$(aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, 'awsportal-lab')].InstanceProfileName" --output text)"
-if [[ -n "$IAM$PROFILES" ]]; then
-  echo "roles=$IAM profiles=$PROFILES"
-  exit 2
-fi
-echo "OK: no live EC2/EBS/VPC/SG or IAM lab resources found."
+IAM="$(aws iam list-roles --query "Roles[?contains(RoleName, '$STACK')].RoleName" --output text 2>/dev/null || true)"
+PROF="$(aws iam list-instance-profiles --query "InstanceProfiles[?contains(InstanceProfileName, '$STACK')].InstanceProfileName" --output text 2>/dev/null || true)"
+[[ -z "$IAM" ]] && ok "IAM Roles" "0" || bad "IAM Roles" "$IAM"
+[[ -z "$PROF" ]] && ok "Instance Profiles" "0" || bad "Instance Profiles" "$PROF"
+
+# Verify recorded physical IDs when possible.
+while IFS=$'\t' read -r type id; do
+  [[ -z "$id" || "$id" == "None" ]] && continue
+  case "$type" in
+    AWS::EC2::Volume) aws ec2 describe-volumes --region "$REGION" --volume-ids "$id" >/dev/null 2>&1 && bad "Recorded Volume" "$id still exists" ;;
+    AWS::EC2::NetworkInterface) aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$id" >/dev/null 2>&1 && bad "Recorded ENI" "$id still exists" ;;
+    AWS::EC2::VPC) aws ec2 describe-vpcs --region "$REGION" --vpc-ids "$id" >/dev/null 2>&1 && bad "Recorded VPC" "$id still exists" ;;
+    AWS::EC2::Subnet) aws ec2 describe-subnets --region "$REGION" --subnet-ids "$id" >/dev/null 2>&1 && bad "Recorded Subnet" "$id still exists" ;;
+    AWS::EC2::SecurityGroup) aws ec2 describe-security-groups --region "$REGION" --group-ids "$id" >/dev/null 2>&1 && bad "Recorded SG" "$id still exists" ;;
+    AWS::EC2::InternetGateway) aws ec2 describe-internet-gateways --region "$REGION" --internet-gateway-ids "$id" >/dev/null 2>&1 && bad "Recorded IGW" "$id still exists" ;;
+    AWS::EC2::RouteTable) aws ec2 describe-route-tables --region "$REGION" --route-table-ids "$id" >/dev/null 2>&1 && bad "Recorded RouteTable" "$id still exists" ;;
+  esac
+done <"$TMP/resources"
+
+echo "------------------------------------------------------------"
+if (( FAIL )); then echo "RESULT: FAIL - residual resources or deletion errors detected"; exit 2; fi
+echo "RESULT: PASS - no awsportal-lab resources detected"
+echo "============================================================"
