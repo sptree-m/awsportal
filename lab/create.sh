@@ -1,27 +1,64 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-echo "[1/4] caller"; aws sts get-caller-identity
-# Disposable debug lab: allow PC browser access by default.
-# Override with ALLOWED_CIDR=x.x.x.x/32 when source-IP restriction is desired.
-CIDR="${ALLOWED_CIDR:-0.0.0.0/0}"
-if [[ "$CIDR" == "0.0.0.0/0" ]]; then
-  echo "WARNING: debug lab Portal TCP/8080 is open to the Internet."
-fi
-TYPE="${INSTANCE_TYPE:-$(aws ec2 describe-instance-types --region "$REGION" --filters Name=free-tier-eligible,Values=true Name=processor-info.supported-architecture,Values=arm64 --query "InstanceTypes[].InstanceType" --output text | tr "\\t" "\\n" | grep "^t4g\\." | sort | head -1)}"
-if [[ -z "$TYPE" || "$TYPE" == "None" ]]; then echo "No Free Tier eligible ARM64 instance type found in $REGION"; exit 1; fi
-echo "EC2 instance type: $TYPE"
-PASS="Lab-$(openssl rand -hex 12)-A1!"
-TOTP="$(openssl rand 20 | base32 | tr -d "=\\n")"
 BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.1.0/awsportal-v1.1.0-linux-arm64.tar.gz}"
-echo "[2/4] deploy $STACK in $REGION; browser=$CIDR"
+fail(){ rc=$?; echo; echo "RESULT: FAIL - create/verification failed (exit=$rc)"; exit "$rc"; }
+trap fail ERR
+
+echo "============================================================"
+echo " AWSPORTAL LAB CREATE & VERIFICATION"
+echo "============================================================"
+echo "[1/6] AWS credentials"
+aws sts get-caller-identity >/dev/null
+echo "[OK] AWS credentials"
+
+if [[ -n "${ALLOWED_CIDR:-}" ]]; then
+  CIDR="$ALLOWED_CIDR"
+else
+  IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com | tr -d '[:space:]')"
+  [[ "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+  CIDR="$IP/32"
+fi
+[[ "$CIDR" != "0.0.0.0/0" ]]
+echo "[2/6] Browser CIDR: $CIDR"
+
+TYPE="${INSTANCE_TYPE:-t4g.micro}"
+ARCH="$(aws ec2 describe-instance-types --region "$REGION" --instance-types "$TYPE" --query 'InstanceTypes[0].ProcessorInfo.SupportedArchitectures' --output text)"
+grep -qw arm64 <<<"$ARCH"
+echo "[3/6] Instance type: $TYPE (ARM64 verified)"
+
+PASS="Lab-$(openssl rand -hex 12)-A1!"
+TOTP="$(openssl rand 20 | base32 | tr -d '=\n')"
+echo "[4/6] Deploying $STACK"
 aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE" BinaryURL="$BINARY_URL"
-echo "[3/4] outputs"
-aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs' --output table
-echo "[4/4] login"
+
+PORTAL_ID="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`PortalInstanceId`].OutputValue' --output text)"
+TEST_ID="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`TestInstanceId`].OutputValue' --output text)"
+URL="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`PortalURL`].OutputValue' --output text)"
+echo "[5/6] EC2 verification"
+aws ec2 wait instance-running --region "$REGION" --instance-ids "$PORTAL_ID" "$TEST_ID"
+LIVE_ARCH="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$PORTAL_ID" "$TEST_ID" --query 'Reservations[].Instances[].Architecture' --output text)"
+[[ "$(tr '\t' '\n' <<<"$LIVE_ARCH" | grep -cx arm64)" -eq 2 ]]
+echo "[OK] Portal EC2: $PORTAL_ID / arm64 / running"
+echo "[OK] Test EC2:   $TEST_ID / arm64 / running"
+
+echo "[6/6] Application health"
+HEALTH=""
+for _ in $(seq 1 60); do
+  if [[ "$(curl -fsS --max-time 3 "$URL/healthz" 2>/dev/null || true)" == "ok" ]]; then HEALTH=ok; break; fi
+  sleep 5
+done
+[[ "$HEALTH" == "ok" ]]
+echo "[OK] /healthz: ok"
+
+echo "------------------------------------------------------------"
+echo "RESULT: PASS - ARM lab deployment and application health verified"
+echo "Portal URL: $URL"
 echo "username=labadmin"
 echo "password=$PASS"
 echo "TOTP secret=$TOTP"
 echo "TOTP URI=otpauth://totp/awsportal:labadmin?secret=$TOTP&issuer=awsportal"
+echo "============================================================"
+trap - ERR
