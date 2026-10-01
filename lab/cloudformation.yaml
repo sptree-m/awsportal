@@ -38,6 +38,8 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument: {Version: '2012-10-17', Statement: [{Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: 'sts:AssumeRole'}]}
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
         - PolicyName: awsportal-lab
           PolicyDocument:
@@ -88,10 +90,20 @@ Resources:
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role user > /tmp/admin.txt
               sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET role='portal_admin', totp_secret='${LabTOTPSecret}' WHERE username='labadmin';"
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host 127.0.0.1
+
+              # Lab-only MFA-free debug user (disabled by default)
+              DEBUGPASS="Debug-$PASS"
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labdebug -password "$DEBUGPASS" -role user
+
+              sqlite3 /var/lib/awsportal/awsportal.db "INSERT INTO instance_users(instance_id,user_id,can_control) SELECT i.id,u.id,1 FROM instances i,users u WHERE i.instance_id='${TestId}' AND u.username='labdebug';"
+              sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET enabled=0 WHERE username='labdebug';"
+
               chown -R awsportal:awsportal /var/lib/awsportal
               cat >/var/lib/awsportal/lab-login.txt <<EOF
               username=labadmin
               password=$PASS
+              debug_username=labdebug
+              debug_password=$DEBUGPASS
               $(cat /tmp/admin.txt)
               EOF
               chmod 600 /var/lib/awsportal/lab-login.txt
