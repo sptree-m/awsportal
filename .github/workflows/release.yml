@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - VERSION
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -32,3 +33,17 @@ jobs:
           tar -C dist/pkg -czf "dist/$ASSET" awsportal
           sha256sum "dist/$ASSET" > "dist/$ASSET.sha256"
           gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+
+      - name: Verify published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          V="$(tr -d '[:space:]' < VERSION)"
+          TAG="v$V"
+          ASSET="awsportal-$TAG-linux-arm64.tar.gz"
+          gh release view "$TAG" >/dev/null
+          ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          grep -Fxq "$ASSET" <<<"$ASSETS"
+          grep -Fxq "$ASSET.sha256" <<<"$ASSETS"
+          echo "RESULT: PASS - $TAG ARM64 release assets verified"
