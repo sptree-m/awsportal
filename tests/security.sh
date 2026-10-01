@@ -14,3 +14,12 @@ echo 'UI dependency checks'
 ! grep -R -E -i 'https?://|//(cdn|fonts\.)' cmd/awsportal/web --include='*.html' --include='*.css'
 ! grep -R -E -i '<script[^>]+src=|@import|url\(' cmd/awsportal/web --include='*.html' --include='*.css'
 echo 'static security checks: PASS'
+
+echo 'UI network-weight checks'
+test "$(wc -c < cmd/awsportal/web/app.css)" -lt 30000
+test "$(wc -c < cmd/awsportal/web/dashboard.js)" -lt 12000
+! grep -R -E -i 'react|vue|bootstrap|tailwind|jquery|chart\.js|googleapis|gstatic|cdn' cmd/awsportal/web
+! grep -R -E -i 'setInterval|EventSource|WebSocket' cmd/awsportal/web --include='*.js'
+grep -q 'max-age=86400' cmd/awsportal/main.go
+grep -q 'Rounded Mplus 1mn' cmd/awsportal/web/app.css
+echo 'UI network-weight checks: PASS'
