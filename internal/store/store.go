@@ -5,21 +5,22 @@ import (
  "database/sql"
  "time"
  "fmt"
+ "strings"
  _ "modernc.org/sqlite"
 )
 
 type Store struct{ DB *sql.DB }
-type User struct{ ID int64; Username, PasswordHash, Role, TOTPSecret string; Enabled, MustChangePassword bool; TempPasswordExpires int64 }
+type User struct{ ID int64; Username, PasswordHash, Role, TOTPSecret string; Enabled, MustChangePassword bool; TempPasswordExpires, LastLoginAt, ExpiresAt, DisabledAt int64; DisabledReason string }
 type Instance struct{ ID int64; InstanceID, Name, DCVHost, DCVSessionID string; CanControl bool }
 type Schedule struct{ ID, InstanceDBID, OwnerUserID int64; Action, TimeHHMM, Weekdays, Timezone string; Enabled bool }
 type MFADevice struct{ ID int64; Name, Secret string; Verified bool; CreatedAt string }
 
 func Open(path string)(*Store,error){ db,e:=sql.Open("sqlite",path); if e!=nil{return nil,e}; db.SetMaxOpenConns(1); return &Store{DB:db},nil }
 func(s *Store)Close()error{return s.DB.Close()}
-func(s *Store)Migrate(ctx context.Context)error{ _,e:=s.DB.ExecContext(ctx,schema); return e }
+func(s *Store)Migrate(ctx context.Context)error{if _,e:=s.DB.ExecContext(ctx,schema);e!=nil{return e};for _,q:=range []string{"ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0","ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0","ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0","ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"}{if _,e:=s.DB.ExecContext(ctx,q);e!=nil&&!strings.Contains(e.Error(),"duplicate column name"){return e}};return nil}
 
 func(s *Store)UserByName(ctx context.Context,n string)(User,error){var u User;var en int;err:=s.DB.QueryRowContext(ctx,"SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires FROM users WHERE username=?",n).Scan(&u.ID,&u.Username,&u.PasswordHash,&u.Role,&u.TOTPSecret,&en,&u.MustChangePassword,&u.TempPasswordExpires);u.Enabled=en==1;return u,err}
-func(s *Store)CreateUser(ctx context.Context,n,h,role,totp string)error{_,e:=s.DB.ExecContext(ctx,"INSERT INTO users(username,password_hash,role,totp_secret,enabled) VALUES(?,?,?,?,1)",n,h,role,totp);return e}
+func(s *Store)CreateUser(ctx context.Context,n,h,role,totp string)error{_,e:=s.DB.ExecContext(ctx,"INSERT INTO users(username,password_hash,role,totp_secret,enabled,expires_at) VALUES(?,?,?,?,1,?)",n,h,role,totp,time.Now().Add(30*24*time.Hour).Unix());return e}
 func(s *Store)VisibleInstances(ctx context.Context,u User)([]Instance,error){
  q:=`SELECT DISTINCT i.id,i.instance_id,i.name,i.dcv_host,i.dcv_session_id,
  CASE WHEN ?='portal_admin' OR COALESCE(iu.can_control,0)=1 OR COALESCE(ig.can_control,0)=1 THEN 1 ELSE 0 END
@@ -63,3 +64,8 @@ func(s *Store)MFADevice(ctx context.Context,userID,id int64)(MFADevice,error){va
 func(s *Store)VerifyMFADevice(ctx context.Context,userID,id int64)error{res,e:=s.DB.ExecContext(ctx,"UPDATE mfa_devices SET verified=1 WHERE id=? AND user_id=?",id,userID);if e!=nil{return e};n,_:=res.RowsAffected();if n!=1{return sql.ErrNoRows};return nil}
 func(s *Store)DeleteMFADevice(ctx context.Context,userID,id int64)error{res,e:=s.DB.ExecContext(ctx,"DELETE FROM mfa_devices WHERE id=? AND user_id=?",id,userID);if e!=nil{return e};n,_:=res.RowsAffected();if n!=1{return sql.ErrNoRows};return nil}
 func(s *Store)VerifyMFASecrets(ctx context.Context,userID int64)([]string,error){rows,e:=s.DB.QueryContext(ctx,"SELECT secret FROM mfa_devices WHERE user_id=? AND verified=1",userID);if e!=nil{return nil,e};defer rows.Close();var out []string;for rows.Next(){var x string;if e=rows.Scan(&x);e!=nil{return nil,e};out=append(out,x)};return out,rows.Err()}
+
+func(s *Store)AccountExpired(u User,now time.Time)bool{return u.Role!="portal_admin"&&u.Enabled&&u.ExpiresAt>0&&now.Unix()>u.ExpiresAt}
+func(s *Store)RecordLogin(ctx context.Context,id int64,now time.Time)error{_,e:=s.DB.ExecContext(ctx,"UPDATE users SET last_login_at=?,expires_at=?,disabled_at=0,disabled_reason='' WHERE id=?",now.Unix(),now.Add(30*24*time.Hour).Unix(),id);return e}
+func(s *Store)DisableInactive(ctx context.Context,id int64,now time.Time)error{_,e:=s.DB.ExecContext(ctx,"UPDATE users SET enabled=0,disabled_at=?,disabled_reason='inactive_30_days' WHERE id=? AND role!='portal_admin'",now.Unix(),id);return e}
+func(s *Store)ReactivateUser(ctx context.Context,n string,now time.Time)error{res,e:=s.DB.ExecContext(ctx,"UPDATE users SET enabled=1,disabled_at=0,disabled_reason='',expires_at=? WHERE username=? AND role!='portal_admin'",now.Add(30*24*time.Hour).Unix(),n);if e!=nil{return e};x,_:=res.RowsAffected();if x!=1{return sql.ErrNoRows};return nil}
