@@ -35,7 +35,7 @@ CMD_ID="$(aws ssm send-command \
   --region "$REGION" \
   --instance-ids "$PORTAL_ID" \
   --document-name AWS-RunShellScript \
-  --parameters commands="sudo sqlite3 /var/lib/awsportal/awsportal.db \"$SQL\"" \
+  --parameters "$(python3 -c 'import json,sys; print(json.dumps({"commands":[sys.argv[1]]}))' "sudo sqlite3 /var/lib/awsportal/awsportal.db \"$SQL\"")" \
   --query 'Command.CommandId' \
   --output text)"
 
@@ -57,10 +57,18 @@ if [[ "$MODE" == "off" ]]; then
   echo
   echo "=== Debug login ==="
 
-  aws ssm send-command     --region "$REGION"     --instance-ids "$PORTAL_ID"     --document-name AWS-RunShellScript     --parameters 'commands=["sudo grep ^debug_ /var/lib/awsportal/lab-login.txt"]'     --query 'Command.CommandId'     --output text
-
+  LOGIN_CMD_ID="$(aws ssm send-command \
+    --region "$REGION" \
+    --instance-ids "$PORTAL_ID" \
+    --document-name AWS-RunShellScript \
+    --parameters '{"commands":["sudo grep ^debug_ /var/lib/awsportal/lab-login.txt"]}' \
+    --query 'Command.CommandId' \
+    --output text)"
+  aws ssm wait command-executed --region "$REGION" --command-id "$LOGIN_CMD_ID" --instance-id "$PORTAL_ID"
+  aws ssm get-command-invocation \
+    --region "$REGION" --command-id "$LOGIN_CMD_ID" --instance-id "$PORTAL_ID" \
+    --query 'StandardOutputContent' --output text
   echo "username: labdebug"
-  echo "password: Portal EC2の /var/lib/awsportal/lab-login.txt に保存"
 else
   echo "DEBUG AUTH: ON (labdebug無効 / Portal Admin MFA必須)"
 fi
