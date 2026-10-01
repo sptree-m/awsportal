@@ -104,6 +104,8 @@ Resources:
               Environment=AWSPORTAL_DB=/var/lib/awsportal/awsportal.db
               Environment=AWSPORTAL_ADDR=:8080
               Environment=AWSPORTAL_COOKIE_SECURE=0
+              Environment=AWS_REGION=${AWS::Region}
+              Environment=AWS_DEFAULT_REGION=${AWS::Region}
               ExecStart=/usr/local/bin/awsportal
               Restart=always
               RestartSec=2
