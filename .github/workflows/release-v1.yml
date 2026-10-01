@@ -1,0 +1,31 @@
+name: Release v1.0.0
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/release-v1.yml']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - run: go mod tidy
+      - name: Test
+        run: go test ./...
+      - name: Build Linux ARM64
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o awsportal ./cmd/awsportal
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o awsportal-admin ./cmd/awsportal-admin
+          tar -czf awsportal-v1.0.0-linux-arm64.tar.gz awsportal awsportal-admin
+          sha256sum awsportal-v1.0.0-linux-arm64.tar.gz > awsportal-v1.0.0-linux-arm64.tar.gz.sha256
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view v1.0.0 >/dev/null 2>&1 && exit 0
+          gh release create v1.0.0 awsportal-v1.0.0-linux-arm64.tar.gz awsportal-v1.0.0-linux-arm64.tar.gz.sha256 --target "${GITHUB_SHA}" --title "awsportal v1.0.0" --notes "第一弾正式版。EC2/DCV管理、スケジュール、MFA、パスワード復旧、コスト集計、30日無アクセス自動無効化、Portal Adminによる再有効化、監査ログ基盤、CloudShell labを含みます。"
