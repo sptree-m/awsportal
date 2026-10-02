@@ -83,7 +83,14 @@ Resources:
               useradd --system --home /var/lib/awsportal --create-home awsportal
               mkdir -p /tmp/awsportal-bin
               curl -fL --retry 5 --retry-delay 2 "${BinaryURL}" -o /tmp/awsportal.tar.gz
+              curl -fL --retry 5 --retry-delay 2 "${BinaryURL}.sha256" -o /tmp/awsportal.tar.gz.sha256
+              EXPECTED="$(awk '{print $1}' /tmp/awsportal.tar.gz.sha256)"
+              ACTUAL="$(sha256sum /tmp/awsportal.tar.gz | awk '{print $1}')"
+              test -n "$EXPECTED"
+              test "$EXPECTED" = "$ACTUAL"
               tar -xzf /tmp/awsportal.tar.gz -C /tmp/awsportal-bin
+              test -s /tmp/awsportal-bin/awsportal
+              test -s /tmp/awsportal-bin/awsportal-admin
               install -m 0755 /tmp/awsportal-bin/awsportal /usr/local/bin/awsportal
               install -m 0755 /tmp/awsportal-bin/awsportal-admin /usr/local/bin/awsportal-admin
               PASS="${LabPassword}"
