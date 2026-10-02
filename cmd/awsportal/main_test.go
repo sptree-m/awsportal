@@ -243,7 +243,7 @@ func TestDCVHTTPTokenIsOneTimeAndBoundToAssignedInstance(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/dcv-auth", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	a.dcvAuth(first, req)
-	if first.Code != http.StatusOK || strings.TrimSpace(first.Body.String()) != "alice" {
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `<auth result="yes"><username>alice</username></auth>`) {
 		t.Fatalf("first dcv auth code=%d body=%q", first.Code, first.Body.String())
 	}
 
@@ -383,7 +383,10 @@ func TestHTMXMFADeleteRemovesDeviceWithoutRedirect(t *testing.T) {
 
 func TestHTMXRefreshFragmentsAndHistory(t *testing.T) {
 	a, _ := newHandlerTestApp(t)
-	u := store.User{Username: "admin", Role: "portal_admin"}
+	if err := a.db.CreateUser(context.Background(), "admin", "x", "portal_admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	u, _ := a.db.UserByName(context.Background(), "admin")
 	for _, tc := range []struct {
 		path, target string
 		handler      http.HandlerFunc
@@ -455,5 +458,13 @@ func TestHTMXDetailActionAndTerminalRefresh(t *testing.T) {
 	a.require(a.instanceDetail)(w, r)
 	if w.Code != 200 || strings.Contains(w.Body.String(), "data-transition") || strings.Contains(w.Body.String(), "<!doctype") || !strings.Contains(w.Body.String(), "DCV 接続") {
 		t.Fatalf("invalid terminal detail: %s", w.Body.String())
+	}
+}
+
+func TestDCVAuthResponseEscapesUsername(t *testing.T) {
+	w := httptest.NewRecorder()
+	dcvAuthReply(w, 200, "yes", "user<&", "")
+	if w.Header().Get("Content-Type") != "application/xml; charset=utf-8" || !strings.Contains(w.Body.String(), "user&lt;&amp;") {
+		t.Fatalf("invalid DCV XML: %s", w.Body.String())
 	}
 }

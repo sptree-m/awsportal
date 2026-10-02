@@ -31,10 +31,12 @@
 | user / group_admin / portal_admin ロール | ③ | ロール値と表示制御は実装。group_admin専用の管理権限フローは未実装。 |
 | ユーザー直接割当によるEC2参照/操作制御 | ① | store RBAC test + HTTP Start/Stop拒否系をmock AWSで検証。 |
 | グループ割当によるEC2参照/操作制御 | ① | store RBAC test。 |
-| グループ作成・Instance→Group割当 | ① | awsportal-admin CLI実装。DB/RBAC側テストあり。 |
-| User→Group所属管理 | ③ | DBテーブルはあるが、CLI/UIの管理操作がない。現状はDB操作。 |
+| グループ作成・Instance→Group割当 | ① | Portal Admin画面/APIとCLI。Store/API/ブラウザで割り当て・権限合成を検証。 |
+| User→Group所属管理 | ① | Portal Admin画面/API。所属追加/除外、割当解除後の認証拒否を検証。 |
 | Group Adminによる所属/Instance管理 | ④ | 権限モデル/管理画面/操作APIが未実装。 |
 | Portal Admin ユーザー作成/無効化/再有効化 | ① | handler実装 + storeの無効化/再有効化テスト。UIブラウザE2Eは別。 |
+
+| インスタンス無効化/再有効化 | ① | Portal Admin専用画面/API。無効化後の電源/DCV/スケジュール拒否を検証。AWS停止/削除は行わない。 |
 
 ## EC2・スケジュール
 
@@ -54,7 +56,7 @@
 | DCVワンクリック用60秒/1回Token | ① | store unit + HTTP発行/消費/再利用拒否test。 |
 | TokenをSHA-256で保存 | ① | unit test対象。 |
 | Instance割当のないユーザーへのToken拒否 | ① | VisibleInstances/RBACに依存し、HTTP発行経路で割当確認を実施。 |
-| DCV External Authenticator連携 | ② | endpoint実装済み。実DCV Serverからの照会は未確認。 |
+| DCV External Authenticator連携 | ② | AWS仕様のXML応答とescapeをテスト。従来のplain textを修正。実DCV Serverからの照会は未確認。 |
 | OSユーザー/Session自動プロビジョニング | ④ | docs/07で別途必要と明記、実装なし。 |
 | DCV一般ユーザーDLP permission | ② | deny設定ファイルと静的テストあり。利用するDCV Server versionで未検証。 |
 
@@ -91,3 +93,5 @@
 - Cost Explorerに対象月/タグデータがある環境で表示/CSVを確認。
 - 実DCV ServerでExternal Authenticationとone-time tokenを確認。
 - 使用するDCV versionでDLP permission名/挙動を確認。
+
+今回のインスタンス管理と将来拡張の詳細は docs/11-instance-administration.md を参照。
