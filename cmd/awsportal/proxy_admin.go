@@ -65,7 +65,7 @@ func (a *app) proxyAdminChange(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "適用対象を選択してください", 400)
 			return
 		}
-		e = a.db.SaveProxyRule(r.Context(), store.ProxyRule{ID: id, Name: r.FormValue("name"), Scope: scope, SubjectID: subject, Domain: r.FormValue("domain"), Ports: r.FormValue("ports"), Methods: r.FormValue("methods"), Effect: r.FormValue("effect"), Enabled: r.FormValue("enabled") == "1"})
+		e = a.db.SaveProxyRule(r.Context(), store.ProxyRule{ID: id, Name: r.FormValue("name"), Scope: scope, SubjectID: subject, Domain: r.FormValue("domain"), Kind: r.FormValue("kind"), Ports: r.FormValue("ports"), Methods: r.FormValue("methods"), Effect: r.FormValue("effect"), Enabled: r.FormValue("enabled") == "1"})
 	case "delete":
 		e = a.db.DeleteProxyRule(r.Context(), id)
 	case "issue":

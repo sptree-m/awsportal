@@ -61,6 +61,7 @@ func TestHTTPAuthenticationPolicyAndForwarding(t *testing.T) {
 	p.transport.DialContext = func(ctx context.Context, n, a string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", strings.TrimPrefix(up.URL, "http://"))
 	}
+	p.dial = p.transport.DialContext
 	for _, tt := range []struct {
 		method, target, auth string
 		status               int

@@ -57,6 +57,7 @@ func TestBrowserConsole(t *testing.T) {
 		t.Skip("set AWSPORTAL_BROWSER_TEST=1 with Node/Playwright installed")
 	}
 	a, _ := newHandlerTestApp(t)
+	a.egress = &fakeEgressAdmin{}
 	ctx := context.Background()
 	if err := a.db.CreateUser(ctx, "admin", "x", "portal_admin", ""); err != nil {
 		t.Fatal(err)
@@ -84,6 +85,8 @@ func TestBrowserConsole(t *testing.T) {
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
+	mux.HandleFunc("GET /admin/egress", a.require(a.egressPage))
+	mux.HandleFunc("POST /admin/egress", a.require(a.egressChange))
 	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
 	mux.HandleFunc("POST /admin/proxy", a.require(a.proxyAdminChange))
 	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))

@@ -11,3 +11,7 @@ variable "portal_instance_type" {
   type    = string
   default = "t4g.micro"
 }
+variable "managed_egress_instance_ids" {
+  type    = set(string)
+  default = []
+}

@@ -22,6 +22,17 @@ resource "aws_security_group" "portal" {
     cidr_blocks = var.corporate_cidrs
   }
 
+  dynamic "ingress" {
+    for_each = aws_security_group.managed_egress
+    content {
+      description     = "TLS proxy from managed EC2"
+      from_port       = 3128
+      to_port         = 3128
+      protocol        = "tcp"
+      security_groups = [ingress.value.id]
+    }
+  }
+
   egress {
     description = "HTTPS for approved AWS/API path; production egress must be restricted by network policy"
     from_port   = 443
@@ -72,7 +83,7 @@ resource "aws_iam_role_policy" "portal" {
       {
         Sid      = "ReadInstances"
         Effect   = "Allow"
-        Action   = ["ec2:DescribeInstances", "ec2:DescribeInstanceStatus"]
+        Action   = ["ec2:DescribeInstances", "ec2:DescribeInstanceStatus", "ec2:DescribeSecurityGroups", "ec2:DescribeNetworkInterfaces"]
         Resource = "*"
       },
       {
@@ -115,4 +126,39 @@ resource "aws_instance" "portal" {
   }
 
   tags = { Name = "awsportal" }
+}
+
+resource "aws_security_group" "managed_egress" {
+  for_each    = var.managed_egress_instance_ids
+  name_prefix = "awsportal-egress-${each.key}-"
+  vpc_id      = var.vpc_id
+  ingress {
+    description = "DCV from corporate network"
+    from_port   = 8443
+    to_port     = 8443
+    protocol    = "tcp"
+    cidr_blocks = var.corporate_cidrs
+  }
+  egress = []
+  # No egress at bootstrap. Portal owns subsequent egress rules.
+  tags = { "awsportal:egress-instance" = each.key }
+  lifecycle { ignore_changes = [egress] }
+}
+output "managed_egress_security_groups" {
+  value = { for instance, group in aws_security_group.managed_egress : instance => group.id }
+}
+output "proxy_security_group_id" { value = aws_security_group.portal.id }
+
+resource "aws_iam_role_policy" "managed_egress" {
+  count = length(var.managed_egress_instance_ids) > 0 ? 1 : 0
+  role  = aws_iam_role.portal.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "ControlManagedEgress"
+      Effect   = "Allow"
+      Action   = ["ec2:AuthorizeSecurityGroupEgress", "ec2:RevokeSecurityGroupEgress"]
+      Resource = [for g in aws_security_group.managed_egress : g.arn]
+    }]
+  })
 }
