@@ -1,25 +1,36 @@
 name: UI screenshots
 on:
   push:
-    branches: [work/ui-screenshots, ui/admin-operations-v2]
+    branches: [main, ci/ui-visual-artifacts]
+    paths:
+      - cmd/awsportal/web/**
+      - scripts/capture-ui.sh
+      - .github/workflows/ui-screenshots.yml
+  pull_request:
     paths:
       - cmd/awsportal/web/**
       - scripts/capture-ui.sh
       - .github/workflows/ui-screenshots.yml
 permissions:
-  contents: write
+  contents: read
 jobs:
   capture:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Capture
+      - name: Capture 1366 / FHD / 2K / 4K
         run: bash scripts/capture-ui.sh
-      - name: Store screenshots
+      - name: Verify screenshots
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/screenshots/*.png
-          git diff --cached --quiet && exit 0
-          git commit -m "docs: UI screenshots"
-          git push
+          test -s docs/screenshots/dashboard-1366x768.png
+          test -s docs/screenshots/dashboard-1920x1080.png
+          test -s docs/screenshots/dashboard-2560x1440.png
+          test -s docs/screenshots/dashboard-3840x2160.png
+          test -s docs/screenshots/login-1366x768.png
+      - name: Upload visual QA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots-${{ github.sha }}
+          path: docs/screenshots/*.png
+          if-no-files-found: error
+          retention-days: 14
