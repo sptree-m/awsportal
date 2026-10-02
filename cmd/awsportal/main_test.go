@@ -124,9 +124,11 @@ func TestPortalAdminLoginRequiresTOTP(t *testing.T) {
  if err = a.db.CreateUser(context.Background(), "admin", hash, "portal_admin", secret); err != nil { t.Fatal(err) }
 
  bad := httptest.NewRecorder()
- a.login(bad, httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(url.Values{
+ badReq := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(url.Values{
   "username":{"admin"}, "password":{"Correct-Horse-42"},
- }.Encode())))
+ }.Encode()))
+ badReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+ a.login(bad, badReq)
  if bad.Code != http.StatusUnauthorized { t.Fatalf("admin login without TOTP=%d", bad.Code) }
 
  code, err := auth.TOTPAt(secret, time.Now(), 6)
