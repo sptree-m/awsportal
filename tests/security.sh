@@ -42,3 +42,5 @@ grep -q 'var htmx=' cmd/awsportal/web/htmx.min.js
 test -s cmd/awsportal/web/HTMX_LICENSE.txt
 test -s cmd/awsportal/web/fonts/rounded-mplus-1mn-regular.ttf
 echo 'UI network-weight checks: PASS'
+# The downloadable automation client and repository CLI must stay identical.
+cmp scripts/awsportal-mirror cmd/awsportal/web/awsportal-mirror.py

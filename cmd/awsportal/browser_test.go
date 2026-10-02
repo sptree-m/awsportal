@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	awsapi "github.com/sptree-m/awsportal/internal/aws"
+	"github.com/sptree-m/awsportal/internal/mirror"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -58,6 +60,7 @@ func TestBrowserConsole(t *testing.T) {
 	}
 	a, _ := newHandlerTestApp(t)
 	a.egress = &fakeEgressAdmin{}
+	a.mirrors, _ = mirror.New(a.db, filepath.Join(t.TempDir(), "mirrors"), "", "")
 	ctx := context.Background()
 	if err := a.db.CreateUser(ctx, "admin", "x", "portal_admin", ""); err != nil {
 		t.Fatal(err)
@@ -85,6 +88,8 @@ func TestBrowserConsole(t *testing.T) {
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
+	mux.HandleFunc("GET /mirrors", a.require(a.mirrorPage))
+	mux.HandleFunc("POST /mirrors", a.require(a.mirrorChange))
 	mux.HandleFunc("GET /admin/egress", a.require(a.egressPage))
 	mux.HandleFunc("POST /admin/egress", a.require(a.egressChange))
 	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
