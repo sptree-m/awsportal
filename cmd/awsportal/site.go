@@ -57,7 +57,7 @@ func (a *app) siteAdminChange(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "管理者のみ実行できます", 403)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 32768)
+	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
 	if r.ParseForm() != nil {
 		http.Error(w, "入力が大きすぎるか不正です", 400)
 		return

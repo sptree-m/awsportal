@@ -94,3 +94,23 @@ func TestSiteAdminRightsBrandEscapingAndUserManual(t *testing.T) {
 		t.Fatal("save audit", count)
 	}
 }
+
+// Japanese text expands to nine bytes per character in a URL-encoded form.
+func TestSiteFormAcceptsDocumentedJapaneseLimits(t *testing.T) {
+	a, _ := newHandlerTestApp(t)
+	ctx := context.Background()
+	if err := a.db.CreateUser(ctx, "admin", "x", "portal_admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := a.db.UserByName(ctx, "admin")
+	form := url.Values{"brand_title": {strings.Repeat("名", 80)}, "brand_subtitle": {strings.Repeat("説", 160)}, "home_title": {strings.Repeat("題", 80)}, "home_message": {strings.Repeat("文", 4000)}, "login_message": {strings.Repeat("案", 1000)}, "help_message": {strings.Repeat("補", 2000)}}
+	w := httptest.NewRecorder()
+	a.require(a.siteAdminChange)(w, requestAs(a, admin, "POST", "/admin/site", strings.NewReader(form.Encode())))
+	if w.Code != 303 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	got, err := a.db.SiteSettings(ctx)
+	if err != nil || got.HomeMessage != form.Get("home_message") || got.HelpMessage != form.Get("help_message") {
+		t.Fatal("maximum Japanese text not preserved", err)
+	}
+}
