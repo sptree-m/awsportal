@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"embed"
 	"encoding/base64"
 	"encoding/csv"
@@ -15,9 +16,11 @@ import (
 	"github.com/skip2/go-qrcode"
 	"github.com/sptree-m/awsportal/internal/auth"
 	awsapi "github.com/sptree-m/awsportal/internal/aws"
+	forwardproxy "github.com/sptree-m/awsportal/internal/proxy"
 	"github.com/sptree-m/awsportal/internal/store"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -57,8 +60,36 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	a := &app{db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), tpl: template.Must(template.ParseFS(web, "web/*.html")), sessions: map[string]session{}}
+	a := &app{db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
 	go a.scheduler(ctx)
+	if addr := env("AWSPORTAL_PROXY_ADDR", ""); addr != "" {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			log.Fatal("invalid AWSPORTAL_PROXY_ADDR")
+		}
+		cert, key := env("AWSPORTAL_PROXY_TLS_CERT", ""), env("AWSPORTAL_PROXY_TLS_KEY", "")
+		if (cert == "") != (key == "") {
+			log.Fatal("proxy TLS certificate and key must both be configured")
+		}
+		ip := net.ParseIP(host)
+		if (ip == nil || !ip.IsLoopback()) && (cert == "" || key == "") {
+			log.Fatal("non-loopback proxy requires TLS certificate and key")
+		}
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		ps := &http.Server{Handler: forwardproxy.New(db), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 32768, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}, TLSNextProto: map[string]func(*http.Server, *tls.Conn, http.Handler){}}
+		go func() {
+			var err error
+			if cert != "" && key != "" {
+				err = ps.ServeTLS(listener, cert, key)
+			} else {
+				err = ps.Serve(listener)
+			}
+			log.Fatal(err)
+		}()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health)
 	mux.HandleFunc("GET /login", a.loginPage)
@@ -73,6 +104,8 @@ func main() {
 	mux.HandleFunc("POST /admin/users/{username}/disable", a.require(a.adminDisableUser))
 	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
 	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
+	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
+	mux.HandleFunc("POST /admin/proxy", a.require(a.proxyAdminChange))
 	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))
 	mux.HandleFunc("GET /mfa", a.require(a.mfaPage))
 	mux.HandleFunc("POST /mfa/add", a.require(a.mfaAdd))
