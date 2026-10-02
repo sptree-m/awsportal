@@ -62,6 +62,11 @@ func TestBrowserConsole(t *testing.T) {
 		t.Fatal(err)
 	}
 	admin, _ := a.db.UserByName(ctx, "admin")
+	if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := a.db.UserByName(ctx, "alice")
+	a.sessions["alice-session"] = session{User: alice, Expires: time.Now().Add(time.Hour)}
 	if _, err := a.db.DB.ExecContext(ctx, `INSERT INTO instances(instance_id,name,dcv_host) VALUES('i-dev','ADAS Development','dev.local'),('i-train','CV Training','train.local')`); err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +79,10 @@ func TestBrowserConsole(t *testing.T) {
 	mux.HandleFunc("GET /instances/{id}/row", a.require(a.instanceRow))
 	mux.HandleFunc("GET /instances/{id}", a.require(a.instanceDetail))
 	mux.HandleFunc("POST /instance/{id}/{action}", a.require(a.instanceAction))
+	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
+	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
+	mux.HandleFunc("POST /logout", a.logout)
+	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
 	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))
 	mux.HandleFunc("GET /mfa", a.require(a.mfaPage))

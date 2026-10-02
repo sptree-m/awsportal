@@ -33,7 +33,21 @@ const assert=require('node:assert/strict');
   assert.equal(await page.locator('aside').count(),1);
   if(process.env.AWSPORTAL_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/instances-${width}x${height}.png`});
  }
+
+ await page.locator('nav a[href="/admin/instances"]').click();await page.waitForURL(base+'/admin/instances');
+ const card=page.locator('[data-admin-instance="i-dev"]');
+ const userForm=card.locator('form').filter({has:page.locator('input[value="user"]')}).filter({has:page.locator('input[value="assign"]')});
+ await userForm.locator('select[name="subject_id"]').selectOption({label:'alice'});await userForm.getByRole('button',{name:'ユーザー割り当て'}).click();await page.waitForSelector('[data-admin-instance="i-dev"] .assignment-list strong');
+ const userContext=await browser.newContext();await userContext.addCookies([{name:'awsportal_session',value:'alice-session',url:base}]);const userPage=await userContext.newPage();await userPage.goto(base+'/instances');assert.equal(await userPage.locator('tr[data-instance]').count(),1);assert.equal(await userPage.getByRole('button',{name:'停止',exact:true}).count(),0);assert.equal(await userPage.locator('nav a[href="/admin/instances"]').count(),0);
+ await page.locator('form').filter({has:page.locator('input[value="create-group"]')}).locator('input[name="name"]').fill('ADAS Team');await page.getByRole('button',{name:'グループ作成',exact:true}).click();await page.waitForSelector('select[name="group_id"] option:text("ADAS Team")',{state:'attached'});
+ const memberForm=page.locator('form').filter({has:page.locator('input[value="add-member"]')});await memberForm.locator('select[name="group_id"]').selectOption({label:'ADAS Team'});await memberForm.locator('select[name="user_id"]').selectOption({label:'alice'});await memberForm.getByRole('button',{name:'メンバー追加'}).click();await page.waitForSelector('.group-members form');
+ const groupForm=card.locator('form').filter({has:page.locator('input[value="group"]')}).filter({has:page.locator('input[value="assign"]')});await groupForm.locator('select[name="subject_id"]').selectOption({label:'ADAS Team'});await groupForm.locator('select[name="permission"]').selectOption('control');await groupForm.getByRole('button',{name:'グループ割り当て'}).click();await page.waitForSelector('[data-admin-instance="i-dev"] .assignment-list form:nth-child(2)');
+ await userPage.reload();assert.equal(await userPage.locator('tr[data-instance]').count(),1);assert.equal(await userPage.getByRole('button',{name:'停止',exact:true}).count(),1);
+ await card.getByRole('button',{name:'無効化',exact:true}).click();await card.getByRole('button',{name:'再有効化',exact:true}).waitFor();await userPage.reload();assert.equal(await userPage.locator('tr[data-instance]').count(),0);
+ await card.getByRole('button',{name:'再有効化',exact:true}).click();await card.getByRole('button',{name:'無効化',exact:true}).waitFor();
+ for(const [width,height] of [[1366,768],[1920,1080],[2560,1440],[3840,2160],[390,844]]){await page.setViewportSize({width,height});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`admin page overflow at ${width}`);assert.equal(await page.getByRole('button',{name:'Logout',exact:true}).isVisible(),true);if(process.env.AWSPORTAL_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/instance-admin-${width}x${height}.png`})}
+ await userContext.close();
  assert.equal(documents,1,'boosted navigation must not reload document');assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
- console.log('PASS: boosted navigation, repeated search, partial refresh, detail action/poll termination, idle traffic, errors, cost month/history URL, four resolutions, no external requests');
+ console.log('PASS: boosted navigation, repeated search, partial refresh, detail action/poll termination, idle traffic, errors, cost month/history URL, four desktop resolutions plus mobile logout, administrator-only instance disable/reactivate, user/group grants and effective user access, no external requests');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exit(1)});

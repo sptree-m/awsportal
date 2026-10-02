@@ -9,6 +9,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/skip2/go-qrcode"
@@ -70,6 +71,8 @@ func main() {
 	mux.HandleFunc("POST /admin/users", a.require(a.adminCreateUser))
 	mux.HandleFunc("POST /admin/users/{username}/reactivate", a.require(a.adminReactivateUser))
 	mux.HandleFunc("POST /admin/users/{username}/disable", a.require(a.adminDisableUser))
+	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
+	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
 	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))
 	mux.HandleFunc("GET /mfa", a.require(a.mfaPage))
 	mux.HandleFunc("POST /mfa/add", a.require(a.mfaAdd))
@@ -266,7 +269,21 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 			loginRedirect(w, r)
 			return
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), "user", s.User)))
+		fresh, err := a.db.UserByName(r.Context(), s.User.Username)
+		if err != nil || fresh.ID != s.User.ID || !fresh.Enabled || a.db.AccountExpired(fresh, time.Now()) {
+			loginRedirect(w, r)
+			return
+		}
+		if fresh.MustChangePassword && r.URL.Path != "/change-password" {
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("HX-Redirect", "/change-password")
+				w.WriteHeader(401)
+			} else {
+				http.Redirect(w, r, "/change-password", 303)
+			}
+			return
+		}
+		next(w, r.WithContext(context.WithValue(r.Context(), "user", fresh)))
 	}
 }
 func (a *app) changePasswordPage(w http.ResponseWriter, r *http.Request) {
@@ -621,13 +638,11 @@ func (a *app) dcvAuth(w http.ResponseWriter, r *http.Request) {
 	username, ok := a.db.ConsumeDCVToken(r.Context(), hex.EncodeToString(sum[:]), sessionID, time.Now())
 	if !ok {
 		a.db.Audit(r.Context(), "dcv", "dcv.auth", sessionID, "deny", "")
-		http.Error(w, "unauthorized", 401)
+		dcvAuthReply(w, http.StatusUnauthorized, "no", "", "unauthorized")
 		return
 	}
 	a.db.Audit(r.Context(), username, "dcv.auth", sessionID, "ok", "one-time token consumed")
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(username))
+	dcvAuthReply(w, http.StatusOK, "yes", username, "")
 }
 func (a *app) scheduler(ctx context.Context) {
 	tick := time.NewTicker(30 * time.Second)
@@ -883,5 +898,19 @@ func loginRedirect(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	} else {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	}
+}
+
+func dcvAuthReply(w http.ResponseWriter, status int, result, username, message string) {
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.WriteHeader(status)
+	reply := struct {
+		XMLName  xml.Name `xml:"auth"`
+		Result   string   `xml:"result,attr"`
+		Username string   `xml:"username,omitempty"`
+		Message  string   `xml:"message,omitempty"`
+	}{Result: result, Username: username, Message: message}
+	if e := xml.NewEncoder(w).Encode(reply); e != nil {
+		log.Printf("DCV auth response: %v", e)
 	}
 }

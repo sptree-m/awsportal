@@ -36,7 +36,7 @@
 | 領域 | 現状 | 残課題 |
 |---|---|---|
 | group_admin | role/schemaは存在 | グループ管理画面・メンバー管理UI |
-| Group | group/instance_groupとCLIあり | ユーザー所属変更UI/API |
+| Group | Portal Admin向け所属変更・割り当てUI/APIを実装・テスト済み | Group Adminへの委譲は未実装 |
 | DCV OS user | 設計文書あり | OSユーザー/Session自動provision |
 | Cost分類 | usage type文字列で分類 | AWSサービス別の厳密な分類ルール |
 | 監査 | Portal SQLite監査あり | CloudTrail/中央保管との統合 |
@@ -53,3 +53,9 @@
 
 ③/④のうちインフラ構成や運用要件が必要な項目は、推測で実装しない。
 コード単体で安全に閉じる課題はPR内で自動テストを追加してからmainへ入れる。
+
+## インスタンス管理追記
+
+Portal Admin限定の無効化/再有効化、ユーザー/グループ割り当て、所属変更を実装。
+Store/API/ブラウザテストで検証。OSユーザー/Session/EFS自動準備は未実装。
+詳細: docs/11-instance-administration.md。
