@@ -2,6 +2,57 @@
 
 Portal AdminのOutbound画面でEC2ごとのIP/CIDRルールを保存し、保存版をAWSへ適用する。ドメイン・IP/CIDRを認証付きHTTP/HTTPSプロキシで制御するルールはProxy画面に置く。
 
+## 構成図と通信経路
+
+通常の外部通信はプロキシを経由し、社内サービス等の必要なIPだけを直接許可する。利用者EC2とプロキシEC2は別のEC2であり、それぞれのSGが別々に通信を判定する。awsportalのWebポータルとプロキシは、同じポータルEC2上で動作できる。
+
+```mermaid
+flowchart TD
+    USER["利用者EC2"]
+    USER_SG["利用者EC2の専用SG"]
+    PROXY["プロキシEC2：名前解決・許可判定"]
+    PROXY_SG["プロキシEC2のSG：外向き通信を判定"]
+    DOMAIN["許可ドメインの接続先IP"]
+    DIRECT["直接許可したIP・CIDR"]
+    BLOCK["許可していない直接接続先"]
+
+    USER --> USER_SG
+    USER_SG -->|プロキシSG・TCP 3128を許可| PROXY
+    PROXY -->|ドメイン・IPルールに一致| PROXY_SG
+    PROXY_SG -->|接続先ポートを許可| DOMAIN
+    USER_SG -->|IP・プロトコル・ポートの例外| DIRECT
+    USER_SG --x BLOCK
+```
+
+TCP3128は既定のプロキシポート。プロキシEC2のSGには、利用者EC2の専用SGからこのポートへの受信許可も必要。非ループバックのプロキシ接続はTLSで保護する。
+
+### ドメインで引いたIPは、どのSGで判定されるか
+
+**プロキシ経由の外部IPを、利用者EC2のSGへ登録する必要はない。** 利用者EC2が接続する相手はプロキシであり、接続先ドメインを名前解決して外部IPへ接続するのはプロキシEC2である。名前解決したIPが変わっても、利用者EC2のSGをその都度更新しない。
+
+| 通信 | SGが判定する接続先 | 許可を設定する場所 |
+|---|---|---|
+| 利用者EC2 → プロキシ | プロキシSG・プロキシポート | Outbound画面＋プロキシSGの受信設定 |
+| プロキシ → 名前解決した外部IP | 外部IP・接続先ポート | プロキシEC2のSG。ドメイン/IPの許可判定はProxy画面のルール |
+| 利用者EC2 → 外部IPへ直接接続 | 外部IP・接続先ポート | Outbound画面の直接IP/CIDR例外 |
+
+たとえば `github.com:443` をProxy画面で許可する場合、利用者EC2のSGではプロキシへの接続だけを許可する。プロキシがgithub.comを名前解決し、現在のIPに対してルールを検査して接続する。外部への443番接続はプロキシEC2自身のSGで許可されている必要がある。
+
+プロキシを使わずgithub.comへ直接接続すると、名前解決したIPが利用者EC2の直接IP例外に含まれない限り拒否される。これはプロキシの迂回を防ぐための動作である。
+
+### 実装上の役割
+
+| 実装 | 役割 |
+|---|---|
+| `cmd/awsportal/egress_admin.go` / `web/egress.html` | 管理者による保存、AWS適用、状態確認 |
+| `internal/aws/egress.go` | 専用SGを検査し、outboundをプロキシ＋直接IP例外へ置換 |
+| `internal/store/egress.go` | EC2ごとの直接IP例外と保存版・適用版を保持 |
+| `internal/store/proxy.go` | ドメイン/IP/CIDR、ユーザー/グループ、許可/拒否を判定 |
+| `internal/proxy/proxy.go` | プロキシ自身が名前解決し、検査したIPへHTTP/CONNECT通信を転送 |
+| `terraform/main.tf` | 専用SG、プロキシへの受信許可、対象SGに限定したIAM権限を準備 |
+
+この図は実装した構成の説明であり、AWS実環境への適用・疎通確認済みを示すものではない。初回準備と実機試験は以下の手順に従う。
+
 ## 2つの制御の関係
 
 | 設定 | 対象 | 意味 |
