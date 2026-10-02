@@ -47,13 +47,20 @@ for p, expected_weight in fonts:
     if weight!=expected_weight:
         raise SystemExit(f"wrong weight {weight}, expected {expected_weight}: {p}")
 PY
-grep -Fq 'rounded-mplus-1mn-regular.ttf' cmd/awsportal/web/app.css
-grep -Fq 'rounded-mplus-1mn-bold.ttf' cmd/awsportal/web/app.css
+grep -Fq 'rounded-mplus-1mn-regular.woff2' cmd/awsportal/web/app.css
+grep -Fq 'rounded-mplus-1mn-bold.woff2' cmd/awsportal/web/app.css
 grep -Fq 'font-weight:400' cmd/awsportal/web/app.css
 grep -Fq 'font-weight:700' cmd/awsportal/web/app.css
+python3 - <<'CHECK'
+from pathlib import Path
+for weight in ('regular','bold'):
+    p=Path('cmd/awsportal/web/fonts/rounded-mplus-1mn-'+weight+'.woff2')
+    b=p.read_bytes()
+    assert b[:4]==b'wOF2' and len(b)>10000, p
+CHECK
 echo '[9/9] htmx integration'
 grep -Fq 'hx-post="/instance/' cmd/awsportal/web/instance-row.html
-grep -Fq 'hx-trigger="load delay:1500ms"' cmd/awsportal/web/instance-row.html
+grep -Fq 'hx-trigger="load delay:1500ms' cmd/awsportal/web/instance-row.html
 grep -Fq '/static/web/htmx.min.js' cmd/awsportal/web/instances.html
 test -s cmd/awsportal/web/HTMX_LICENSE.txt
 echo '全必須テスト: PASS'

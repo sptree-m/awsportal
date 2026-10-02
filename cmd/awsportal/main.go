@@ -1,64 +1,887 @@
 package main
 
-import(
- "context";"encoding/csv";"encoding/json";"crypto/rand";"crypto/sha256";"encoding/hex";"embed";"encoding/base64";"html/template";"log";"net/http";"os";"strings";"sync";"time";"fmt";"strconv";"net/url"
- "github.com/aws/aws-sdk-go-v2/config"
- "github.com/skip2/go-qrcode"
- "github.com/sptree-m/awsportal/internal/auth"
- awsapi "github.com/sptree-m/awsportal/internal/aws"
- "github.com/sptree-m/awsportal/internal/store"
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"embed"
+	"encoding/base64"
+	"encoding/csv"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/skip2/go-qrcode"
+	"github.com/sptree-m/awsportal/internal/auth"
+	awsapi "github.com/sptree-m/awsportal/internal/aws"
+	"github.com/sptree-m/awsportal/internal/store"
+	"html/template"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
+
 //go:embed web/*
 var web embed.FS
-type session struct{User store.User;Expires time.Time}
-type app struct{db *store.Store;ec2 awsapi.Controller;cost awsapi.CostReporter;tpl *template.Template;mu sync.Mutex;sessions map[string]session}
-func main(){ctx:=context.Background();db,e:=store.Open(env("AWSPORTAL_DB","./awsportal.db"));if e!=nil{log.Fatal(e)};defer db.Close();if e=db.Migrate(ctx);e!=nil{log.Fatal(e)}
- cfg,e:=config.LoadDefaultConfig(ctx);if e!=nil{log.Fatal(e)};a:=&app{db:db,ec2:awsapi.New(cfg),cost:awsapi.NewCost(cfg),tpl:template.Must(template.ParseFS(web,"web/*.html")),sessions:map[string]session{}}
- go a.scheduler(ctx)
- mux:=http.NewServeMux();mux.HandleFunc("GET /healthz",health);mux.HandleFunc("GET /login",a.loginPage);mux.HandleFunc("POST /login",a.login);mux.HandleFunc("POST /logout",a.logout);mux.HandleFunc("GET /change-password",a.require(a.changePasswordPage));mux.HandleFunc("POST /change-password",a.require(a.changePassword));mux.HandleFunc("POST /admin/reset-password",a.require(a.adminResetPassword));mux.HandleFunc("GET /admin/users",a.require(a.adminUsers));mux.HandleFunc("POST /admin/users",a.require(a.adminCreateUser));mux.HandleFunc("POST /admin/users/{username}/reactivate",a.require(a.adminReactivateUser));mux.HandleFunc("POST /admin/users/{username}/disable",a.require(a.adminDisableUser));mux.HandleFunc("GET /admin/audit",a.require(a.adminAudit));mux.HandleFunc("GET /mfa",a.require(a.mfaPage));mux.HandleFunc("POST /mfa/add",a.require(a.mfaAdd));mux.HandleFunc("GET /mfa/{id}/qr.png",a.require(a.mfaQR));mux.HandleFunc("POST /mfa/{id}/verify",a.require(a.mfaVerify));mux.HandleFunc("POST /mfa/{id}/delete",a.require(a.mfaDelete));mux.HandleFunc("GET /",a.require(a.dashboard));mux.HandleFunc("GET /instances",a.require(a.instancesPage));mux.HandleFunc("GET /instances/{id}/row",a.require(a.instanceRow));mux.HandleFunc("GET /instances/{id}",a.require(a.instanceDetail));mux.HandleFunc("GET /costs",a.require(a.costDashboard));mux.HandleFunc("GET /costs.csv",a.require(a.costCSV));mux.HandleFunc("POST /instance/{id}/{action}",a.require(a.instanceAction));mux.HandleFunc("GET /api/instance/{id}/state",a.require(a.instanceState));mux.HandleFunc("POST /schedule",a.require(a.addSchedule));mux.HandleFunc("GET /dcv/{id}",a.require(a.dcv));mux.HandleFunc("POST /dcv-auth",a.dcvAuth);mux.Handle("GET /static/",staticHandler(http.StripPrefix("/static/",http.FileServer(http.FS(web)))))
- s:=&http.Server{Addr:env("AWSPORTAL_ADDR",":8080"),Handler:headers(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second};log.Printf("listen %s",s.Addr);log.Fatal(s.ListenAndServe())}
-func health(w http.ResponseWriter,_ *http.Request){w.Write([]byte("ok"))}
-func(a *app)loginPage(w http.ResponseWriter,r *http.Request){a.tpl.ExecuteTemplate(w,"login.html",nil)}
-func(a *app)login(w http.ResponseWriter,r *http.Request){_ = r.ParseForm();u,e:=a.db.UserByName(r.Context(),r.FormValue("username"));if e==nil&&a.db.AccountExpired(u,time.Now()){_ = a.db.DisableInactive(r.Context(),u.ID,time.Now());a.db.Audit(r.Context(),u.Username,"account.auto_disable",u.Username,"ok","inactive_30_days");http.Error(w,"アカウントは30日間アクセスがないため無効です。Portal Adminに再有効化を依頼してください",http.StatusForbidden);return};if e!=nil||!u.Enabled||(u.TempPasswordExpires>0&&time.Now().Unix()>u.TempPasswordExpires)||!auth.CheckPassword(u.PasswordHash,r.FormValue("password"))||!a.verifyLoginMFA(r.Context(),u,r.FormValue("totp")){a.db.Audit(r.Context(),r.FormValue("username"),"login","", "deny","");http.Error(w,"認証に失敗しました",http.StatusUnauthorized);return};b:=make([]byte,32);rand.Read(b);tok:=base64.RawURLEncoding.EncodeToString(b);a.mu.Lock();a.sessions[tok]=session{u,time.Now().Add(8*time.Hour)};a.mu.Unlock();http.SetCookie(w,&http.Cookie{Name:"awsportal_session",Value:tok,Path:"/",HttpOnly:true,Secure:env("AWSPORTAL_COOKIE_SECURE","1")=="1",SameSite:http.SameSiteStrictMode,MaxAge:28800});_ = a.db.RecordLogin(r.Context(),u.ID,time.Now());a.db.Audit(r.Context(),u.Username,"login","","ok","");if u.MustChangePassword{http.Redirect(w,r,"/change-password",http.StatusSeeOther);return};http.Redirect(w,r,"/",http.StatusSeeOther)}
-func labDebugMFABypass(u store.User)bool{return env("AWSPORTAL_LAB_DEBUG_AUTH","0")=="1"&&u.Username=="labdebug"}
-func(a *app)verifyLoginMFA(ctx context.Context,u store.User,code string)bool{if labDebugMFABypass(u){return true};secrets,e:=a.db.VerifyMFASecrets(ctx,u.ID);if e!=nil{return false};if len(secrets)==0{if u.Role!="portal_admin"{return true};return u.TOTPSecret!=""&&auth.VerifyTOTP(u.TOTPSecret,code)};for _,s:=range secrets{if auth.VerifyTOTP(s,code){return true}};return false}
-func(a *app)mfaPage(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);ds,e:=a.db.MFADevices(r.Context(),u.ID);if e!=nil{http.Error(w,"DB error",500);return};data:=map[string]any{"User":u,"Devices":ds};if sid:=r.URL.Query().Get("setup");sid!=""{if id,err:=strconv.ParseInt(sid,10,64);err==nil{if d,err:=a.db.MFADevice(r.Context(),u.ID,id);err==nil&&!d.Verified{data["Setup"]=d}}};a.tpl.ExecuteTemplate(w,"mfa.html",data)}
-func(a *app)mfaAdd(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);_ = r.ParseForm();name:=strings.TrimSpace(r.FormValue("name"));if name==""{http.Error(w,"端末名が必要です",400);return};secret,e:=auth.GenerateTOTPSecret();if e!=nil{http.Error(w,"生成失敗",500);return};id,e:=a.db.AddMFADevice(r.Context(),u.ID,name,secret);if e!=nil{http.Error(w,"最大3台です。同じ端末名も登録できません",400);return};a.db.Audit(r.Context(),u.Username,"mfa.enroll.start",name,"ok","");http.Redirect(w,r,fmt.Sprintf("/mfa?setup=%d",id),303)}
-func(a *app)mfaQR(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id,e:=strconv.ParseInt(r.PathValue("id"),10,64);if e!=nil{http.NotFound(w,r);return};d,e:=a.db.MFADevice(r.Context(),u.ID,id);if e!=nil||d.Verified{http.NotFound(w,r);return};png,e:=qrcode.Encode(auth.TOTPURI(d.Secret,"awsportal",u.Username),qrcode.Medium,256);if e!=nil{http.Error(w,"QR生成失敗",500);return};w.Header().Set("Content-Type","image/png");w.Write(png)}
-func(a *app)mfaVerify(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id,_:=strconv.ParseInt(r.PathValue("id"),10,64);d,e:=a.db.MFADevice(r.Context(),u.ID,id);_ = r.ParseForm();if e!=nil||d.Verified||!auth.VerifyTOTP(d.Secret,r.FormValue("code")){a.db.Audit(r.Context(),u.Username,"mfa.enroll.verify",d.Name,"deny","");http.Error(w,"認証コードを確認できません",400);return};if e=a.db.VerifyMFADevice(r.Context(),u.ID,id);e!=nil{http.Error(w,"登録失敗",500);return};a.db.Audit(r.Context(),u.Username,"mfa.enroll.verify",d.Name,"ok","");http.Redirect(w,r,"/mfa",303)}
-func(a *app)mfaDelete(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id,_:=strconv.ParseInt(r.PathValue("id"),10,64);d,e:=a.db.MFADevice(r.Context(),u.ID,id);if e!=nil{http.NotFound(w,r);return};if e=a.db.DeleteMFADevice(r.Context(),u.ID,id);e!=nil{http.Error(w,"削除失敗",500);return};a.db.Audit(r.Context(),u.Username,"mfa.device.delete",d.Name,"ok","");if r.Header.Get("HX-Request")=="true"{w.WriteHeader(http.StatusOK);return};http.Redirect(w,r,"/mfa",303)}
-func(a *app)logout(w http.ResponseWriter,r *http.Request){if c,e:=r.Cookie("awsportal_session");e==nil{a.mu.Lock();delete(a.sessions,c.Value);a.mu.Unlock()};http.SetCookie(w,&http.Cookie{Name:"awsportal_session",Path:"/",MaxAge:-1});http.Redirect(w,r,"/login",http.StatusSeeOther)}
-func(a *app)require(next http.HandlerFunc)http.HandlerFunc{return func(w http.ResponseWriter,r *http.Request){c,e:=r.Cookie("awsportal_session");if e!=nil{http.Redirect(w,r,"/login",303);return};a.mu.Lock();s,ok:=a.sessions[c.Value];a.mu.Unlock();if !ok||time.Now().After(s.Expires){http.Redirect(w,r,"/login",303);return};next(w,r.WithContext(context.WithValue(r.Context(),"user",s.User)))}}
-func(a *app)changePasswordPage(w http.ResponseWriter,r *http.Request){a.tpl.ExecuteTemplate(w,"change-password.html",nil)}
-func(a *app)changePassword(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);_ = r.ParseForm();p:=r.FormValue("password");confirm:=r.FormValue("confirm");if len(p)<12||p!=confirm{http.Error(w,"12文字以上で同じパスワードを入力してください",400);return};h,e:=auth.HashPassword(p);if e!=nil||a.db.ChangePassword(r.Context(),u.ID,h)!=nil{http.Error(w,"変更失敗",500);return};a.db.Audit(r.Context(),u.Username,"password.change",u.Username,"ok","");a.mu.Lock();for k,s:=range a.sessions{if s.User.ID==u.ID{delete(a.sessions,k)}};a.mu.Unlock();http.Redirect(w,r,"/login",303)}
-func(a *app)adminResetPassword(w http.ResponseWriter,r *http.Request){admin:=r.Context().Value("user").(store.User);if admin.Role!="portal_admin"{http.Error(w,"管理者のみ実行できます",403);return};_ = r.ParseForm();target:=r.FormValue("username");raw:=make([]byte,12);if _,e:=rand.Read(raw);e!=nil{http.Error(w,"生成失敗",500);return};temp:="Tmp-"+base64.RawURLEncoding.EncodeToString(raw);h,e:=auth.HashPassword(temp);if e!=nil||a.db.SetTemporaryPassword(r.Context(),target,h,time.Now().Add(30*time.Minute))!=nil{a.db.Audit(r.Context(),admin.Username,"password.reset",target,"deny","");http.Error(w,"リセットできません",400);return};a.db.Audit(r.Context(),admin.Username,"password.reset",target,"ok","30分/初回変更必須");a.tpl.ExecuteTemplate(w,"temporary-password.html",map[string]string{"Username":target,"Password":temp})}
-type dashboardInstance struct{store.Instance;State,Note string}
-func(a *app)instanceRows(ctx context.Context,u store.User)([]dashboardInstance,error){xs,e:=a.db.VisibleInstances(ctx,u);if e!=nil{return nil,e};ids:=make([]string,0,len(xs));for _,x:=range xs{ids=append(ids,x.InstanceID)};states,stateErr:=a.ec2.States(ctx,ids);rows:=make([]dashboardInstance,0,len(xs));for _,x:=range xs{state:=states[x.InstanceID];if state==""{state="unknown"};rows=append(rows,dashboardInstance{Instance:x,State:state})};return rows,stateErr}
-func(a *app)dashboard(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);rows,stateErr:=a.instanceRows(r.Context(),u);running,stopped,transition:=0,0,0;for _,x:=range rows{switch x.State{case "running":running++;case "stopped":stopped++;case "pending","stopping","shutting-down":transition++}};data:=map[string]any{"User":u,"Instances":rows,"Running":running,"Stopped":stopped,"Transition":transition};if u.Role=="portal_admin"{if us,e:=a.db.ListUsers(r.Context());e==nil{data["UserCount"]=len(us)};if logs,e:=a.db.AuditEntries(r.Context(),8);e==nil{data["Audit"]=logs}};if stateErr!=nil{data["StateWarning"]="AWSから最新状態を取得できませんでした。"};a.tpl.ExecuteTemplate(w,"index.html",data)}
-func(a *app)instancesPage(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);rows,stateErr:=a.instanceRows(r.Context(),u);data:=map[string]any{"User":u,"Instances":rows};if stateErr!=nil{data["StateWarning"]="AWSから最新状態を取得できませんでした。"};a.tpl.ExecuteTemplate(w,"instances.html",data)}
-func(a *app)instanceDetail(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id:=r.PathValue("id");rows,e:=a.instanceRows(r.Context(),u);if e!=nil{http.Error(w,"AWS状態を取得できません",502);return};for _,x:=range rows{if x.InstanceID==id{a.tpl.ExecuteTemplate(w,"instance-detail.html",map[string]any{"User":u,"Instance":x});return}};http.Error(w,"権限がありません",403)}
-func(a *app)visibleInstance(ctx context.Context,u store.User,id string)(store.Instance,bool,error){xs,e:=a.db.VisibleInstances(ctx,u);if e!=nil{return store.Instance{},false,e};for _,x:=range xs{if x.InstanceID==id{return x,true,nil}};return store.Instance{},false,nil}
-func(a *app)instanceRow(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id:=r.PathValue("id");x,ok,e:=a.visibleInstance(r.Context(),u,id);if e!=nil{http.Error(w,"DB error",500);return};if !ok{http.Error(w,"権限がありません",403);return};state,e:=a.ec2.State(r.Context(),id);row:=dashboardInstance{Instance:x,State:state};if e!=nil||state==""{row.State="unknown";row.Note="AWS状態を取得できません"};a.tpl.ExecuteTemplate(w,"instance-row.html",row)}
-func(a *app)instanceState(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id:=r.PathValue("id");xs,e:=a.db.VisibleInstances(r.Context(),u);if e!=nil{http.Error(w,"DB error",500);return};allowed:=false;for _,x:=range xs{if x.InstanceID==id{allowed=true;break}};if !allowed{http.Error(w,"権限がありません",403);return};state,e:=a.ec2.State(r.Context(),id);if e!=nil{http.Error(w,"AWS状態を取得できません",502);return};w.Header().Set("Content-Type","application/json; charset=utf-8");_ = json.NewEncoder(w).Encode(map[string]string{"instance_id":id,"state":state})}
-func costRange(r *http.Request)(time.Time,time.Time){now:=time.Now();end:=time.Date(now.Year(),now.Month(),now.Day()+1,0,0,0,0,time.UTC);start:=time.Date(now.Year(),now.Month(),1,0,0,0,0,time.UTC);if s:=r.URL.Query().Get("month");s!=""{if t,e:=time.Parse("2006-01",s);e==nil{start=t;end=t.AddDate(0,1,0)}};return start,end}
-func(a *app)costDashboard(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);if u.Role!="portal_admin"{http.Error(w,"管理者のみ",403);return};start,end:=costRange(r);rep,e:=a.cost.UserCosts(r.Context(),env("AWSPORTAL_COST_USER_TAG","awsportal-user"),start,end);if e!=nil{http.Error(w,"Cost Explorer取得失敗: "+e.Error(),502);return};a.tpl.ExecuteTemplate(w,"costs.html",map[string]any{"User":u,"Report":rep,"Month":start.Format("2006-01")})}
-func(a *app)costCSV(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);if u.Role!="portal_admin"{http.Error(w,"管理者のみ",403);return};start,end:=costRange(r);rep,e:=a.cost.UserCosts(r.Context(),env("AWSPORTAL_COST_USER_TAG","awsportal-user"),start,end);if e!=nil{http.Error(w,"Cost Explorer取得失敗",502);return};w.Header().Set("Content-Type","text/csv; charset=utf-8");w.Header().Set("Content-Disposition","attachment; filename=awsportal-costs-"+start.Format("2006-01")+".csv");_,_=w.Write([]byte{0xEF,0xBB,0xBF});cw:=csv.NewWriter(w);_ = cw.Write([]string{"順位","ユーザー","Compute USD","Storage USD","Data Transfer USD","Other USD","Total USD"});for i,x:=range rep.Rows{_ = cw.Write([]string{strconv.Itoa(i+1),x.User,fmt.Sprintf("%.2f",x.Compute),fmt.Sprintf("%.2f",x.Storage),fmt.Sprintf("%.2f",x.Transfer),fmt.Sprintf("%.2f",x.Other),fmt.Sprintf("%.2f",x.Total)})};cw.Flush();a.db.Audit(r.Context(),u.Username,"cost.csv",start.Format("2006-01"),"ok","")}
-func(a *app)instanceAction(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id,act:=r.PathValue("id"),r.PathValue("action");if !a.db.CanControl(r.Context(),u,id){http.Error(w,"権限がありません",403);return};var e error;state:="";if act=="start"{e=a.ec2.Start(r.Context(),id);state="pending"}else if act=="stop"{e=a.ec2.Stop(r.Context(),id);state="stopping"}else{http.Error(w,"invalid action",400);return};res:="ok";if e!=nil{res="error"};a.db.Audit(r.Context(),u.Username,"ec2."+act,id,res,errorText(e));if e!=nil{http.Error(w,"AWS操作に失敗しました",502);return};if r.Header.Get("HX-Request")=="true"{x,ok,er:=a.visibleInstance(r.Context(),u,id);if er!=nil{http.Error(w,"DB error",500);return};if !ok{http.Error(w,"権限がありません",403);return};a.tpl.ExecuteTemplate(w,"instance-row.html",dashboardInstance{Instance:x,State:state,Note:"AWSの状態を確認中…"});return};http.Redirect(w,r,"/instances/"+url.PathEscape(id),303)}
-func(a *app)addSchedule(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);_ = r.ParseForm();id:=r.FormValue("instance_id");if !a.db.CanControl(r.Context(),u,id){http.Error(w,"権限がありません",403);return};if e:=a.db.AddSchedule(r.Context(),u,id,r.FormValue("action"),r.FormValue("time"),r.FormValue("weekdays"),"Asia/Tokyo");e!=nil{http.Error(w,"登録失敗",400);return};a.db.Audit(r.Context(),u.Username,"schedule.add",id,"ok","");http.Redirect(w,r,"/",303)}
-func(a *app)dcv(w http.ResponseWriter,r *http.Request){u:=r.Context().Value("user").(store.User);id:=r.PathValue("id");xs,_:=a.db.VisibleInstances(r.Context(),u);allowed:=false;for _,x:=range xs{if x.InstanceID==id{allowed=true;break}};if !allowed{http.Error(w,"権限がありません",403);return};raw:=make([]byte,32);if _,e:=rand.Read(raw);e!=nil{http.Error(w,"token error",500);return};token:=base64.RawURLEncoding.EncodeToString(raw);sum:=sha256.Sum256([]byte(token));x,e:=a.db.IssueDCVToken(r.Context(),u,id,hex.EncodeToString(sum[:]),time.Now().Add(60*time.Second));if e!=nil{http.Error(w,"DCV token error",500);return};a.db.Audit(r.Context(),u.Username,"dcv.token.issue",id,"ok","60秒/1回限り");uri:="dcv://"+x.DCVHost+":8443/?authToken="+url.QueryEscape(token)+"#"+url.PathEscape(x.DCVSessionID);http.Redirect(w,r,uri,http.StatusFound)}
-func(a *app)dcvAuth(w http.ResponseWriter,r *http.Request){if r.Method!="POST"{http.Error(w,"method",405);return};if e:=r.ParseForm();e!=nil{http.Error(w,"invalid",400);return};token:=r.FormValue("authenticationToken");sessionID:=r.FormValue("sessionId");sum:=sha256.Sum256([]byte(token));username,ok:=a.db.ConsumeDCVToken(r.Context(),hex.EncodeToString(sum[:]),sessionID,time.Now());if !ok{a.db.Audit(r.Context(),"dcv","dcv.auth",sessionID,"deny","");http.Error(w,"unauthorized",401);return};a.db.Audit(r.Context(),username,"dcv.auth",sessionID,"ok","one-time token consumed");w.Header().Set("Content-Type","text/plain; charset=utf-8");w.WriteHeader(http.StatusOK);_,_=w.Write([]byte(username))}
-func(a *app)scheduler(ctx context.Context){tick:=time.NewTicker(30*time.Second);defer tick.Stop();seen:=map[string]string{};for{select{case <-ctx.Done():return;case now:=<-tick.C:xs,e:=a.db.DueSchedules(ctx,now);if e!=nil{log.Printf("scheduler: %v",e);continue};for _,x:=range xs{loc,e:=time.LoadLocation(x.Timezone);if e!=nil{continue};n:=now.In(loc);wd:=int(n.Weekday());if wd==0{wd=7};if !containsCSV(x.Weekdays,wd)||n.Format("15:04")!=x.TimeHHMM{continue};key:=fmt.Sprintf("%d:%s",x.ID,n.Format("2006-01-02 15:04"));if seen[key]!=""{continue};var runErr error;if x.Action=="start"{runErr=a.ec2.Start(ctx,x.InstanceID)}else{runErr=a.ec2.Stop(ctx,x.InstanceID)};res:="ok";if runErr!=nil{res="error"};a.db.Audit(ctx,"scheduler","ec2."+x.Action,x.InstanceID,res,errorText(runErr));seen[key]="1"};if len(seen)>1000{seen=map[string]string{}}}}}
-func containsCSV(s string,n int)bool{want:=strconv.Itoa(n);for _,v:=range strings.Split(s,","){if strings.TrimSpace(v)==want{return true}};return false}
-func staticHandler(n http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Header().Set("Cache-Control","public, max-age=86400, stale-while-revalidate=604800");if strings.HasSuffix(r.URL.Path,".ttf"){w.Header().Set("Content-Type","font/ttf")};n.ServeHTTP(w,r)})}
-func headers(n http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Header().Set("Content-Security-Policy","default-src 'self'; style-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'");w.Header().Set("X-Content-Type-Options","nosniff");w.Header().Set("Referrer-Policy","no-referrer");if !strings.HasPrefix(r.URL.Path,"/static/"){w.Header().Set("Cache-Control","no-store")};n.ServeHTTP(w,r)})}
-func env(k,d string)string{if v:=os.Getenv(k);v!=""{return v};return d};func errorText(e error)string{if e==nil{return ""};return e.Error()};var _=strings.TrimSpace
 
-type adminUserRow struct{Username,Role,Status,LastLogin,Expires string;Days int}
-func adminUserView(u store.User,now time.Time)adminUserRow{row:=adminUserRow{Username:u.Username,Role:u.Role,Status:"有効",LastLogin:"未ログイン",Expires:"対象外"};if u.LastLoginAt>0{row.LastLogin=time.Unix(u.LastLoginAt,0).Format("2006-01-02 15:04")};if u.Role!="portal_admin"{if u.ExpiresAt>0{t:=time.Unix(u.ExpiresAt,0);row.Expires=t.Format("2006-01-02");row.Days=int(t.Sub(now).Hours()/24);if row.Days<0{row.Days=0}};if !u.Enabled{row.Status="無効"}else if row.Days<=1{row.Status="期限間近"}else if row.Days<=3{row.Status="期限注意"}else if row.Days<=7{row.Status="期限警告"}};return row}
-func(a *app)adminUserFragment(w http.ResponseWriter,r *http.Request,target string){u,e:=a.db.UserByName(r.Context(),target);if e!=nil{http.Error(w,"ユーザーが見つかりません",404);return};a.tpl.ExecuteTemplate(w,"user-row.html",adminUserView(u,time.Now()))}
-func(a *app)adminUsers(w http.ResponseWriter,r *http.Request){admin:=r.Context().Value("user").(store.User);if admin.Role!="portal_admin"{http.Error(w,"管理者のみ",403);return};xs,e:=a.db.ListUsers(r.Context());if e!=nil{http.Error(w,"DB error",500);return};now:=time.Now();rows:=make([]adminUserRow,0,len(xs));for _,u:=range xs{rows=append(rows,adminUserView(u,now))};a.tpl.ExecuteTemplate(w,"users.html",map[string]any{"User":admin,"Users":rows,"Now":now})}
-func(a *app)adminReactivateUser(w http.ResponseWriter,r *http.Request){admin:=r.Context().Value("user").(store.User);if admin.Role!="portal_admin"{http.Error(w,"管理者のみ",403);return};target:=r.PathValue("username");if e:=a.db.ReactivateUser(r.Context(),target,time.Now());e!=nil{a.db.Audit(r.Context(),admin.Username,"account.reactivate",target,"deny","");http.Error(w,"再有効化できません",400);return};a.db.Audit(r.Context(),admin.Username,"account.reactivate",target,"ok","30日");if r.Header.Get("HX-Request")=="true"{a.adminUserFragment(w,r,target);return};http.Redirect(w,r,"/admin/users",303)}
+type session struct {
+	User    store.User
+	Expires time.Time
+}
+type app struct {
+	db       *store.Store
+	ec2      awsapi.Controller
+	cost     awsapi.CostReporter
+	tpl      *template.Template
+	mu       sync.Mutex
+	sessions map[string]session
+}
 
-func(a *app)adminCreateUser(w http.ResponseWriter,r *http.Request){admin:=r.Context().Value("user").(store.User);if admin.Role!="portal_admin"{http.Error(w,"管理者のみ",403);return};_ = r.ParseForm();username:=strings.TrimSpace(r.FormValue("username"));role:=r.FormValue("role");if username==""||(role!="user"&&role!="group_admin"){http.Error(w,"入力を確認してください",400);return};raw:=make([]byte,12);if _,e:=rand.Read(raw);e!=nil{http.Error(w,"生成失敗",500);return};temp:="Tmp-"+base64.RawURLEncoding.EncodeToString(raw);h,e:=auth.HashPassword(temp);if e!=nil||a.db.CreateUser(r.Context(),username,h,role,"")!=nil{a.db.Audit(r.Context(),admin.Username,"user.create",username,"deny","");http.Error(w,"ユーザーを作成できません",400);return};_ = a.db.SetTemporaryPassword(r.Context(),username,h,time.Now().Add(30*time.Minute));a.db.Audit(r.Context(),admin.Username,"user.create",username,"ok","role="+role);a.tpl.ExecuteTemplate(w,"temporary-password.html",map[string]string{"Username":username,"Password":temp})}
-func(a *app)adminDisableUser(w http.ResponseWriter,r *http.Request){admin:=r.Context().Value("user").(store.User);if admin.Role!="portal_admin"{http.Error(w,"管理者のみ",403);return};target:=r.PathValue("username");if e:=a.db.SetUserEnabled(r.Context(),target,false);e!=nil{a.db.Audit(r.Context(),admin.Username,"user.disable",target,"deny","");http.Error(w,"無効化できません",400);return};a.db.Audit(r.Context(),admin.Username,"user.disable",target,"ok","");if r.Header.Get("HX-Request")=="true"{a.adminUserFragment(w,r,target);return};http.Redirect(w,r,"/admin/users",303)}
-func(a *app)adminAudit(w http.ResponseWriter,r *http.Request){admin:=r.Context().Value("user").(store.User);if admin.Role!="portal_admin"{http.Error(w,"管理者のみ",403);return};xs,e:=a.db.AuditEntries(r.Context(),200);if e!=nil{http.Error(w,"DB error",500);return};a.tpl.ExecuteTemplate(w,"audit.html",map[string]any{"User":admin,"Entries":xs})}
+func main() {
+	ctx := context.Background()
+	db, e := store.Open(env("AWSPORTAL_DB", "./awsportal.db"))
+	if e != nil {
+		log.Fatal(e)
+	}
+	defer db.Close()
+	if e = db.Migrate(ctx); e != nil {
+		log.Fatal(e)
+	}
+	cfg, e := config.LoadDefaultConfig(ctx)
+	if e != nil {
+		log.Fatal(e)
+	}
+	a := &app{db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), tpl: template.Must(template.ParseFS(web, "web/*.html")), sessions: map[string]session{}}
+	go a.scheduler(ctx)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", health)
+	mux.HandleFunc("GET /login", a.loginPage)
+	mux.HandleFunc("POST /login", a.login)
+	mux.HandleFunc("POST /logout", a.logout)
+	mux.HandleFunc("GET /change-password", a.require(a.changePasswordPage))
+	mux.HandleFunc("POST /change-password", a.require(a.changePassword))
+	mux.HandleFunc("POST /admin/reset-password", a.require(a.adminResetPassword))
+	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
+	mux.HandleFunc("POST /admin/users", a.require(a.adminCreateUser))
+	mux.HandleFunc("POST /admin/users/{username}/reactivate", a.require(a.adminReactivateUser))
+	mux.HandleFunc("POST /admin/users/{username}/disable", a.require(a.adminDisableUser))
+	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))
+	mux.HandleFunc("GET /mfa", a.require(a.mfaPage))
+	mux.HandleFunc("POST /mfa/add", a.require(a.mfaAdd))
+	mux.HandleFunc("GET /mfa/{id}/qr.png", a.require(a.mfaQR))
+	mux.HandleFunc("POST /mfa/{id}/verify", a.require(a.mfaVerify))
+	mux.HandleFunc("POST /mfa/{id}/delete", a.require(a.mfaDelete))
+	mux.HandleFunc("GET /", a.require(a.dashboard))
+	mux.HandleFunc("GET /instances", a.require(a.instancesPage))
+	mux.HandleFunc("GET /instances/{id}/row", a.require(a.instanceRow))
+	mux.HandleFunc("GET /instances/{id}", a.require(a.instanceDetail))
+	mux.HandleFunc("GET /costs", a.require(a.costDashboard))
+	mux.HandleFunc("GET /costs.csv", a.require(a.costCSV))
+	mux.HandleFunc("POST /instance/{id}/{action}", a.require(a.instanceAction))
+	mux.HandleFunc("GET /api/instance/{id}/state", a.require(a.instanceState))
+	mux.HandleFunc("POST /schedule", a.require(a.addSchedule))
+	mux.HandleFunc("GET /dcv/{id}", a.require(a.dcv))
+	mux.HandleFunc("POST /dcv-auth", a.dcvAuth)
+	mux.Handle("GET /static/", staticHandler(http.StripPrefix("/static/", http.FileServer(http.FS(web)))))
+	s := &http.Server{Addr: env("AWSPORTAL_ADDR", ":8080"), Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	log.Printf("listen %s", s.Addr)
+	log.Fatal(s.ListenAndServe())
+}
+func health(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
+func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
+	a.tpl.ExecuteTemplate(w, "login.html", nil)
+}
+func (a *app) login(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	u, e := a.db.UserByName(r.Context(), r.FormValue("username"))
+	if e == nil && a.db.AccountExpired(u, time.Now()) {
+		_ = a.db.DisableInactive(r.Context(), u.ID, time.Now())
+		a.db.Audit(r.Context(), u.Username, "account.auto_disable", u.Username, "ok", "inactive_30_days")
+		http.Error(w, "アカウントは30日間アクセスがないため無効です。Portal Adminに再有効化を依頼してください", http.StatusForbidden)
+		return
+	}
+	if e != nil || !u.Enabled || (u.TempPasswordExpires > 0 && time.Now().Unix() > u.TempPasswordExpires) || !auth.CheckPassword(u.PasswordHash, r.FormValue("password")) || !a.verifyLoginMFA(r.Context(), u, r.FormValue("totp")) {
+		a.db.Audit(r.Context(), r.FormValue("username"), "login", "", "deny", "")
+		http.Error(w, "認証に失敗しました", http.StatusUnauthorized)
+		return
+	}
+	b := make([]byte, 32)
+	rand.Read(b)
+	tok := base64.RawURLEncoding.EncodeToString(b)
+	a.mu.Lock()
+	a.sessions[tok] = session{u, time.Now().Add(8 * time.Hour)}
+	a.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "awsportal_session", Value: tok, Path: "/", HttpOnly: true, Secure: env("AWSPORTAL_COOKIE_SECURE", "1") == "1", SameSite: http.SameSiteStrictMode, MaxAge: 28800})
+	_ = a.db.RecordLogin(r.Context(), u.ID, time.Now())
+	a.db.Audit(r.Context(), u.Username, "login", "", "ok", "")
+	if u.MustChangePassword {
+		http.Redirect(w, r, "/change-password", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+func labDebugMFABypass(u store.User) bool {
+	return env("AWSPORTAL_LAB_DEBUG_AUTH", "0") == "1" && u.Username == "labdebug"
+}
+func (a *app) verifyLoginMFA(ctx context.Context, u store.User, code string) bool {
+	if labDebugMFABypass(u) {
+		return true
+	}
+	secrets, e := a.db.VerifyMFASecrets(ctx, u.ID)
+	if e != nil {
+		return false
+	}
+	if len(secrets) == 0 {
+		if u.Role != "portal_admin" {
+			return true
+		}
+		return u.TOTPSecret != "" && auth.VerifyTOTP(u.TOTPSecret, code)
+	}
+	for _, s := range secrets {
+		if auth.VerifyTOTP(s, code) {
+			return true
+		}
+	}
+	return false
+}
+func (a *app) mfaPage(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	ds, e := a.db.MFADevices(r.Context(), u.ID)
+	if e != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	data := map[string]any{"User": u, "Devices": ds}
+	if sid := r.URL.Query().Get("setup"); sid != "" {
+		if id, err := strconv.ParseInt(sid, 10, 64); err == nil {
+			if d, err := a.db.MFADevice(r.Context(), u.ID, id); err == nil && !d.Verified {
+				data["Setup"] = d
+			}
+		}
+	}
+	a.tpl.ExecuteTemplate(w, "mfa.html", data)
+}
+func (a *app) mfaAdd(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	_ = r.ParseForm()
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		http.Error(w, "端末名が必要です", 400)
+		return
+	}
+	secret, e := auth.GenerateTOTPSecret()
+	if e != nil {
+		http.Error(w, "生成失敗", 500)
+		return
+	}
+	id, e := a.db.AddMFADevice(r.Context(), u.ID, name, secret)
+	if e != nil {
+		http.Error(w, "最大3台です。同じ端末名も登録できません", 400)
+		return
+	}
+	a.db.Audit(r.Context(), u.Username, "mfa.enroll.start", name, "ok", "")
+	http.Redirect(w, r, fmt.Sprintf("/mfa?setup=%d", id), 303)
+}
+func (a *app) mfaQR(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	id, e := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if e != nil {
+		http.NotFound(w, r)
+		return
+	}
+	d, e := a.db.MFADevice(r.Context(), u.ID, id)
+	if e != nil || d.Verified {
+		http.NotFound(w, r)
+		return
+	}
+	png, e := qrcode.Encode(auth.TOTPURI(d.Secret, "awsportal", u.Username), qrcode.Medium, 256)
+	if e != nil {
+		http.Error(w, "QR生成失敗", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Write(png)
+}
+func (a *app) mfaVerify(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	d, e := a.db.MFADevice(r.Context(), u.ID, id)
+	_ = r.ParseForm()
+	if e != nil || d.Verified || !auth.VerifyTOTP(d.Secret, r.FormValue("code")) {
+		a.db.Audit(r.Context(), u.Username, "mfa.enroll.verify", d.Name, "deny", "")
+		http.Error(w, "認証コードを確認できません", 400)
+		return
+	}
+	if e = a.db.VerifyMFADevice(r.Context(), u.ID, id); e != nil {
+		http.Error(w, "登録失敗", 500)
+		return
+	}
+	a.db.Audit(r.Context(), u.Username, "mfa.enroll.verify", d.Name, "ok", "")
+	http.Redirect(w, r, "/mfa", 303)
+}
+func (a *app) mfaDelete(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	d, e := a.db.MFADevice(r.Context(), u.ID, id)
+	if e != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if e = a.db.DeleteMFADevice(r.Context(), u.ID, id); e != nil {
+		http.Error(w, "削除失敗", 500)
+		return
+	}
+	a.db.Audit(r.Context(), u.Username, "mfa.device.delete", d.Name, "ok", "")
+	if r.Header.Get("HX-Request") == "true" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, "/mfa", 303)
+}
+func (a *app) logout(w http.ResponseWriter, r *http.Request) {
+	if c, e := r.Cookie("awsportal_session"); e == nil {
+		a.mu.Lock()
+		delete(a.sessions, c.Value)
+		a.mu.Unlock()
+	}
+	http.SetCookie(w, &http.Cookie{Name: "awsportal_session", Path: "/", MaxAge: -1})
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c, e := r.Cookie("awsportal_session")
+		if e != nil {
+			loginRedirect(w, r)
+			return
+		}
+		a.mu.Lock()
+		s, ok := a.sessions[c.Value]
+		a.mu.Unlock()
+		if !ok || time.Now().After(s.Expires) {
+			loginRedirect(w, r)
+			return
+		}
+		next(w, r.WithContext(context.WithValue(r.Context(), "user", s.User)))
+	}
+}
+func (a *app) changePasswordPage(w http.ResponseWriter, r *http.Request) {
+	a.tpl.ExecuteTemplate(w, "change-password.html", nil)
+}
+func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	_ = r.ParseForm()
+	p := r.FormValue("password")
+	confirm := r.FormValue("confirm")
+	if len(p) < 12 || p != confirm {
+		http.Error(w, "12文字以上で同じパスワードを入力してください", 400)
+		return
+	}
+	h, e := auth.HashPassword(p)
+	if e != nil || a.db.ChangePassword(r.Context(), u.ID, h) != nil {
+		http.Error(w, "変更失敗", 500)
+		return
+	}
+	a.db.Audit(r.Context(), u.Username, "password.change", u.Username, "ok", "")
+	a.mu.Lock()
+	for k, s := range a.sessions {
+		if s.User.ID == u.ID {
+			delete(a.sessions, k)
+		}
+	}
+	a.mu.Unlock()
+	http.Redirect(w, r, "/login", 303)
+}
+func (a *app) adminResetPassword(w http.ResponseWriter, r *http.Request) {
+	admin := r.Context().Value("user").(store.User)
+	if admin.Role != "portal_admin" {
+		http.Error(w, "管理者のみ実行できます", 403)
+		return
+	}
+	_ = r.ParseForm()
+	target := r.FormValue("username")
+	raw := make([]byte, 12)
+	if _, e := rand.Read(raw); e != nil {
+		http.Error(w, "生成失敗", 500)
+		return
+	}
+	temp := "Tmp-" + base64.RawURLEncoding.EncodeToString(raw)
+	h, e := auth.HashPassword(temp)
+	if e != nil || a.db.SetTemporaryPassword(r.Context(), target, h, time.Now().Add(30*time.Minute)) != nil {
+		a.db.Audit(r.Context(), admin.Username, "password.reset", target, "deny", "")
+		http.Error(w, "リセットできません", 400)
+		return
+	}
+	a.db.Audit(r.Context(), admin.Username, "password.reset", target, "ok", "30分/初回変更必須")
+	a.tpl.ExecuteTemplate(w, "temporary-password.html", map[string]string{"Username": target, "Password": temp})
+}
+
+type dashboardInstance struct {
+	store.Instance
+	State, Note string
+}
+
+func (a *app) instanceRows(ctx context.Context, u store.User) ([]dashboardInstance, error) {
+	xs, e := a.db.VisibleInstances(ctx, u)
+	if e != nil {
+		return nil, e
+	}
+	ids := make([]string, 0, len(xs))
+	for _, x := range xs {
+		ids = append(ids, x.InstanceID)
+	}
+	states, stateErr := a.ec2.States(ctx, ids)
+	rows := make([]dashboardInstance, 0, len(xs))
+	for _, x := range xs {
+		state := states[x.InstanceID]
+		if state == "" {
+			state = "unknown"
+		}
+		rows = append(rows, dashboardInstance{Instance: x, State: state})
+	}
+	return rows, stateErr
+}
+func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	rows, stateErr := a.instanceRows(r.Context(), u)
+	running, stopped, transition := 0, 0, 0
+	for _, x := range rows {
+		switch x.State {
+		case "running":
+			running++
+		case "stopped":
+			stopped++
+		case "pending", "stopping", "shutting-down":
+			transition++
+		}
+	}
+	data := map[string]any{"User": u, "Instances": rows, "Running": running, "Stopped": stopped, "Transition": transition}
+	if u.Role == "portal_admin" {
+		if us, e := a.db.ListUsers(r.Context()); e == nil {
+			data["UserCount"] = len(us)
+		}
+		if logs, e := a.db.AuditEntries(r.Context(), 8); e == nil {
+			data["Audit"] = logs
+		}
+	}
+	if stateErr != nil {
+		data["StateWarning"] = "AWSから最新状態を取得できませんでした。"
+	}
+	a.renderView(w, r, "index.html", "dashboard-live", "dashboard-live", data)
+}
+func (a *app) instancesPage(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	rows, stateErr := a.instanceRows(r.Context(), u)
+	data := map[string]any{"User": u, "Instances": rows}
+	if stateErr != nil {
+		data["StateWarning"] = "AWSから最新状態を取得できませんでした。"
+	}
+	a.renderView(w, r, "instances.html", "instances-live", "instances-live", data)
+}
+func (a *app) instanceDetail(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	id := r.PathValue("id")
+	x, ok, e := a.visibleInstance(r.Context(), u, id)
+	if e != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	if !ok {
+		http.Error(w, "権限がありません", 403)
+		return
+	}
+	state, e := a.ec2.State(r.Context(), id)
+	if e != nil {
+		http.Error(w, "AWS状態を取得できません", 502)
+		return
+	}
+	if state == "" {
+		state = "unknown"
+	}
+	a.renderView(w, r, "instance-detail.html", "instance-live", "instance-live", map[string]any{"User": u, "Instance": dashboardInstance{Instance: x, State: state}})
+}
+func (a *app) visibleInstance(ctx context.Context, u store.User, id string) (store.Instance, bool, error) {
+	xs, e := a.db.VisibleInstances(ctx, u)
+	if e != nil {
+		return store.Instance{}, false, e
+	}
+	for _, x := range xs {
+		if x.InstanceID == id {
+			return x, true, nil
+		}
+	}
+	return store.Instance{}, false, nil
+}
+func (a *app) instanceRow(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	id := r.PathValue("id")
+	x, ok, e := a.visibleInstance(r.Context(), u, id)
+	if e != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	if !ok {
+		http.Error(w, "権限がありません", 403)
+		return
+	}
+	state, e := a.ec2.State(r.Context(), id)
+	row := dashboardInstance{Instance: x, State: state}
+	if e != nil || state == "" {
+		row.State = "unknown"
+		row.Note = "AWS状態を取得できません"
+	}
+	a.tpl.ExecuteTemplate(w, "instance-row.html", row)
+}
+func (a *app) instanceState(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	id := r.PathValue("id")
+	xs, e := a.db.VisibleInstances(r.Context(), u)
+	if e != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	allowed := false
+	for _, x := range xs {
+		if x.InstanceID == id {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		http.Error(w, "権限がありません", 403)
+		return
+	}
+	state, e := a.ec2.State(r.Context(), id)
+	if e != nil {
+		http.Error(w, "AWS状態を取得できません", 502)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]string{"instance_id": id, "state": state})
+}
+func costRange(r *http.Request) (time.Time, time.Time) {
+	now := time.Now()
+	end := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if s := r.URL.Query().Get("month"); s != "" {
+		if t, e := time.Parse("2006-01", s); e == nil {
+			start = t
+			end = t.AddDate(0, 1, 0)
+		}
+	}
+	return start, end
+}
+func (a *app) costDashboard(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	if u.Role != "portal_admin" {
+		http.Error(w, "管理者のみ", 403)
+		return
+	}
+	start, end := costRange(r)
+	rep, e := a.cost.UserCosts(r.Context(), env("AWSPORTAL_COST_USER_TAG", "awsportal-user"), start, end)
+	if e != nil {
+		http.Error(w, "Cost Explorer取得失敗: "+e.Error(), 502)
+		return
+	}
+	a.renderView(w, r, "costs.html", "cost-main", "cost-main", map[string]any{"User": u, "Report": rep, "Month": start.Format("2006-01")})
+}
+func (a *app) costCSV(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	if u.Role != "portal_admin" {
+		http.Error(w, "管理者のみ", 403)
+		return
+	}
+	start, end := costRange(r)
+	rep, e := a.cost.UserCosts(r.Context(), env("AWSPORTAL_COST_USER_TAG", "awsportal-user"), start, end)
+	if e != nil {
+		http.Error(w, "Cost Explorer取得失敗", 502)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=awsportal-costs-"+start.Format("2006-01")+".csv")
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"順位", "ユーザー", "Compute USD", "Storage USD", "Data Transfer USD", "Other USD", "Total USD"})
+	for i, x := range rep.Rows {
+		_ = cw.Write([]string{strconv.Itoa(i + 1), x.User, fmt.Sprintf("%.2f", x.Compute), fmt.Sprintf("%.2f", x.Storage), fmt.Sprintf("%.2f", x.Transfer), fmt.Sprintf("%.2f", x.Other), fmt.Sprintf("%.2f", x.Total)})
+	}
+	cw.Flush()
+	a.db.Audit(r.Context(), u.Username, "cost.csv", start.Format("2006-01"), "ok", "")
+}
+func (a *app) instanceAction(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	id, act := r.PathValue("id"), r.PathValue("action")
+	if !a.db.CanControl(r.Context(), u, id) {
+		http.Error(w, "権限がありません", 403)
+		return
+	}
+	var e error
+	state := ""
+	if act == "start" {
+		e = a.ec2.Start(r.Context(), id)
+		state = "pending"
+	} else if act == "stop" {
+		e = a.ec2.Stop(r.Context(), id)
+		state = "stopping"
+	} else {
+		http.Error(w, "invalid action", 400)
+		return
+	}
+	res := "ok"
+	if e != nil {
+		res = "error"
+	}
+	a.db.Audit(r.Context(), u.Username, "ec2."+act, id, res, errorText(e))
+	if e != nil {
+		http.Error(w, "AWS操作に失敗しました", 502)
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		x, ok, er := a.visibleInstance(r.Context(), u, id)
+		if er != nil {
+			http.Error(w, "DB error", 500)
+			return
+		}
+		if !ok {
+			http.Error(w, "権限がありません", 403)
+			return
+		}
+		row := dashboardInstance{Instance: x, State: state, Note: "AWSの状態を確認中…"}
+		if r.Header.Get("HX-Target") == "instance-live" {
+			a.tpl.ExecuteTemplate(w, "instance-live", map[string]any{"Instance": row})
+		} else {
+			a.tpl.ExecuteTemplate(w, "instance-row.html", row)
+		}
+		return
+	}
+	http.Redirect(w, r, "/instances/"+url.PathEscape(id), 303)
+}
+func (a *app) addSchedule(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	_ = r.ParseForm()
+	id := r.FormValue("instance_id")
+	if !a.db.CanControl(r.Context(), u, id) {
+		http.Error(w, "権限がありません", 403)
+		return
+	}
+	if e := a.db.AddSchedule(r.Context(), u, id, r.FormValue("action"), r.FormValue("time"), r.FormValue("weekdays"), "Asia/Tokyo"); e != nil {
+		http.Error(w, "登録失敗", 400)
+		return
+	}
+	a.db.Audit(r.Context(), u.Username, "schedule.add", id, "ok", "")
+	http.Redirect(w, r, "/", 303)
+}
+func (a *app) dcv(w http.ResponseWriter, r *http.Request) {
+	u := r.Context().Value("user").(store.User)
+	id := r.PathValue("id")
+	xs, _ := a.db.VisibleInstances(r.Context(), u)
+	allowed := false
+	for _, x := range xs {
+		if x.InstanceID == id {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		http.Error(w, "権限がありません", 403)
+		return
+	}
+	raw := make([]byte, 32)
+	if _, e := rand.Read(raw); e != nil {
+		http.Error(w, "token error", 500)
+		return
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(token))
+	x, e := a.db.IssueDCVToken(r.Context(), u, id, hex.EncodeToString(sum[:]), time.Now().Add(60*time.Second))
+	if e != nil {
+		http.Error(w, "DCV token error", 500)
+		return
+	}
+	a.db.Audit(r.Context(), u.Username, "dcv.token.issue", id, "ok", "60秒/1回限り")
+	uri := "dcv://" + x.DCVHost + ":8443/?authToken=" + url.QueryEscape(token) + "#" + url.PathEscape(x.DCVSessionID)
+	http.Redirect(w, r, uri, http.StatusFound)
+}
+func (a *app) dcvAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "method", 405)
+		return
+	}
+	if e := r.ParseForm(); e != nil {
+		http.Error(w, "invalid", 400)
+		return
+	}
+	token := r.FormValue("authenticationToken")
+	sessionID := r.FormValue("sessionId")
+	sum := sha256.Sum256([]byte(token))
+	username, ok := a.db.ConsumeDCVToken(r.Context(), hex.EncodeToString(sum[:]), sessionID, time.Now())
+	if !ok {
+		a.db.Audit(r.Context(), "dcv", "dcv.auth", sessionID, "deny", "")
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+	a.db.Audit(r.Context(), username, "dcv.auth", sessionID, "ok", "one-time token consumed")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(username))
+}
+func (a *app) scheduler(ctx context.Context) {
+	tick := time.NewTicker(30 * time.Second)
+	defer tick.Stop()
+	seen := map[string]string{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-tick.C:
+			xs, e := a.db.DueSchedules(ctx, now)
+			if e != nil {
+				log.Printf("scheduler: %v", e)
+				continue
+			}
+			for _, x := range xs {
+				loc, e := time.LoadLocation(x.Timezone)
+				if e != nil {
+					continue
+				}
+				n := now.In(loc)
+				wd := int(n.Weekday())
+				if wd == 0 {
+					wd = 7
+				}
+				if !containsCSV(x.Weekdays, wd) || n.Format("15:04") != x.TimeHHMM {
+					continue
+				}
+				key := fmt.Sprintf("%d:%s", x.ID, n.Format("2006-01-02 15:04"))
+				if seen[key] != "" {
+					continue
+				}
+				var runErr error
+				if x.Action == "start" {
+					runErr = a.ec2.Start(ctx, x.InstanceID)
+				} else {
+					runErr = a.ec2.Stop(ctx, x.InstanceID)
+				}
+				res := "ok"
+				if runErr != nil {
+					res = "error"
+				}
+				a.db.Audit(ctx, "scheduler", "ec2."+x.Action, x.InstanceID, res, errorText(runErr))
+				seen[key] = "1"
+			}
+			if len(seen) > 1000 {
+				seen = map[string]string{}
+			}
+		}
+	}
+}
+func containsCSV(s string, n int) bool {
+	want := strconv.Itoa(n)
+	for _, v := range strings.Split(s, ",") {
+		if strings.TrimSpace(v) == want {
+			return true
+		}
+	}
+	return false
+}
+func staticHandler(n http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800")
+		if strings.HasSuffix(r.URL.Path, ".woff2") {
+			w.Header().Set("Content-Type", "font/woff2")
+		}
+		if strings.HasSuffix(r.URL.Path, ".ttf") {
+			w.Header().Set("Content-Type", "font/ttf")
+		}
+		n.ServeHTTP(w, r)
+	})
+}
+func headers(n http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if !strings.HasPrefix(r.URL.Path, "/static/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		n.ServeHTTP(w, r)
+	})
+}
+func env(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
+func errorText(e error) string {
+	if e == nil {
+		return ""
+	}
+	return e.Error()
+}
+
+var _ = strings.TrimSpace
+
+type adminUserRow struct {
+	Username, Role, Status, LastLogin, Expires string
+	Days                                       int
+}
+
+func adminUserView(u store.User, now time.Time) adminUserRow {
+	row := adminUserRow{Username: u.Username, Role: u.Role, Status: "有効", LastLogin: "未ログイン", Expires: "対象外"}
+	if u.LastLoginAt > 0 {
+		row.LastLogin = time.Unix(u.LastLoginAt, 0).Format("2006-01-02 15:04")
+	}
+	if u.Role != "portal_admin" {
+		if u.ExpiresAt > 0 {
+			t := time.Unix(u.ExpiresAt, 0)
+			row.Expires = t.Format("2006-01-02")
+			row.Days = int(t.Sub(now).Hours() / 24)
+			if row.Days < 0 {
+				row.Days = 0
+			}
+		}
+		if !u.Enabled {
+			row.Status = "無効"
+		} else if row.Days <= 1 {
+			row.Status = "期限間近"
+		} else if row.Days <= 3 {
+			row.Status = "期限注意"
+		} else if row.Days <= 7 {
+			row.Status = "期限警告"
+		}
+	}
+	return row
+}
+func (a *app) adminUserFragment(w http.ResponseWriter, r *http.Request, target string) {
+	u, e := a.db.UserByName(r.Context(), target)
+	if e != nil {
+		http.Error(w, "ユーザーが見つかりません", 404)
+		return
+	}
+	a.tpl.ExecuteTemplate(w, "user-row.html", adminUserView(u, time.Now()))
+}
+func (a *app) adminUsers(w http.ResponseWriter, r *http.Request) {
+	admin := r.Context().Value("user").(store.User)
+	if admin.Role != "portal_admin" {
+		http.Error(w, "管理者のみ", 403)
+		return
+	}
+	xs, e := a.db.ListUsers(r.Context())
+	if e != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	now := time.Now()
+	rows := make([]adminUserRow, 0, len(xs))
+	for _, u := range xs {
+		rows = append(rows, adminUserView(u, now))
+	}
+	a.tpl.ExecuteTemplate(w, "users.html", map[string]any{"User": admin, "Users": rows, "Now": now})
+}
+func (a *app) adminReactivateUser(w http.ResponseWriter, r *http.Request) {
+	admin := r.Context().Value("user").(store.User)
+	if admin.Role != "portal_admin" {
+		http.Error(w, "管理者のみ", 403)
+		return
+	}
+	target := r.PathValue("username")
+	if e := a.db.ReactivateUser(r.Context(), target, time.Now()); e != nil {
+		a.db.Audit(r.Context(), admin.Username, "account.reactivate", target, "deny", "")
+		http.Error(w, "再有効化できません", 400)
+		return
+	}
+	a.db.Audit(r.Context(), admin.Username, "account.reactivate", target, "ok", "30日")
+	if r.Header.Get("HX-Request") == "true" {
+		a.adminUserFragment(w, r, target)
+		return
+	}
+	http.Redirect(w, r, "/admin/users", 303)
+}
+
+func (a *app) adminCreateUser(w http.ResponseWriter, r *http.Request) {
+	admin := r.Context().Value("user").(store.User)
+	if admin.Role != "portal_admin" {
+		http.Error(w, "管理者のみ", 403)
+		return
+	}
+	_ = r.ParseForm()
+	username := strings.TrimSpace(r.FormValue("username"))
+	role := r.FormValue("role")
+	if username == "" || (role != "user" && role != "group_admin") {
+		http.Error(w, "入力を確認してください", 400)
+		return
+	}
+	raw := make([]byte, 12)
+	if _, e := rand.Read(raw); e != nil {
+		http.Error(w, "生成失敗", 500)
+		return
+	}
+	temp := "Tmp-" + base64.RawURLEncoding.EncodeToString(raw)
+	h, e := auth.HashPassword(temp)
+	if e != nil || a.db.CreateUser(r.Context(), username, h, role, "") != nil {
+		a.db.Audit(r.Context(), admin.Username, "user.create", username, "deny", "")
+		http.Error(w, "ユーザーを作成できません", 400)
+		return
+	}
+	_ = a.db.SetTemporaryPassword(r.Context(), username, h, time.Now().Add(30*time.Minute))
+	a.db.Audit(r.Context(), admin.Username, "user.create", username, "ok", "role="+role)
+	a.tpl.ExecuteTemplate(w, "temporary-password.html", map[string]string{"Username": username, "Password": temp})
+}
+func (a *app) adminDisableUser(w http.ResponseWriter, r *http.Request) {
+	admin := r.Context().Value("user").(store.User)
+	if admin.Role != "portal_admin" {
+		http.Error(w, "管理者のみ", 403)
+		return
+	}
+	target := r.PathValue("username")
+	if e := a.db.SetUserEnabled(r.Context(), target, false); e != nil {
+		a.db.Audit(r.Context(), admin.Username, "user.disable", target, "deny", "")
+		http.Error(w, "無効化できません", 400)
+		return
+	}
+	a.db.Audit(r.Context(), admin.Username, "user.disable", target, "ok", "")
+	if r.Header.Get("HX-Request") == "true" {
+		a.adminUserFragment(w, r, target)
+		return
+	}
+	http.Redirect(w, r, "/admin/users", 303)
+}
+func (a *app) adminAudit(w http.ResponseWriter, r *http.Request) {
+	admin := r.Context().Value("user").(store.User)
+	if admin.Role != "portal_admin" {
+		http.Error(w, "管理者のみ", 403)
+		return
+	}
+	xs, e := a.db.AuditEntries(r.Context(), 200)
+	if e != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	a.tpl.ExecuteTemplate(w, "audit.html", map[string]any{"User": admin, "Entries": xs})
+}
+
+// Refresh requests receive only the selected region; direct/history visits receive a full document.
+func (a *app) renderView(w http.ResponseWriter, r *http.Request, page, fragment, target string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Add("Vary", "HX-Request, HX-Target, HX-History-Restore-Request")
+	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Target") == target && r.Header.Get("HX-History-Restore-Request") != "true" {
+		page = fragment
+	}
+	if e := a.tpl.ExecuteTemplate(w, page, data); e != nil {
+		log.Printf("render %s: %v", page, e)
+	}
+}
+
+func loginRedirect(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") == "true" {
+		w.Header().Set("HX-Redirect", "/login")
+		w.WriteHeader(http.StatusUnauthorized)
+	} else {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	}
+}
