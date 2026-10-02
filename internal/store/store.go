@@ -44,7 +44,7 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.DB.Close() }
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema); e != nil {
+	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema); e != nil {
 		return e
 	}
 	for _, q := range []string{"ALTER TABLE proxy_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'domain'", "ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"} {

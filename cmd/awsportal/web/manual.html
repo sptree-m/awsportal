@@ -1,0 +1,87 @@
+{{define "manual.html"}}<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>利用者マニュアル | {{.Site.BrandTitle}}</title><link rel="stylesheet" href="/static/web/app.css?v=site-manuals-1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"selfRequestsOnly":true,"includeIndicatorStyles":false,"timeout":20000}'><script src="/static/web/htmx.min.js?v=htmx-console-2" defer></script><script src="/static/web/dashboard.js?v=htmx-console-2" defer></script></head><body hx-history="false"><aside>{{template "site-brand" .}}<nav hx-boost="true" hx-sync="this:replace" aria-label="メインナビゲーション"><a href="/">⌂ Dashboard</a><a href="/instances">▤ EC2 Instances</a>{{if eq .User.Role "portal_admin"}}<a href="/admin/instances">⚙ Instance Admin</a><a href="/admin/users">♙ Users</a><a href="/admin/proxy">↔ Proxy</a><a href="/admin/egress">⇢ Outbound</a><a href="/admin/site">⚙ 表示設定</a><a href="/admin/audit">▧ Audit</a><a href="/costs">¥ Cost</a>{{end}}<a href="/mirrors">⇣ Git Mirrors</a><a class="nav-active" aria-current="page" href="/manual">▣ 利用者マニュアル</a><a href="/mfa">⚿ MFA</a></nav><form method="post" action="/logout" class="logout"><button>Logout</button></form></aside><main class="workspace"><header class="topbar"><div><p class="eyebrow">USER GUIDE</p><h1>利用者マニュアル</h1></div><div class="account"><strong>{{.User.Username}}</strong><small>{{.User.Role}}</small></div></header>
+<div class="manual-content">
+<p class="muted admin-help">利用者EC2で通信とコード取得を準備するための手順です。プロキシとGitミラーは別の接続先・専用トークンを使います。</p>
+{{if .Site.HelpMessage}}<section class="panel"><h2>利用前の確認・問い合わせ</h2><p class="site-message">{{.Site.HelpMessage}}</p></section>{{end}}
+<div class="manual-index"><a class="btn" href="#proxy-guide">プロキシ設定</a><a class="btn" href="#git-guide">Gitミラー</a><a class="btn" href="#troubleshooting">困ったとき</a></div>
+<section class="panel" id="proxy-guide"><p class="eyebrow">01 / NETWORK</p><h2>プロキシの設定方法</h2>
+<p>許可された外部サイトへは、管理者が用意したHTTPSプロキシを経由します。PortalのログインパスワードやMFAコードをツールへ保存する必要はありません。</p>
+<ol><li>管理者からプロキシ接続先、社内CA証明書、プロキシ用ユーザー名と専用トークンを受け取ります。専用トークンは1〜90日で失効します。</li><li>HTTPSプロキシ対応のcurlを準備します。接続先のCAとプロキシのCAを信頼できるように設定します。</li><li>下記のコマンドで、管理者が許可した接続先への通信を確認します。トークン入力は画面に表示されません。</li></ol>
+<p>接続先：<code>{{.ProxyExampleURL}}</code>{{if not .ProxyConfigured}} <span class="muted">（例示です。管理者に確認した値へ置き換えてください。）</span>{{end}}</p>
+<pre class="manual-code"><code>PROXY_URL='{{.ProxyExampleURL}}'
+read -r -p 'Proxy user: ' PROXY_USER
+read -r -s -p 'Proxy token: ' PROXY_TOKEN; echo
+read -r -p '許可された接続先URL: ' TARGET_URL
+printf 'proxy-user = "%s:%s"\n' "$PROXY_USER" "$PROXY_TOKEN" |
+  curl --config - --proxy "$PROXY_URL" --max-time 20 "$TARGET_URL"
+unset PROXY_USER PROXY_TOKEN</code></pre>
+<p>社内CAをOSの信頼ストアに登録していない場合、curlに <code>--proxy-cacert /path/to/proxy-ca.pem</code> を追加します。接続先も社内CAを使う場合は <code>--cacert /path/to/target-ca.pem</code> を追加します。</p>
+<details><summary>他のツールや自動タスクで使う場合</summary><p>対応ツールでは <code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code> に上記プロキシ接続先を指定します。変数名HTTPS_PROXYは「HTTPS宛て通信のプロキシ」を意味します。実際の接続先もHTTPS方式のプロキシであることを確認してください。</p><p>認証情報の設定方法はツールごとに異なります。専用トークンは権限0600の設定ファイルなどで保護し、URL・コマンド引数・共有ログへ記載しないでください。HTTPSプロキシに対応しないツールは、この方法では利用できません。</p><p>HTTPS通信は接続先ホストとポートで許可されます。HTTPS内部のGET/POSTなどを区別する仕組みではありません。GitLabの読み取り専用運用には下のGitミラーを使います。</p></details>
+</section>
+<section class="panel" id="git-guide"><p class="eyebrow">02 / SOURCE CODE</p><h2>Gitミラーの利用方法</h2>
+<p>ポータルが社内GitLabからコードを取得します。利用者EC2はポータル内のミラーからclone/fetchします。GitLabの資格情報をEC2へ配布せず、ミラーへのpushを拒否します。</p>
+<ol><li><a href="/mirrors" hx-boost="true">Git Mirrors画面</a>で割り当て済みのリポジトリIDを確認します。同期要求をするには「読み取り＋同期要求」の権限が必要です。</li><li>管理者からポータルの専用ミラートークンと社内CAを受け取ります。プロキシのトークンやPortalのパスワードとは別です。</li><li>EC2にPython3とGitを準備し、クライアントをポータルからダウンロードします。</li></ol>
+<p>接続先：<code>{{.PortalExampleURL}}</code>{{if not .PortalConfigured}} <span class="muted">（例示です。管理者に確認した値へ置き換えてください。）</span>{{end}}</p>
+<p><a class="btn" href="/static/web/awsportal-mirror.py" download="awsportal-mirror" hx-boost="false">同期クライアントをダウンロード</a></p>
+<details open><summary>1. EC2へクライアントを配置</summary>
+<pre class="manual-code"><code>PORTAL_URL='{{.PortalExampleURL}}'
+mkdir -p "$HOME/.local/bin"
+curl --fail --silent --show-error \
+  "$PORTAL_URL/static/web/awsportal-mirror.py" \
+  -o "$HOME/.local/bin/awsportal-mirror"
+chmod 755 "$HOME/.local/bin/awsportal-mirror"
+export PATH="$HOME/.local/bin:$PATH"</code></pre>
+<p>社内CAをOSの信頼ストアに登録していない場合は、curlに <code>--cacert /path/to/portal-ca.pem</code> を追加してください。プロキシ経由ではなく、ポータルへ直接届く経路が必要です。</p>
+</details>
+<details open><summary>2. トークンを安全に設定</summary><p>次のPythonコマンドはトークンを非表示で読み取り、通常ファイルを権限0600で新規作成します。既存ファイルは上書きしません。CAをOSで信頼済みの場合、CAファイルの入力は空欄にできます。</p>
+<pre class="manual-code"><code>python3 -c '
+import getpass, json, os
+from pathlib import Path
+p = Path.home() / ".config/awsportal/mirror.json"
+p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+config = {
+    "portal_url": "{{.PortalExampleURL}}",
+    "token": getpass.getpass("Mirror token: "),
+}
+ca = input("Portal CA file (空欄可): ").strip()
+if ca:
+    config["ca_file"] = ca
+fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump(config, f)
+print("設定ファイルを作成しました")
+'</code></pre></details>
+<details open><summary>3. 同期してコードを取得</summary><p>下記の <code>1</code> を割り当て済みリポジトリIDへ置き換えます。<code>main</code> は実際のブランチ名に合わせてください。</p>
+<pre class="manual-code"><code># GitLab→ポータルの同期。成功まで待ち、失敗時はエラー終了
+awsportal-mirror sync 1 --wait
+
+# 初回取得
+awsportal-mirror clone 1 ./source
+
+# 取得済みのリポジトリを更新
+awsportal-mirror fetch 1 ./source
+git -C ./source merge --ff-only origin/main</code></pre>
+<p>読み取りのみの場合、<code>sync</code> は使えません。管理者の定期同期・初回同期が完了したミラーからclone/fetchしてください。fetchだけでは作業ツリーは変更されません。</p></details>
+<details><summary>自動タスクの実行例</summary>
+<pre class="manual-code"><code>set -eu
+awsportal-mirror sync 1 --wait
+if [ ! -d ./source/.git ]; then
+  awsportal-mirror clone 1 ./source
+else
+  awsportal-mirror fetch 1 ./source
+  git -C ./source merge --ff-only origin/main
+fi
+# 同期・更新が成功した場合だけ、ここでビルドやタスクを実行</code></pre>
+<p>既定の待機は最大900秒。タイムアウトや同期失敗は終了コード1です。<code>awsportal-mirror status JOB_ID</code> で後から状態を確認できます。専用トークンの期限は更新されないため、定期的な交換が必要です。</p></details>
+<p class="muted">Git LFS、GitLab API・添付ファイル・CI artifact、サブモジュールの自動再帰取得は未対応です。</p>
+</section>
+<section class="panel" id="troubleshooting"><p class="eyebrow">03 / HELP</p><h2>困ったとき</h2>
+<dl class="manual-help"><dt>接続できない・タイムアウト</dt><dd>接続先、DNS、社内CA、EC2からの通信許可を管理者へ確認してください。GitミラーはポータルHTTPSへ直接接続します。SGやプロキシ許可を利用者が変更する必要はありません。</dd>
+<dt>証明書エラー</dt><dd>指定されたCAファイルと接続先名を確認してください。TLS検証を無効化して回避しないでください。</dd>
+<dt>プロキシの407 / 403</dt><dd>407は認証情報・トークン期限・アカウントの状態、403は接続先・ポート・許可設定を確認します。アカウント維持のため定期的なPortalログインも必要です。</dd>
+<dt>ミラーの401 / 403</dt><dd>専用ミラートークンの期限、アカウント、リポジトリ割り当て、読み取り／同期要求の権限を確認してください。</dd>
+<dt>ミラーの409 / 503</dt><dd>409は初回同期が未完了、503はミラー機能の準備状況を管理者へ確認してください。pushなどの書き込み要求は403で拒否されます。</dd>
+<dt>同期の429 / error</dt><dd>429は短時間の再要求です。<code>sync --wait</code> は期限内で自動再試行します。errorの場合はジョブIDを管理者へ連絡してください。前回成功したコードは残ります。</dd>
+<dt>コードの更新に失敗</dt><dd>ブランチ名、originのミラーURL、作業ツリーの変更を確認してください。クライアントはファイルを強制上書きしません。</dd></dl>
+</section></div>
+
+</main></body></html>{{end}}

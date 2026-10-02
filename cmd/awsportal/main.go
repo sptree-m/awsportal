@@ -115,6 +115,9 @@ func main() {
 	mux.HandleFunc("POST /admin/users/{username}/disable", a.require(a.adminDisableUser))
 	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
 	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
+	mux.HandleFunc("GET /manual", a.require(a.manualPage))
+	mux.HandleFunc("GET /admin/site", a.require(a.siteAdminPage))
+	mux.HandleFunc("POST /admin/site", a.require(a.siteAdminChange))
 	mux.HandleFunc("GET /mirrors", a.require(a.mirrorPage))
 	mux.HandleFunc("POST /mirrors", a.require(a.mirrorChange))
 	mux.HandleFunc("POST /api/mirrors/{id}/sync", a.mirrorSyncAPI)
@@ -149,7 +152,7 @@ func main() {
 }
 func health(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
-	a.tpl.ExecuteTemplate(w, "login.html", nil)
+	a.renderPage(w, r, "login.html", nil)
 }
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
@@ -219,7 +222,7 @@ func (a *app) mfaPage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	a.tpl.ExecuteTemplate(w, "mfa.html", data)
+	a.renderPage(w, r, "mfa.html", data)
 }
 func (a *app) mfaAdd(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value("user").(store.User)
@@ -339,7 +342,7 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 func (a *app) changePasswordPage(w http.ResponseWriter, r *http.Request) {
-	a.tpl.ExecuteTemplate(w, "change-password.html", nil)
+	a.renderPage(w, r, "change-password.html", nil)
 }
 func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value("user").(store.User)
@@ -386,7 +389,7 @@ func (a *app) adminResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.db.Audit(r.Context(), admin.Username, "password.reset", target, "ok", "30分/初回変更必須")
-	a.tpl.ExecuteTemplate(w, "temporary-password.html", map[string]string{"Username": target, "Password": temp})
+	a.renderPage(w, r, "temporary-password.html", map[string]any{"Username": target, "Password": temp})
 }
 
 type dashboardInstance struct {
@@ -848,7 +851,7 @@ func (a *app) adminUsers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range xs {
 		rows = append(rows, adminUserView(u, now))
 	}
-	a.tpl.ExecuteTemplate(w, "users.html", map[string]any{"User": admin, "Users": rows, "Now": now})
+	a.renderPage(w, r, "users.html", map[string]any{"User": admin, "Users": rows, "Now": now})
 }
 func (a *app) adminReactivateUser(w http.ResponseWriter, r *http.Request) {
 	admin := r.Context().Value("user").(store.User)
@@ -897,7 +900,7 @@ func (a *app) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.db.SetTemporaryPassword(r.Context(), username, h, time.Now().Add(30*time.Minute))
 	a.db.Audit(r.Context(), admin.Username, "user.create", username, "ok", "role="+role)
-	a.tpl.ExecuteTemplate(w, "temporary-password.html", map[string]string{"Username": username, "Password": temp})
+	a.renderPage(w, r, "temporary-password.html", map[string]any{"Username": username, "Password": temp})
 }
 func (a *app) adminDisableUser(w http.ResponseWriter, r *http.Request) {
 	admin := r.Context().Value("user").(store.User)
@@ -929,7 +932,7 @@ func (a *app) adminAudit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB error", 500)
 		return
 	}
-	a.tpl.ExecuteTemplate(w, "audit.html", map[string]any{"User": admin, "Entries": xs})
+	a.renderPage(w, r, "audit.html", map[string]any{"User": admin, "Entries": xs})
 }
 
 // Refresh requests receive only the selected region; direct/history visits receive a full document.
@@ -939,7 +942,7 @@ func (a *app) renderView(w http.ResponseWriter, r *http.Request, page, fragment,
 	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Target") == target && r.Header.Get("HX-History-Restore-Request") != "true" {
 		page = fragment
 	}
-	if e := a.tpl.ExecuteTemplate(w, page, data); e != nil {
+	if e := a.tpl.ExecuteTemplate(w, page, a.siteData(r, data)); e != nil {
 		log.Printf("render %s: %v", page, e)
 	}
 }
