@@ -42,6 +42,10 @@ jobs:
           test -x dist/pkg/awsportal
           test -x dist/pkg/awsportal-admin
           tar -C dist/pkg -czf "dist/$ASSET" awsportal awsportal-admin
+          CONTENTS="$(tar -tzf "dist/$ASSET")"
+          grep -Fxq "awsportal" <<<"$CONTENTS"
+          grep -Fxq "awsportal-admin" <<<"$CONTENTS"
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 2
           sha256sum "dist/$ASSET" > "dist/$ASSET.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
