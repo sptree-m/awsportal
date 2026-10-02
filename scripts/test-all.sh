@@ -1,24 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo '[1/7] Go modules'
+echo '[1/8] Go modules'
 go mod tidy
 if ! git diff --exit-code -- go.mod go.sum; then
   echo 'ERROR: go.mod/go.sum is not committed or not tidy'
   exit 1
 fi
-echo '[2/7] Go format'
+echo '[2/8] Go format'
 gofmt -w cmd internal
-echo '[3/7] Go test'
+echo '[3/8] Go test'
 go test -race ./...
-echo '[4/7] ARM64 build'
+echo '[4/8] ARM64 portal build'
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/awsportal-arm64 ./cmd/awsportal
-echo '[5/7] Terraform'
+echo '[5/8] ARM64 admin build'
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/awsportal-admin-arm64 ./cmd/awsportal-admin
+echo '[6/8] Terraform'
 terraform -chdir=terraform fmt
 terraform -chdir=terraform init -backend=false -input=false >/dev/null
 terraform -chdir=terraform validate
-echo '[6/7] Security'
+echo '[7/8] Security'
 bash tests/security.sh
-echo '[7/7] Bundled fonts'
+echo '[8/8] Bundled fonts'
 python3 - <<'PY'
 import os, struct
 fonts=[

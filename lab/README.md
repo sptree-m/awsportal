@@ -12,8 +12,8 @@ git clone --depth 1 https://github.com/sptree-m/awsportal.git && cd awsportal &&
 cd ~/awsportal && bash lab/destroy.sh
 ```
 
-作成物: 専用VPC / public subnet / IGW / route table / Portal SG / Test SG / Portal IAM role + instance profile / SSM bootstrap parameter / t4g.micro Portal EC2 / t4g.nano Ubuntu test EC2 / encrypted 8 GiB gp3 x2。NAT Gateway、ALB、Elastic IPは作成しません。
+作成物: 専用VPC / public subnet / IGW / route table / Portal SG / Test SG / Portal IAM role + instance profile / SSM bootstrap parameter / t4g.micro Portal EC2 / t4g.micro Ubuntu test EC2 / encrypted 8 GiB gp3 x2。NAT Gateway、ALB、Elastic IPは作成しません。
 
-Portalの8080/TCPはcreate.shが実行元のグローバルIPv4を自動取得し、その /32 だけに許可します。`ALLOWED_CIDR` 指定時も `0.0.0.0/0` は拒否します。create.shはCloudFormation作成後、2台のEC2がrunningかつARM64であることとPortalの `/healthz` 応答まで確認し、全検査合格時のみ `RESULT: PASS` を出力します。テストEC2はinbound 0です。両EC2のEBSはDeleteOnTermination=trueです。
+Disposable LabではPortalの8080/TCPを既定で `0.0.0.0/0` に許可します（移動回線・変動IPからのブラウザ試験用）。必要なら `ALLOWED_CIDR` で制限できます。本番構成には適用しません。create.shはCloudFormation作成後、2台のEC2がrunningかつARM64であることとPortalの `/healthz` 応答まで確認し、全検査合格時のみ `RESULT: PASS` を出力します。起動失敗時はSSMでcloud-init/systemd/journal診断を収集します。テストEC2はinbound 0です。両EC2のEBSはDeleteOnTermination=trueです。
 
 destroy.shは削除前にCloudFormationの物理Resource IDを記録し、削除完了後にStack消滅、Project=awsportal-labタグ、EC2/EBS/ENI/VPC/SG、IAM role/profile、および記録済みVPC/Subnet/SG/IGW/RouteTable等を再検査します。残留または削除エラーが1件でもあれば `RESULT: FAIL` と終了コード2、全検査合格時のみ `RESULT: PASS` を出力します。Tagging APIの参照件数と、AWSが履歴として返すterminated EC2の件数・Instance IDも表示しますが、terminated EC2は残留リソースとは判定しません。

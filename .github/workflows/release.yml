@@ -31,10 +31,22 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
             if grep -Fxq "$ASSET" <<<"$ASSETS" && grep -Fxq "$ASSET.sha256" <<<"$ASSETS"; then
-              echo "$TAG already exists with required assets"
-              exit 0
+              rm -rf dist/existing
+              mkdir -p dist/existing
+              if gh release download "$TAG" -p "$ASSET" -p "$ASSET.sha256" -D dist/existing; then
+                EXPECTED="$(awk '{print $1}' "dist/existing/$ASSET.sha256")"
+                ACTUAL="$(sha256sum "dist/existing/$ASSET" | awk '{print $1}')"
+                CONTENTS="$(tar -tzf "dist/existing/$ASSET" 2>/dev/null || true)"
+                if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] \
+                  && grep -Fxq "awsportal" <<<"$CONTENTS" \
+                  && grep -Fxq "awsportal-admin" <<<"$CONTENTS" \
+                  && [ "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 2 ]; then
+                  echo "$TAG already exists and archive/checksum are valid"
+                  exit 0
+                fi
+              fi
             fi
-            echo "$TAG exists but required assets are incomplete; rebuilding/uploading"
+            echo "$TAG exists but assets are incomplete or invalid; rebuilding/uploading"
           fi
           mkdir -p dist/pkg
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal ./cmd/awsportal
@@ -42,6 +54,10 @@ jobs:
           test -x dist/pkg/awsportal
           test -x dist/pkg/awsportal-admin
           tar -C dist/pkg -czf "dist/$ASSET" awsportal awsportal-admin
+          CONTENTS="$(tar -tzf "dist/$ASSET")"
+          grep -Fxq "awsportal" <<<"$CONTENTS"
+          grep -Fxq "awsportal-admin" <<<"$CONTENTS"
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 2
           sha256sum "dist/$ASSET" > "dist/$ASSET.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
@@ -61,4 +77,15 @@ jobs:
           ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
           grep -Fxq "$ASSET" <<<"$ASSETS"
           grep -Fxq "$ASSET.sha256" <<<"$ASSETS"
-          echo "RESULT: PASS - $TAG ARM64 release assets verified"
+          rm -rf dist/verify
+          mkdir -p dist/verify
+          gh release download "$TAG" -p "$ASSET" -p "$ASSET.sha256" -D dist/verify
+          EXPECTED="$(awk '{print $1}' "dist/verify/$ASSET.sha256")"
+          ACTUAL="$(sha256sum "dist/verify/$ASSET" | awk '{print $1}')"
+          test -n "$EXPECTED"
+          test "$EXPECTED" = "$ACTUAL"
+          CONTENTS="$(tar -tzf "dist/verify/$ASSET")"
+          grep -Fxq "awsportal" <<<"$CONTENTS"
+          grep -Fxq "awsportal-admin" <<<"$CONTENTS"
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 2
+          echo "RESULT: PASS - $TAG ARM64 release archive and checksum verified"
