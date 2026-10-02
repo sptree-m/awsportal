@@ -2,6 +2,7 @@ package main
 
 import (
  "context"
+ "fmt"
  "html/template"
  "net/http"
  "net/http/httptest"
@@ -247,4 +248,44 @@ func TestHTMXInstanceRowStopsPollingAtTerminalState(t *testing.T) {
  body := w.Body.String()
  if strings.Contains(body, `hx-trigger="load delay:1500ms"`) { t.Fatalf("terminal row must stop polling: %s", body) }
  if !strings.Contains(body, `data-state="running"`) || !strings.Contains(body, ">接続</a>") { t.Fatalf("running row invalid: %s", body) }
+}
+
+func TestHTMXAdminDisableReturnsUpdatedUserRow(t *testing.T) {
+ a, _ := newHandlerTestApp(t)
+ ctx := context.Background()
+ if err := a.db.CreateUser(ctx, "admin", "x", "portal_admin", "SECRET"); err != nil { t.Fatal(err) }
+ if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil { t.Fatal(err) }
+ admin, _ := a.db.UserByName(ctx, "admin")
+
+ r := requestAs(a, admin, http.MethodPost, "/admin/users/alice/disable", nil)
+ r.SetPathValue("username", "alice")
+ r.Header.Set("HX-Request", "true")
+ w := httptest.NewRecorder()
+ a.require(a.adminDisableUser)(w, r)
+ if w.Code != http.StatusOK { t.Fatalf("disable code=%d body=%s", w.Code, w.Body.String()) }
+ body := w.Body.String()
+ for _, want := range []string{`data-user="alice"`, "無効", `hx-post="/admin/users/alice/reactivate"`} {
+  if !strings.Contains(body, want) { t.Fatalf("user fragment missing %q: %s", want, body) }
+ }
+ u, _ := a.db.UserByName(ctx, "alice")
+ if u.Enabled { t.Fatal("alice should be disabled") }
+}
+
+func TestHTMXMFADeleteRemovesDeviceWithoutRedirect(t *testing.T) {
+ a, _ := newHandlerTestApp(t)
+ ctx := context.Background()
+ if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil { t.Fatal(err) }
+ u, _ := a.db.UserByName(ctx, "alice")
+ id, err := a.db.AddMFADevice(ctx, u.ID, "phone", "SECRET")
+ if err != nil { t.Fatal(err) }
+ if err = a.db.VerifyMFADevice(ctx, u.ID, id); err != nil { t.Fatal(err) }
+
+ r := requestAs(a, u, http.MethodPost, "/mfa/device/delete", nil)
+ r.SetPathValue("id", fmt.Sprint(id))
+ r.Header.Set("HX-Request", "true")
+ w := httptest.NewRecorder()
+ a.require(a.mfaDelete)(w, r)
+ if w.Code != http.StatusOK { t.Fatalf("mfa delete code=%d body=%s", w.Code, w.Body.String()) }
+ if w.Header().Get("Location") != "" { t.Fatalf("htmx delete must not redirect: %q", w.Header().Get("Location")) }
+ if ds, _ := a.db.MFADevices(ctx, u.ID); len(ds) != 0 { t.Fatalf("device not deleted: %#v", ds) }
 }
