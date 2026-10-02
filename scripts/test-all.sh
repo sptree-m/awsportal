@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo '[1/8] Go modules'
+echo '[1/9] Go modules'
 go mod tidy
 if ! git diff --exit-code -- go.mod go.sum; then
   echo 'ERROR: go.mod/go.sum is not committed or not tidy'
   exit 1
 fi
-echo '[2/8] Go format'
+echo '[2/9] Go format'
 gofmt -w cmd internal
-echo '[3/8] Go test'
+echo '[3/9] Go test'
 go test -race ./...
-echo '[4/8] ARM64 portal build'
+echo '[4/9] ARM64 portal build'
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/awsportal-arm64 ./cmd/awsportal
-echo '[5/8] ARM64 admin build'
+echo '[5/9] ARM64 admin build'
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/awsportal-admin-arm64 ./cmd/awsportal-admin
-echo '[6/8] Terraform'
+echo '[6/9] Terraform'
 terraform -chdir=terraform fmt
 terraform -chdir=terraform init -backend=false -input=false >/dev/null
 terraform -chdir=terraform validate
-echo '[7/8] Security'
+echo '[7/9] Security'
 bash tests/security.sh
-echo '[8/8] Bundled fonts'
+echo '[8/9] Bundled fonts'
 python3 - <<'PY'
 import os, struct
 fonts=[
@@ -51,4 +51,9 @@ grep -Fq 'rounded-mplus-1mn-regular.ttf' cmd/awsportal/web/app.css
 grep -Fq 'rounded-mplus-1mn-bold.ttf' cmd/awsportal/web/app.css
 grep -Fq 'font-weight:400' cmd/awsportal/web/app.css
 grep -Fq 'font-weight:700' cmd/awsportal/web/app.css
+echo '[9/9] htmx integration'
+grep -Fq 'hx-post="/instance/' cmd/awsportal/web/instance-row.html
+grep -Fq 'hx-trigger="load delay:1500ms"' cmd/awsportal/web/instance-row.html
+grep -Fq '/static/web/htmx.min.js' cmd/awsportal/web/instances.html
+test -s cmd/awsportal/web/HTMX_LICENSE.txt
 echo '全必須テスト: PASS'

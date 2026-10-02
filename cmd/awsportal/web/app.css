@@ -13,3 +13,8 @@
 /* Typography hierarchy: real Regular for dense data; real Bold only for hierarchy/actions/status. */
 body,td,input,select,.account,.muted,.note,.count,.state-note,.kv dt,.kv dd{font-weight:400}
 h1,h2,strong,th,.brand strong,.nav-active,.eyebrow,.state,.result,button,.btn{font-weight:700}
+
+/* htmx micro-interactions: immediate feedback without full-page reloads. */
+.htmx-request button{opacity:.55;cursor:wait}.htmx-swapping{opacity:.55;transition:opacity 60ms ease}.htmx-settling{opacity:1;transition:opacity 80ms ease}tr[data-instance]{transition:background-color 120ms ease,opacity 80ms ease}
+
+.topbar-actions{display:flex;align-items:center;gap:10px}.topbar-actions .account{min-width:90px}.htmx-request{cursor:progress}.htmx-request.btn,.htmx-request button{filter:saturate(.75)}nav a.htmx-request{background:#142535;color:#fff}
