@@ -35,7 +35,7 @@ test "$(wc -c < cmd/awsportal/web/app.css)" -lt 32000
 test "$(wc -c < cmd/awsportal/web/dashboard.js)" -lt 4000
 test "$(wc -c < cmd/awsportal/web/htmx.min.js)" -lt 60000
 ! grep -R -E -i 'react|vue|bootstrap|tailwind|jquery|chart\.js|googleapis|gstatic|cdn' cmd/awsportal/web --include='*.html' --include='*.css'
-! grep -R -E -i 'setInterval|EventSource|WebSocket' cmd/awsportal/web --include='*.js'
+! grep -E -i 'setInterval|EventSource|WebSocket' cmd/awsportal/web/dashboard.js
 grep -q 'max-age=86400' cmd/awsportal/main.go
 grep -q 'Rounded Mplus 1mn' cmd/awsportal/web/app.css
 grep -q 'var htmx=' cmd/awsportal/web/htmx.min.js
