@@ -2,6 +2,7 @@ package main
 
 import (
  "context"
+ "html/template"
  "net/http"
  "net/http/httptest"
  "net/url"
@@ -41,6 +42,7 @@ func TestStaticAssetsServed(t *testing.T) {
  }{
   {"/static/web/app.css", "text/css", "@font-face"},
   {"/static/web/dashboard.js", "text/javascript", "(()=>"},
+  {"/static/web/htmx.min.js", "text/javascript", "var htmx="},
   {"/static/web/fonts/rounded-mplus-1mn-regular.ttf", "font/ttf", ""},
   {"/static/web/fonts/rounded-mplus-1mn-bold.ttf", "font/ttf", ""},
  }
@@ -101,7 +103,7 @@ func newHandlerTestApp(t *testing.T) (*app, *fakeEC2) {
  if err = s.Migrate(context.Background()); err != nil { t.Fatal(err) }
  t.Cleanup(func(){ _ = s.Close() })
  ec2 := &fakeEC2{states: map[string]string{}}
- return &app{db:s, ec2:ec2, sessions:map[string]session{}}, ec2
+ return &app{db:s, ec2:ec2, tpl:template.Must(template.ParseFS(web,"web/*.html")), sessions:map[string]session{}}, ec2
 }
 
 func requestAs(a *app, u store.User, method, target string, body *strings.Reader) *http.Request {
@@ -202,4 +204,47 @@ func TestDCVHTTPTokenIsOneTimeAndBoundToAssignedInstance(t *testing.T) {
  req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
  a.dcvAuth(second, req2)
  if second.Code != http.StatusUnauthorized { t.Fatalf("reused DCV token code=%d", second.Code) }
+}
+
+func TestHTMXInstanceActionReturnsPollingRow(t *testing.T) {
+ a, ec2 := newHandlerTestApp(t)
+ ctx := context.Background()
+ if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil { t.Fatal(err) }
+ u, _ := a.db.UserByName(ctx, "alice")
+ _, err := a.db.DB.ExecContext(ctx, `INSERT INTO instances(id,instance_id,name,dcv_host) VALUES(1,'i-ok','dev','dev.local'); INSERT INTO instance_users(instance_id,user_id,can_control) VALUES(1,?,1);`, u.ID)
+ if err != nil { t.Fatal(err) }
+ ec2.states["i-ok"] = "stopped"
+
+ r := requestAs(a, u, http.MethodPost, "/instance/i-ok/start", nil)
+ r.SetPathValue("id", "i-ok")
+ r.SetPathValue("action", "start")
+ r.Header.Set("HX-Request", "true")
+ w := httptest.NewRecorder()
+ a.require(a.instanceAction)(w, r)
+
+ if w.Code != http.StatusOK { t.Fatalf("htmx action code=%d body=%s", w.Code, w.Body.String()) }
+ body := w.Body.String()
+ for _, want := range []string{`data-state="pending"`, `hx-get="/instances/i-ok/row"`, "AWSの状態を確認中"} {
+  if !strings.Contains(body, want) { t.Fatalf("HTMX fragment missing %q: %s", want, body) }
+ }
+ if len(ec2.started) != 1 || ec2.started[0] != "i-ok" { t.Fatalf("start calls=%v", ec2.started) }
+}
+
+func TestHTMXInstanceRowStopsPollingAtTerminalState(t *testing.T) {
+ a, ec2 := newHandlerTestApp(t)
+ ctx := context.Background()
+ if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil { t.Fatal(err) }
+ u, _ := a.db.UserByName(ctx, "alice")
+ _, err := a.db.DB.ExecContext(ctx, `INSERT INTO instances(id,instance_id,name,dcv_host) VALUES(1,'i-ok','dev','dev.local'); INSERT INTO instance_users(instance_id,user_id,can_control) VALUES(1,?,1);`, u.ID)
+ if err != nil { t.Fatal(err) }
+ ec2.states["i-ok"] = "running"
+
+ r := requestAs(a, u, http.MethodGet, "/instances/i-ok/row", nil)
+ r.SetPathValue("id", "i-ok")
+ w := httptest.NewRecorder()
+ a.require(a.instanceRow)(w, r)
+ if w.Code != http.StatusOK { t.Fatalf("row code=%d body=%s", w.Code, w.Body.String()) }
+ body := w.Body.String()
+ if strings.Contains(body, `hx-trigger="load delay:1500ms"`) { t.Fatalf("terminal row must stop polling: %s", body) }
+ if !strings.Contains(body, `data-state="running"`) || !strings.Contains(body, ">接続</a>") { t.Fatalf("running row invalid: %s", body) }
 }
