@@ -20,7 +20,9 @@ class AgentTest(unittest.TestCase):
         self.sessions = {}
         self.commands = []
         self.a = agent.Agent({"portal_url": "https://portal.example", "instance_id": "i-a", "token": "a" * 64},
-                             self.tmp.name, self.run_command)
+                             self.tmp.name, self.run_command, policy_dir=self.tmp.name)
+        self.a.allowed = agent.DEFAULT_ALLOWED.copy()
+        patch.object(self.a, "validate_enforcement").start()
         self.addCleanup(patch.stopall)
         patch.object(agent.pwd, "getpwnam", side_effect=self.get_user).start()
         patch.object(agent.os, "chmod").start()
@@ -40,7 +42,7 @@ class AgentTest(unittest.TestCase):
         if args[0].endswith("dcv"):
             if args[1] == "create-session":
                 name = args[-1]
-                self.sessions[name] = {"owner": name, "type": "virtual", "x11-display": ":1"}
+                self.sessions[name] = {"owner": "root", "type": "virtual", "x11-display": ":1", "x11-authority":"/run/user/"+str(200000+int(name[5:]))+"/dcv/"+name+".xauth"}
             if args[1] == "describe-session":
                 session = self.sessions.get(args[2])
                 status = 0 if session else 1
@@ -85,13 +87,13 @@ class AgentTest(unittest.TestCase):
         self.assertFalse(self.commands)
 
     def test_wrong_session_owner_is_not_reported_ready(self):
-        self.sessions["awp-u1"] = {"owner": "root", "type": "virtual", "x11-display": ":1"}
+        self.sessions["awp-u1"] = {"owner": "intruder", "type": "virtual", "x11-display": ":1"}
         ready, error = self.a.reconcile([self.account(1)])
         self.assertFalse(ready)
         self.assertTrue(error)
 
     def test_failure_does_not_report_success(self):
-        manifest = {"instance_id": "i-a", "accounts": [self.account(1)]}
+        manifest = {"instance_id": "i-a", "accounts": [self.account(1)], "policy":{"revision":1,"allowed":agent.DEFAULT_ALLOWED}}
         reports = []
         def request(path, body=None, *args):
             if path.endswith("state"):
@@ -107,7 +109,7 @@ class AgentTest(unittest.TestCase):
         self.assertFalse(self.sessions)
 
     def test_wrong_instance_manifest_not_applied(self):
-        self.a.request = lambda *args: json.dumps({"instance_id": "i-b", "accounts": [self.account(1)]}).encode()
+        self.a.request = lambda *args: json.dumps({"instance_id": "i-b", "accounts": [self.account(1)], "policy":{"revision":1,"allowed":agent.DEFAULT_ALLOWED}}).encode()
         self.a.sync()
         self.assertFalse(self.commands)
 
@@ -131,6 +133,77 @@ class AgentTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.a.authenticate(b"sessionId=root&authenticationToken=test")
         self.assertIsNone(agent.NoRedirect().redirect_request(None, None, None, None, None, None))
+
+    def test_policy_is_global_deny_and_root_owned_session_with_user_desktop(self):
+        self.a.apply_policy({"revision":1,"allowed":agent.DEFAULT_ALLOWED})
+        ready,error=self.a.reconcile([self.account(1)])
+        self.assertEqual(ready,[1]); self.assertFalse(error)
+        baseline=pathlib.Path(self.tmp.name,"enforced.perm").read_text()
+        self.assertIn("%any% deny",baseline)
+        for code in ("screenshot","clipboard-copy","file-download","extensions-server","unsupervised-access"):
+            self.assertIn(code,baseline)
+        permissions=pathlib.Path(self.tmp.name,"awp-u1.perm").read_text()
+        self.assertIn("awp-u1 allow",permissions)
+        create=next(c for c in self.commands if c[0].endswith("dcv") and c[1]=="create-session")
+        self.assertEqual(create[create.index("--owner")+1],"root")
+        self.assertEqual(create[create.index("--user")+1],"awp-u1")
+        self.assertEqual(create[create.index("--storage-root")+1],"/home/awp-u1")
+        self.assertTrue(any(c[1]=="set-permissions" for c in self.commands if c[0].endswith("dcv")))
+
+    def test_policy_change_closes_old_sessions_before_baseline_and_recreates(self):
+        self.a.apply_policy({"revision":1,"allowed":agent.DEFAULT_ALLOWED})
+        self.a.reconcile([self.account(1)])
+        self.a.apply_policy({"revision":2,"allowed":["display"]})
+        self.assertFalse(self.sessions)
+        self.a.reconcile([self.account(1)])
+        self.assertIn("awp-u1",self.sessions)
+        baseline=pathlib.Path(self.tmp.name,"enforced.perm").read_text()
+        self.assertIn("keyboard",baseline)
+        self.assertEqual(self.a.applied_revision,2)
+
+    def test_reject_alias_injection_and_clipboard_capture_bypass(self):
+        for allowed in (["builtin"],["screenshot\n%any% allow builtin"],["clipboard-copy"],["keyboard-sas"],["display","display"],["unsupervised-access"]):
+            with self.assertRaises(ValueError): self.a.apply_policy({"revision":1,"allowed":allowed})
+        self.assertFalse(self.commands)
+
+    def test_failed_policy_update_never_reports_ready_and_closes_old_sessions(self):
+        self.a.reconcile([self.account(1)])
+        self.a.validate_enforcement=lambda: (_ for _ in ()).throw(RuntimeError("missing global baseline"))
+        reports=[]
+        def request(path,body=None,*args):
+            if path.endswith("state"):return json.dumps({"instance_id":"i-a","accounts":[self.account(1)],"policy":{"revision":1,"allowed":agent.DEFAULT_ALLOWED}}).encode()
+            reports.append(json.loads(body)); return b""
+        self.a.request=request
+        self.assertFalse(self.a.sync()); self.assertFalse(self.sessions)
+        self.assertEqual(reports[-1]["applied_revision"],0)
+        self.assertEqual(reports[-1]["ready_users"],[])
+
+    def test_migrates_only_known_legacy_user_owned_session(self):
+        self.a.reconcile([self.account(1)])
+        self.sessions["awp-u1"]["owner"]="awp-u1"
+        self.a.apply_policy({"revision":1,"allowed":agent.DEFAULT_ALLOWED})
+        self.assertFalse(self.sessions)
+        self.a.reconcile([self.account(1)])
+        self.assertEqual(self.sessions["awp-u1"]["owner"],"root")
+
+    def test_enforcement_rejects_writable_configuration_and_missing_baseline(self):
+        import stat
+        config=pathlib.Path(self.tmp.name,"dcv.conf")
+        self.a.dcv_config=config
+        config.write_text('[security]\nauth-token-verifier="http://127.0.0.1:8444"\n[session-management/defaults]\npermissions-file="'+str(pathlib.Path(self.tmp.name,"enforced.perm"))+'"\n')
+        with patch.object(pathlib.Path,"lstat",return_value=types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG | 0o644)):
+            agent.Agent.validate_enforcement(self.a)
+        with patch.object(pathlib.Path,"lstat",return_value=types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG | 0o666)):
+            with self.assertRaises(RuntimeError):agent.Agent.validate_enforcement(self.a)
+        config.write_text('[security]\nauth-token-verifier="http://127.0.0.1:8444"\n[session-management/defaults]\npermissions-file="/tmp/user.perm"\n')
+        with patch.object(pathlib.Path,"lstat",return_value=types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG | 0o644)):
+            with self.assertRaises(RuntimeError):agent.Agent.validate_enforcement(self.a)
+
+    def test_rejects_root_owned_session_with_other_os_desktop_user(self):
+        self.a.reconcile([self.account(1)])
+        self.sessions["awp-u1"]["x11-authority"]="/run/user/200002/dcv/awp-u1.xauth"
+        ready,error=self.a.reconcile([self.account(1)])
+        self.assertFalse(ready);self.assertTrue(error)
 
     def test_requires_https_and_safe_origin(self):
         for url in ("http://portal.example", "https://user:pass@portal.example", "https://portal.example/path"):

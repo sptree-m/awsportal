@@ -109,7 +109,14 @@ func (s *Store) DCVAccounts(ctx context.Context, awsID string, now time.Time) ([
 	}
 	return out, rs.Err()
 }
-func (s *Store) DCVHeartbeat(ctx context.Context, awsID string, ready []int64, detail string, now time.Time) error {
+func (s *Store) DCVHeartbeat(ctx context.Context, awsID string, ready []int64, detail string, now time.Time, appliedRevision ...int64) error {
+	revision := int64(0)
+	if len(appliedRevision) == 1 {
+		revision = appliedRevision[0]
+	}
+	if revision < 0 {
+		return fmt.Errorf("invalid policy revision")
+	}
 	if len(ready) > 10000 || len(detail) > 512 {
 		return fmt.Errorf("heartbeat too large")
 	}
@@ -125,13 +132,13 @@ func (s *Store) DCVHeartbeat(ctx context.Context, awsID string, ready []int64, d
 	if e != nil {
 		return e
 	}
-	_, e = s.DB.ExecContext(ctx, "UPDATE dcv_agents SET last_seen=?,ready_users=?,error=? WHERE instance_id=(SELECT id FROM instances WHERE instance_id=?)", now.Unix(), string(raw), detail, awsID)
+	_, e = s.DB.ExecContext(ctx, "UPDATE dcv_agents SET last_seen=?,ready_users=?,error=?,applied_revision=? WHERE instance_id=(SELECT id FROM instances WHERE instance_id=?)", now.Unix(), string(raw), detail, revision, awsID)
 	return e
 }
 func (s *Store) DCVConnection(ctx context.Context, awsID string, uid int64, now time.Time) (managed, ready bool, mode string, err error) {
 	var seen int64
 	var raw string
-	err = s.DB.QueryRowContext(ctx, `SELECT i.dcv_connect_mode,COALESCE(a.last_seen,0),COALESCE(a.ready_users,''),a.instance_id IS NOT NULL FROM instances i LEFT JOIN dcv_agents a ON a.instance_id=i.id WHERE i.instance_id=?`, awsID).Scan(&mode, &seen, &raw, &managed)
+	err = s.DB.QueryRowContext(ctx, `SELECT i.dcv_connect_mode,CASE WHEN a.applied_revision=i.dcv_policy_revision THEN COALESCE(a.last_seen,0) ELSE 0 END,COALESCE(a.ready_users,''),a.instance_id IS NOT NULL FROM instances i LEFT JOIN dcv_agents a ON a.instance_id=i.id WHERE i.instance_id=?`, awsID).Scan(&mode, &seen, &raw, &managed)
 	if err != nil || !managed {
 		return
 	}

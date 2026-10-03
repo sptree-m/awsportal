@@ -39,10 +39,10 @@ install -d -m 0700 /etc/awsportal-dcv /var/lib/awsportal-dcv
 install -d /usr/local/libexec
 install -m 0755 "$HERE/agent.py" /usr/local/libexec/awsportal-dcv-agent
 install -m 0755 "$HERE/desktop.sh" /usr/local/libexec/awsportal-dcv-desktop
-cat > /etc/awsportal-dcv/user.perm <<'PERM'
+install -d -o root -g root -m 0755 /etc/dcv/awsportal-policy
+cat > /etc/dcv/awsportal-policy/enforced.perm <<'PERM'
 [permissions]
-%owner% allow display keyboard mouse pointer audio-out
-%any% deny file-download file-upload clipboard-copy clipboard-paste printer usb screenshot
+%any% deny audio-in clipboard-copy clipboard-paste file-download file-upload screenshot printer usb smartcard webcam gamepad stylus touch keyboard-sas webauthn-redirection extensions-client extensions-server unsupervised-access
 PERM
 # A dedicated local broker authenticates over verified HTTPS to the portal.
 [[ ! -f /etc/dcv/dcv.conf ]] || cp -a /etc/dcv/dcv.conf /etc/dcv/dcv.conf.before-awsportal
@@ -55,7 +55,14 @@ web-port=8443
 enable-quic-frontend=false
 [session-management]
 create-session=false
+[session-management/defaults]
+permissions-file="/etc/dcv/awsportal-policy/enforced.perm"
 CONF
+chown root:root /etc/dcv/dcv.conf /etc/dcv/awsportal-policy/enforced.perm
+chmod 0644 /etc/dcv/dcv.conf /etc/dcv/awsportal-policy/enforced.perm
+chown root:root /etc/dcv /etc/awsportal-dcv
+chmod 0755 /etc/dcv
+chmod 0700 /etc/awsportal-dcv
 cat > /etc/systemd/system/awsportal-dcv-agent.service <<'UNIT'
 [Unit]
 Description=awsportal DCV account synchronization and authentication
@@ -75,5 +82,8 @@ UNIT
 systemctl daemon-reload
 systemctl enable dcvserver
 systemctl restart dcvserver
-[[ ! -f /etc/awsportal-dcv/config.json ]] || systemctl enable --now awsportal-dcv-agent
+if [[ -f /etc/awsportal-dcv/config.json ]]; then
+  systemctl enable awsportal-dcv-agent
+  systemctl restart awsportal-dcv-agent
+fi
 echo 'DCV installed. Configure /etc/awsportal-dcv/config.json (root:root, 0600) and start awsportal-dcv-agent.'

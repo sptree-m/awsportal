@@ -33,7 +33,7 @@ flowchart TD
 | データ | OSユーザーとホームを保持。再割り当てで同じUID・ホームを利用 |
 | 通信障害 | 新規接続拒否。同期成功から90秒経過後、管理対象セッションを終了 |
 
-管理対象以外のOSユーザー・DCVセッションは変更しません。EC2メタデータ（UserData・IAM資格情報）はrootとDCVシステムユーザーだけに許可し、デスクトップ利用者からのIPv4/IPv6アクセスを永続ファイアウォールで拒否します。EFSのマウントは別途必要です。標準DCV権限は所有者への画面・入力・音声出力のみで、ファイル転送、クリップボード、印刷、USB、スクリーンショットを拒否します。外向き通信制御は別途設定してください。
+管理対象以外のOSユーザー・DCVセッションは変更しません。EC2メタデータ（UserData・IAM資格情報）はrootとDCVシステムユーザーだけに許可し、デスクトップ利用者からのIPv4/IPv6アクセスを永続ファイアウォールで拒否します。EFSのマウントは別途必要です。標準DCV権限は本人への画面・入力・音声出力のみで、ファイル転送、クリップボード、印刷、USB、スクリーンショットを拒否します。外向き通信制御は別途設定してください。
 
 接続時とトークン消費時に最新の権限を照会します。別EC2のキー・別ユーザーのセッション・再利用・期限切れ・古い同期報告は拒否します。既存セッションの終了は次の同期処理に依存します。
 
@@ -84,3 +84,31 @@ DCVの表示用証明書は自己署名です。表示先URLを一度開き、�
 - [セッション権限](https://docs.aws.amazon.com/dcv/latest/adminguide/security-authorization-file-create-permission.html)
 
 - [EC2のDCVライセンス設定](https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-license.html)
+
+## DCV機能の管理者設定（v1.5.0以降）
+
+Instance Adminの各EC2で「DCV機能・持ち出し制御」を開き、許可する機能だけをチェックします。設定版とEC2適用版を表示し、一致するまで新規接続・未使用トークンを拒否します。設定保存はPortal Adminだけに許可します。一般ユーザーとGroup Adminは、URLを直接呼び出しても変更できません。操作と機能一覧は監査ログに記録します。
+
+初期設定は画面・キーボード・マウス・ポインター・音声出力だけを許可します。その他のDCV機能は明示的なdenyで禁止します。所有者不在の共同利用は固定禁止です。キャプチャ禁止とクリップボード持ち出し許可の組み合わせも拒否します。クライアントやサーバーの非対応機能は、チェックだけでは利用できません。ファイル転送許可時のストレージは本人のホームです。
+
+EC2エージェントは、root所有のサーバー共通権限ファイルを `/etc/dcv/awsportal-policy/enforced.perm` に保存し、`[session-management/defaults] permissions-file` に設定します。共通ファイルのdenyは、セッションごとの許可やbuiltinへの変更でも上書きできません。各セッションはrootが所有し、`--user awp-u<ID>` で本人の非特権OSユーザーとしてデスクトップを実行します。本人にはDCVセッション管理権限を渡しません。EC2側では各同期で管理者のセッション権限を再適用します。
+
+共通権限はセッション作成時に読み込まれるため、設定変更時には既存DCVセッションを閉じ、次の同期で新しい設定のセッションを準備します。デスクトップ上のアプリは終了します。ホームは削除しません。一般ユーザーにsudo/root、dcv・docker・lxd等の特権グループ、SSM、EC2のIAM設定変更権限を付与しないことが前提です。root権限を持つ管理者やOSの脆弱性まで「絶対に変更不能」と保証するものではありません。
+
+DCVのscreenshot禁止はクライアント内のスクリーンショット保存を禁止します。Windows/macOSネイティブクライアントではOSのキャプチャツールによる取得も抑止します。WebブラウザとLinuxクライアントのOSキャプチャ、カメラ撮影、端末側での改変までは防げません。外部キャプチャ抑止が必要なら接続方法をnativeにし、管理されたWindows/macOS端末で利用してください。ポータルの接続方法指定だけでは別クライアントの利用を強制排除できないため、端末側の統制も必要です。外向き通信やVPN経由の持ち出し制御は別途必要です。
+
+### 既存環境の更新
+
+ポータルのバイナリだけではEC2側の強制設定は入りません。各DCV EC2で新しい配布ファイルを展開し、rootで `bash dcv/install.sh` を再実行します。設定のバックアップ後にDCVサーバーを再起動するため、接続中の画面は終了します。認証キーと既存のroot専用config.json、ホーム、ユーザーID対応表は保持します。同期エージェントも最新版へ再起動してください。
+
+```bash
+sudo bash dcv/install.sh
+sudo systemctl restart awsportal-dcv-agent
+sudo systemctl status awsportal-dcv-agent --no-pager
+```
+
+旧エージェントは適用版を報告できないため、新ポータルでは準備済みとして扱いません。管理画面で設定版と適用版の一致を確認してください。ラボは旧スタックを廃棄して新規作成します。
+
+- [DCVセッション権限変更](https://docs.aws.amazon.com/dcv/latest/adminguide/managing-session-perms.html)
+- [サーバー共通権限設定](https://docs.aws.amazon.com/dcv/latest/adminguide/config-param-ref.html)
+- [DCVスクリーンショット制限](https://docs.aws.amazon.com/dcv/latest/userguide/saving-a-screenshot.html)
