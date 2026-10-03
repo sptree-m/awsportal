@@ -84,6 +84,8 @@ func TestBrowserConsole(t *testing.T) {
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
+	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
+	mux.HandleFunc("POST /admin/proxy", a.require(a.proxyAdminChange))
 	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))
 	mux.HandleFunc("GET /mfa", a.require(a.mfaPage))
 	mux.HandleFunc("GET /costs", a.require(a.costDashboard))
