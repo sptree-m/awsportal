@@ -65,7 +65,7 @@ def command(args, optional=False):
 
 
 class Agent:
-    def __init__(self, config, state_dir, run=command, policy_dir="/etc/awsportal-dcv", dcv_config="/etc/dcv/dcv.conf"):
+    def __init__(self, config, state_dir, run=command, policy_dir="/etc/dcv/awsportal-policy", dcv_config="/etc/dcv/dcv.conf"):
         url = urllib.parse.urlsplit(config["portal_url"])
         if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
             raise ValueError("portal_url must be an HTTPS origin")
@@ -156,7 +156,7 @@ class Agent:
         if path.is_symlink():
             raise RuntimeError("refusing policy symlink")
         temporary = path.with_suffix(".tmp")
-        # Root-only directory prevents users replacing the temporary file.
+        # Root-protected directory prevents users replacing the temporary file.
         with temporary.open("w") as f:
             os.chmod(temporary, 0o600)
             f.write(text)

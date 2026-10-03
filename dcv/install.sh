@@ -39,7 +39,8 @@ install -d -m 0700 /etc/awsportal-dcv /var/lib/awsportal-dcv
 install -d /usr/local/libexec
 install -m 0755 "$HERE/agent.py" /usr/local/libexec/awsportal-dcv-agent
 install -m 0755 "$HERE/desktop.sh" /usr/local/libexec/awsportal-dcv-desktop
-cat > /etc/awsportal-dcv/enforced.perm <<'PERM'
+install -d -o root -g root -m 0755 /etc/dcv/awsportal-policy
+cat > /etc/dcv/awsportal-policy/enforced.perm <<'PERM'
 [permissions]
 %any% deny audio-in clipboard-copy clipboard-paste file-download file-upload screenshot printer usb smartcard webcam gamepad stylus touch keyboard-sas webauthn-redirection extensions-client extensions-server unsupervised-access
 PERM
@@ -55,10 +56,10 @@ enable-quic-frontend=false
 [session-management]
 create-session=false
 [session-management/defaults]
-permissions-file="/etc/awsportal-dcv/enforced.perm"
+permissions-file="/etc/dcv/awsportal-policy/enforced.perm"
 CONF
-chown root:root /etc/dcv/dcv.conf /etc/awsportal-dcv/enforced.perm
-chmod 0644 /etc/dcv/dcv.conf /etc/awsportal-dcv/enforced.perm
+chown root:root /etc/dcv/dcv.conf /etc/dcv/awsportal-policy/enforced.perm
+chmod 0644 /etc/dcv/dcv.conf /etc/dcv/awsportal-policy/enforced.perm
 chown root:root /etc/dcv /etc/awsportal-dcv
 chmod 0755 /etc/dcv
 chmod 0700 /etc/awsportal-dcv

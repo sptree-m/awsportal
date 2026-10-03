@@ -67,9 +67,9 @@ for attempt in range(60):
             if session.get("owner")=="root" and session.get("type")=="virtual" and session.get("x11-display") and licensed and desktop.returncode==0:
                 print("PASS: labdebug OS account, licensed DCV and virtual desktop",debug["os_user"])
                 a.validate_enforcement()
-                baseline=pathlib.Path("/etc/awsportal-dcv/enforced.perm").read_text()
+                baseline=pathlib.Path("/etc/dcv/awsportal-policy/enforced.perm").read_text()
                 assert "screenshot" in baseline and "clipboard-copy" in baseline, "FAIL: default capture protection missing"
-                for filename in ("/etc/dcv/dcv.conf", "/etc/dcv", "/etc/awsportal-dcv", "/etc/awsportal-dcv/enforced.perm", "/usr/local/libexec/awsportal-dcv-agent", "/etc/systemd/system/awsportal-dcv-agent.service"):
+                for filename in ("/etc/dcv/dcv.conf", "/etc/dcv", "/etc/awsportal-dcv", "/etc/dcv/awsportal-policy", "/etc/dcv/awsportal-policy/enforced.perm", "/usr/local/libexec/awsportal-dcv-agent", "/etc/systemd/system/awsportal-dcv-agent.service"):
                     writable=subprocess.run(["runuser","-u",debug["os_user"],"--","test","-w",filename],capture_output=True)
                     assert writable.returncode!=0, "FAIL: user can write protected DCV path"
                 for option in (["--reset-builtin"], ["--file","/etc/dcv/default.perm"]):
