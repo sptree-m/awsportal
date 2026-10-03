@@ -18,6 +18,12 @@ echo '[6/9] Terraform'
 terraform -chdir=terraform fmt
 terraform -chdir=terraform init -backend=false -input=false >/dev/null
 terraform -chdir=terraform validate
+echo 'DCV agent reconciliation, isolation and revocation'
+python3 -m unittest discover -s dcv -p 'test_*.py'
+python3 -m unittest discover -s tests -p 'test_lab_*.py'
+bash -n dcv/install.sh dcv/desktop.sh lab/create.sh lab/test-dcv.sh
+python3 tests/lab-template.py
+cfn-lint lab/cloudformation.yaml
 echo '[7/9] Security'
 bash tests/security.sh
 echo '[8/9] Bundled fonts'

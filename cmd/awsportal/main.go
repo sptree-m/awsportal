@@ -145,6 +145,9 @@ func main() {
 	mux.HandleFunc("POST /schedule", a.require(a.addSchedule))
 	mux.HandleFunc("GET /dcv/{id}", a.require(a.dcv))
 	mux.HandleFunc("POST /dcv-auth", a.dcvAuth)
+	mux.HandleFunc("GET /api/dcv/agent/state", a.dcvAgentState)
+	mux.HandleFunc("POST /api/dcv/agent/heartbeat", a.dcvAgentHeartbeat)
+	mux.HandleFunc("POST /api/dcv/agent/auth", a.dcvAgentAuth)
 	mux.Handle("GET /static/", staticHandler(http.StripPrefix("/static/", http.FileServer(http.FS(web)))))
 	s := &http.Server{Addr: env("AWSPORTAL_ADDR", ":8080"), Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	log.Printf("listen %s", s.Addr)
@@ -671,11 +674,36 @@ func (a *app) dcv(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256([]byte(token))
 	x, e := a.db.IssueDCVToken(r.Context(), u, id, hex.EncodeToString(sum[:]), time.Now().Add(60*time.Second))
 	if e != nil {
-		http.Error(w, "DCV token error", 500)
+		http.Error(w, "DCVセッションを準備中です。起動後しばらく待ち、管理画面で同期状態を確認してください", http.StatusServiceUnavailable)
 		return
 	}
 	a.db.Audit(r.Context(), u.Username, "dcv.token.issue", id, "ok", "60秒/1回限り")
-	uri := "dcv://" + x.DCVHost + ":8443/?authToken=" + url.QueryEscape(token) + "#" + url.PathEscape(x.DCVSessionID)
+	_, _, mode, e := a.db.DCVConnection(r.Context(), id, u.ID, time.Now())
+	if e != nil {
+		http.Error(w, "DCV configuration error", 500)
+		return
+	}
+	if x.DCVHost == "ec2-public" || x.DCVHost == "ec2-private" {
+		resolver, ok := a.ec2.(interface {
+			DCVAddress(context.Context, string, bool) (string, error)
+		})
+		if !ok {
+			http.Error(w, "DCV address resolver unavailable", 503)
+			return
+		}
+		x.DCVHost, e = resolver.DCVAddress(r.Context(), id, x.DCVHost == "ec2-public")
+		if e != nil {
+			http.Error(w, "EC2の起動と接続先アドレスを確認してください", 503)
+			return
+		}
+	}
+	scheme := "dcv://"
+	if mode == "web" {
+		scheme = "https://"
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	uri := scheme + x.DCVHost + ":8443/?authToken=" + url.QueryEscape(token) + "#" + url.PathEscape(x.DCVSessionID)
 	http.Redirect(w, r, uri, http.StatusFound)
 }
 func (a *app) dcvAuth(w http.ResponseWriter, r *http.Request) {

@@ -22,19 +22,24 @@ type Assignment struct {
 }
 type ManagedInstance struct {
 	Instance
-	Enabled     bool
-	Assignments []Assignment
+	DCVManaged    bool
+	DCVLastSeen   int64
+	DCVReadyUsers string
+	DCVError      string
+	DCVMode       string
+	Enabled       bool
+	Assignments   []Assignment
 }
 
 func (s *Store) ManagedInstances(ctx context.Context) ([]ManagedInstance, error) {
-	rows, e := s.DB.QueryContext(ctx, "SELECT id,instance_id,name,dcv_host,dcv_session_id,enabled FROM instances ORDER BY name")
+	rows, e := s.DB.QueryContext(ctx, "SELECT i.id,i.instance_id,i.name,i.dcv_host,i.dcv_session_id,i.enabled,a.instance_id IS NOT NULL,COALESCE(a.last_seen,0),COALESCE(a.ready_users,'[]'),COALESCE(a.error,''),i.dcv_connect_mode FROM instances i LEFT JOIN dcv_agents a ON a.instance_id=i.id ORDER BY i.name")
 	if e != nil {
 		return nil, e
 	}
 	var out []ManagedInstance
 	for rows.Next() {
 		var x ManagedInstance
-		if e = rows.Scan(&x.ID, &x.InstanceID, &x.Name, &x.DCVHost, &x.DCVSessionID, &x.Enabled); e != nil {
+		if e = rows.Scan(&x.ID, &x.InstanceID, &x.Name, &x.DCVHost, &x.DCVSessionID, &x.Enabled, &x.DCVManaged, &x.DCVLastSeen, &x.DCVReadyUsers, &x.DCVError, &x.DCVMode); e != nil {
 			rows.Close()
 			return nil, e
 		}

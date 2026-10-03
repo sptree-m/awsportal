@@ -41,7 +41,7 @@ func (a *app) manualPage(w http.ResponseWriter, r *http.Request) {
 	if proxy == "" {
 		proxy = "https://proxy.example:3128"
 	}
-	a.renderPage(w, r, "manual.html", map[string]any{"User": r.Context().Value("user").(store.User), "PortalExampleURL": portal, "ProxyExampleURL": proxy, "PortalConfigured": settings.PortalURL != "", "ProxyConfigured": settings.ProxyURL != ""})
+	a.renderPage(w, r, "manual.html", map[string]any{"User": r.Context().Value("user").(store.User), "PortalExampleURL": portal, "ProxyExampleURL": proxy, "DCVOSUser": store.DCVIdentity(r.Context().Value("user").(store.User).ID), "PortalConfigured": settings.PortalURL != "", "ProxyConfigured": settings.ProxyURL != ""})
 }
 func (a *app) siteAdminPage(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value("user").(store.User)
