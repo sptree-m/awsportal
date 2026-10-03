@@ -1,0 +1,28 @@
+# awsportal 1.3.0
+
+## 追加内容
+
+- Portal Adminからインスタンスの有効/無効、ユーザー/グループの割り当てを管理。
+- 認証付きHTTPSプロキシとドメイン/IP/CIDRルール、インスタンス単位のOutbound保存・AWS適用。
+- 社内GitLabの取得専用ミラー、ポータルの定期同期設定、利用者EC2の同期要求・完了待ち・clone/fetchコマンド。
+- Git LFSの取得専用同期・配布。サイズ/SHA-256検証、upload拒否、破損修復、Range取得。LFS同期が失敗した場合は公開Git参照を更新しない。
+- 利用者マニュアルと、サイト名・説明・ホームのお知らせ・接続先表示のカスタマイズ。
+
+## 更新前後の準備
+
+1. SQLite DB、systemd環境設定、TLS設定をバックアップする。バイナリを置き換えて再起動すると必要なテーブルを追加する。既存アカウント/権限/インスタンス設定は保持する。
+2. Gitミラーを使うポータルにはOSのGitとgit-http-backendを用意し、`AWSPORTAL_MIRROR_ROOT`を設定。認証情報と社内CAの準備は[Gitミラー運用](14-git-mirror.md)を参照する。
+3. LFS配布には、管理者の「表示設定」で**利用者EC2から届くポータルHTTPS URL**を登録する。平文のラボ8080へ実用トークンを流さない。
+4. 利用者EC2はPython3、Git、**Git LFS**をインストールし、新版のクライアントをポータルからダウンロードする。`sudo apt-get install git-lfs`（Ubuntu例）。クライアントを古いままにしない。
+5. LFSを含むミラーを再同期してからclone/fetchする。既存作業ツリーは`awsportal-mirror fetch ID DIR`、必要に応じて`git merge --ff-only`、`git lfs checkout`の順で更新する。
+6. GitLabが別originのオブジェクトストレージを使う場合、ポータルで`AWSPORTAL_MIRROR_LFS_DOWNLOAD_ORIGINS`を明示する。利用者EC2にはストレージへの直接接続を許可する必要はない。
+
+プロキシやミラー機能は環境変数で明示的に有効化する。リリースを入れただけではEC2の通信許可を変更しない。TLS終端、社内GitLabへの到達性、専用SGの初期割り当ては運用者が準備する。
+
+## 検証と制約
+
+Go race test、実Chromium、Linux ARM64/2vCPU/1GiB起動、Terraform validate、静的セキュリティ検査、実Git/Git LFS＋HTTPSの同期・取得・書き込み拒否を検証する。ARM64アーカイブはポータル/管理CLIの2バイナリを含み、SHA-256を別ファイルで提供する。
+
+社内GitLab/S3・AWSネットワーク実機との疎通と、大容量LFSの性能は未確認。LFSはbasic HTTPS、1オブジェクト10GiB・1回の新規同期50GiBが既定（環境変数で変更可）。履歴キャッシュの自動GC、SSH LFS、custom transfer、lock、pointer拡張、GitLab artifact、submoduleの自動再帰取得は対象外。
+
+設定・境界条件は[プロキシ](12-proxy.md)、[Outbound](13-egress.md)、[Git/LFSミラー](14-git-mirror.md)、[表示設定](15-site-customization.md)、[機能マトリクス](09-feature-matrix.md)を参照する。
