@@ -307,3 +307,19 @@ func TestLFSLimitsAndUnknownRequestsCannotFetchUpstream(t *testing.T) {
 		t.Fatal("negative limit accepted")
 	}
 }
+
+func TestLFSCacheVerificationHonorsCancellation(t *testing.T) {
+	data := []byte("cached object")
+	hash := sha256.Sum256(data)
+	oid := hex.EncodeToString(hash[:])
+	path := filepath.Join(t.TempDir(), "object")
+	os.WriteFile(path, data, 0600)
+	if !verifiedLFSFile(context.Background(), path, oid, int64(len(data))) {
+		t.Fatal("valid cache rejected")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if verifiedLFSFile(ctx, path, oid, int64(len(data))) {
+		t.Fatal("canceled cache scan continued")
+	}
+}

@@ -226,7 +226,19 @@ func (m *Manager) configureLFS() error {
 	}
 	return nil
 }
-func verifiedLFSFile(path, oid string, size int64) bool {
+
+type contextFileReader struct {
+	ctx  context.Context
+	file io.Reader
+}
+
+func (r contextFileReader) Read(b []byte) (int, error) {
+	if e := r.ctx.Err(); e != nil {
+		return 0, e
+	}
+	return r.file.Read(b)
+}
+func verifiedLFSFile(ctx context.Context, path, oid string, size int64) bool {
 	f, e := os.Open(path)
 	if e != nil {
 		return false
@@ -237,7 +249,7 @@ func verifiedLFSFile(path, oid string, size int64) bool {
 		return false
 	}
 	hash := sha256.New()
-	n, e := io.Copy(hash, f)
+	n, e := io.Copy(hash, contextFileReader{ctx: ctx, file: f})
 	return e == nil && n == size && hex.EncodeToString(hash.Sum(nil)) == oid
 }
 func (m *Manager) lfsPath(id int64, oid string) string {
@@ -316,10 +328,13 @@ func (m *Manager) syncLFS(ctx context.Context, id int64, upstream, auth string) 
 	pending := []lfsObject{}
 	total := int64(0)
 	for oid, size := range pointers {
+		if e := ctx.Err(); e != nil {
+			return e
+		}
 		if old, ok := known[oid]; ok && old != size {
 			return fmt.Errorf("LFS size conflict")
 		}
-		if verifiedLFSFile(m.lfsPath(id, oid), oid, size) {
+		if verifiedLFSFile(ctx, m.lfsPath(id, oid), oid, size) {
 			continue
 		}
 		if size > m.LFSMaxSyncBytes-total {
