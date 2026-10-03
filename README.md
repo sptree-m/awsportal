@@ -32,3 +32,7 @@ t4g.micro相当テストはARM64、2 vCPU、1 GiB RAMを前提とし、4 GiB swa
 ## GitLab取得専用ミラー
 
 Portalで同期対象・間隔・読み取り/同期権限を設定し、利用者EC2から `awsportal-mirror sync ID --wait` で同期完了を待てます。GitLab資格情報はPortalだけに保持し、ミラーはclone/fetchのみを提供します。初期設定と自動化例は [Gitミラー運用](docs/14-git-mirror.md) を参照してください。
+
+## 利用者マニュアル・サイト表示設定
+
+ログイン後の「利用者マニュアル」でプロキシ設定とGitミラーの利用・自動化手順を確認できます。Portal Adminの「表示設定」から、左上のサイト名・説明、ホームの見出し・お知らせ、ログイン案内、問い合わせ案内、マニュアルの接続先を変更できます。設定はDBに保存します。[表示設定の運用](docs/15-site-customization.md) を参照してください。

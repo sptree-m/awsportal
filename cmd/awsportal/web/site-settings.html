@@ -1,0 +1,20 @@
+{{define "site-settings.html"}}<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>表示設定 | {{.Site.BrandTitle}}</title><link rel="stylesheet" href="/static/web/app.css?v=site-manuals-1"><meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"selfRequestsOnly":true,"includeIndicatorStyles":false,"timeout":20000}'><script src="/static/web/htmx.min.js?v=htmx-console-2" defer></script><script src="/static/web/dashboard.js?v=htmx-console-2" defer></script></head><body hx-history="false"><aside>{{template "site-brand" .}}<nav hx-boost="true" hx-sync="this:replace" aria-label="メインナビゲーション"><a href="/">⌂ Dashboard</a><a href="/instances">▤ EC2 Instances</a>{{if eq .User.Role "portal_admin"}}<a href="/admin/instances">⚙ Instance Admin</a><a href="/admin/users">♙ Users</a><a href="/admin/proxy">↔ Proxy</a><a href="/admin/egress">⇢ Outbound</a><a class="nav-active" aria-current="page" href="/admin/site">⚙ 表示設定</a><a href="/admin/audit">▧ Audit</a><a href="/costs">¥ Cost</a>{{end}}<a href="/mirrors">⇣ Git Mirrors</a><a href="/manual">▣ 利用者マニュアル</a><a href="/mfa">⚿ MFA</a></nav><form method="post" action="/logout" class="logout"><button>Logout</button></form></aside><main class="workspace"><header class="topbar"><div><p class="eyebrow">PORTAL / SETTINGS</p><h1>ポータル表示設定</h1></div><div class="account"><strong>{{.User.Username}}</strong><small>{{.User.Role}}</small></div></header>
+{{if .Saved}}<div role="status" class="status-warning">表示設定を保存しました。次の画面表示から全利用者に反映されます。</div>{{end}}
+<p class="muted admin-help">組織や用途に合わせて表示内容を変更できます。HTMLは実行されず、入力した文言をそのまま表示します。</p>
+<form method="post" action="/admin/site" class="site-settings-form" hx-post="/admin/site" hx-disabled-elt="find button" hx-sync="this:drop">
+<section class="panel"><h2>サイト名と案内</h2><div class="settings-grid">
+<label>左上のタイトル <input name="brand_title" value="{{.Site.BrandTitle}}" maxlength="80" required><small class="muted">全ページのサイト名・ブラウザのタイトルに使用</small></label>
+<label>タイトル下の説明 <textarea name="brand_subtitle" rows="3" maxlength="160">{{.Site.BrandSubtitle}}</textarea></label>
+<label>トップページの見出し <input name="home_title" value="{{.Site.HomeTitle}}" maxlength="80" required></label>
+<label>ログイン画面の案内 <textarea name="login_message" rows="3" maxlength="1000">{{.Site.LoginMessage}}</textarea><small class="muted">ログイン前に表示されます。秘密情報を含めないでください。</small></label>
+<label class="settings-wide">トップページのメッセージ <textarea name="home_message" rows="5" maxlength="4000">{{.Site.HomeMessage}}</textarea><small class="muted">改行に対応。空欄ならお知らせを非表示。</small></label>
+</div></section>
+<section class="panel"><h2>利用者マニュアルの接続先・問い合わせ案内</h2><p class="muted">ここで設定する接続先は手順への表示用です。サーバーの待受・証明書・通信許可は別途準備してください。</p><div class="settings-grid">
+<label>ポータルのHTTPS URL <input name="portal_url" type="url" value="{{.Site.PortalURL}}" maxlength="200" placeholder="利用者EC2から届くHTTPS接続先"><small class="muted">ホストと任意のポートだけ。パス・トークンは含めない。</small></label>
+<label>プロキシのHTTPS URL <input name="proxy_url" type="url" value="{{.Site.ProxyURL}}" maxlength="200" placeholder="HTTPSプロキシの接続先とポート"><small class="muted">空欄の場合は例示用の接続先を表示。</small></label>
+<label class="settings-wide">問い合わせ・補足メッセージ <textarea name="help_message" rows="4" maxlength="2000">{{.Site.HelpMessage}}</textarea></label>
+</div></section>
+<div class="settings-actions"><button class="primary" type="submit">表示設定を保存</button><a class="btn" href="/manual" hx-boost="true">利用者マニュアルを見る</a><a class="btn" href="/" hx-boost="true">トップページを見る</a></div>
+</form>
+
+</main></body></html>{{end}}
