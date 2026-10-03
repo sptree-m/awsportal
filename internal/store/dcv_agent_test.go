@@ -40,13 +40,13 @@ func TestDCVAgentIsolationReadinessAndLifecycle(t *testing.T) {
 		t.Fatal(e)
 	}
 	token := strings.Repeat("a", 64)
-	if e = s.ConfigureDCV(ctx, alice, "i-a", "a.example", "web", token); e == nil {
+	if e = s.ConfigureDCV(ctx, alice, "i-a", "a.example", "native", token); e == nil {
 		t.Fatal("user configured DCV")
 	}
-	if e = s.ConfigureDCV(ctx, admin, "i-a", "bad/host", "web", token); e == nil {
+	if e = s.ConfigureDCV(ctx, admin, "i-a", "bad/host", "native", token); e == nil {
 		t.Fatal("unsafe host accepted")
 	}
-	if e = s.ConfigureDCV(ctx, admin, "i-a", "a.example", "web", token); e != nil {
+	if e = s.ConfigureDCV(ctx, admin, "i-a", "a.example", "native", token); e != nil {
 		t.Fatal(e)
 	}
 	if id, e := s.DCVAgentInstance(ctx, token); e != nil || id != "i-a" {
@@ -60,7 +60,7 @@ func TestDCVAgentIsolationReadinessAndLifecycle(t *testing.T) {
 	if _, e = s.IssueDCVToken(ctx, alice, "i-a", "not-ready", now.Add(time.Minute)); e == nil {
 		t.Fatal("unready session accepted")
 	}
-	if e = s.DCVHeartbeat(ctx, "i-a", []int64{alice.ID, bob.ID}, "", now, 1); e != nil {
+	if e = s.DCVHeartbeat(ctx, "i-a", []int64{alice.ID, bob.ID}, "", now, 1, 1); e != nil {
 		t.Fatal(e)
 	}
 	issued, e := s.IssueDCVToken(ctx, alice, "i-a", "alice-token", now.Add(time.Minute))
@@ -108,7 +108,7 @@ func TestDCVAgentIsolationReadinessAndLifecycle(t *testing.T) {
 	if len(accounts) != 0 {
 		t.Fatal("disabled instance has accounts")
 	}
-	if e = s.ConfigureDCV(ctx, admin, "i-a", "a.example", "web", strings.Repeat("b", 64)); e != nil {
+	if e = s.ConfigureDCV(ctx, admin, "i-a", "a.example", "native", strings.Repeat("b", 64)); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = s.DCVAgentInstance(ctx, token); e == nil {
@@ -141,15 +141,15 @@ func TestDCVStaleHeartbeatDeniesIssueAndConsume(t *testing.T) {
 	}
 	admin, _ := s.UserByName(ctx, "admin")
 	_, _ = s.DB.Exec(`INSERT INTO instances(instance_id,name,dcv_host) VALUES('i-a','A','a.example')`)
-	if e = s.ConfigureDCV(ctx, admin, "i-a", "a.example", "web", strings.Repeat("a", 64)); e != nil {
+	if e = s.ConfigureDCV(ctx, admin, "i-a", "a.example", "native", strings.Repeat("a", 64)); e != nil {
 		t.Fatal(e)
 	}
 	now := time.Now()
-	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1)
+	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1, 1)
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "token", now.Add(time.Minute)); e != nil {
 		t.Fatal(e)
 	}
-	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now.Add(-2*time.Minute), 1)
+	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now.Add(-2*time.Minute), 1, 1)
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "token2", now.Add(time.Minute)); e == nil {
 		t.Fatal("stale heartbeat permitted token")
 	}

@@ -30,12 +30,13 @@ type ManagedInstance struct {
 	DCVPolicy          DCVPolicy
 	DCVFeatures        []DCVFeature
 	DCVAppliedRevision int64
+	DCVBrowserBlocked  bool
 	Enabled            bool
 	Assignments        []Assignment
 }
 
 func (s *Store) ManagedInstances(ctx context.Context) ([]ManagedInstance, error) {
-	rows, e := s.DB.QueryContext(ctx, "SELECT i.id,i.instance_id,i.name,i.dcv_host,i.dcv_session_id,i.enabled,a.instance_id IS NOT NULL,COALESCE(a.last_seen,0),COALESCE(a.ready_users,'[]'),COALESCE(a.error,''),i.dcv_connect_mode,i.dcv_policy_json,i.dcv_policy_revision,COALESCE(a.applied_revision,0) FROM instances i LEFT JOIN dcv_agents a ON a.instance_id=i.id ORDER BY i.name")
+	rows, e := s.DB.QueryContext(ctx, "SELECT i.id,i.instance_id,i.name,i.dcv_host,i.dcv_session_id,i.enabled,a.instance_id IS NOT NULL,COALESCE(a.last_seen,0),COALESCE(a.ready_users,'[]'),COALESCE(a.error,''),i.dcv_connect_mode,i.dcv_policy_json,i.dcv_policy_revision,COALESCE(a.applied_revision,0),COALESCE(a.browser_blocked,0) FROM instances i LEFT JOIN dcv_agents a ON a.instance_id=i.id ORDER BY i.name")
 	if e != nil {
 		return nil, e
 	}
@@ -44,7 +45,7 @@ func (s *Store) ManagedInstances(ctx context.Context) ([]ManagedInstance, error)
 		var x ManagedInstance
 		var raw string
 		var revision int64
-		if e = rows.Scan(&x.ID, &x.InstanceID, &x.Name, &x.DCVHost, &x.DCVSessionID, &x.Enabled, &x.DCVManaged, &x.DCVLastSeen, &x.DCVReadyUsers, &x.DCVError, &x.DCVMode, &raw, &revision, &x.DCVAppliedRevision); e != nil {
+		if e = rows.Scan(&x.ID, &x.InstanceID, &x.Name, &x.DCVHost, &x.DCVSessionID, &x.Enabled, &x.DCVManaged, &x.DCVLastSeen, &x.DCVReadyUsers, &x.DCVError, &x.DCVMode, &raw, &revision, &x.DCVAppliedRevision, &x.DCVBrowserBlocked); e != nil {
 			rows.Close()
 			return nil, e
 		}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,6 +24,12 @@ func TestInstanceAdministrationRevocation(t *testing.T) {
 	}
 	alice, _ := s.UserByName(ctx, "alice")
 	admin, _ := s.UserByName(ctx, "admin")
+	if e = s.ConfigureDCV(ctx, admin, "i-dev", "host", "native", strings.Repeat("a", 64)); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.DCVHeartbeat(ctx, "i-dev", []int64{alice.ID}, "", time.Now(), 1, 1); e != nil {
+		t.Fatal(e)
+	}
 	xs, e := s.VisibleInstances(ctx, alice)
 	if e != nil || len(xs) != 1 || !xs[0].CanControl {
 		t.Fatalf("multiple grants must combine without duplicate rows: %v %+v", e, xs)
@@ -48,7 +55,7 @@ func TestInstanceAdministrationRevocation(t *testing.T) {
 			t.Fatal("disabled instance visible")
 		}
 	}
-	if _, ok := s.ConsumeDCVToken(ctx, "token", "console", time.Now()); ok {
+	if _, ok := s.ConsumeInstanceDCVToken(ctx, "token", DCVIdentity(alice.ID), "i-dev", time.Now()); ok {
 		t.Fatal("disabled token accepted")
 	}
 	due, e := s.DueSchedules(ctx, time.Now())
@@ -70,7 +77,7 @@ func TestInstanceAdministrationRevocation(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	if _, ok := s.ConsumeDCVToken(ctx, "revoked", "console", time.Now()); ok {
+	if _, ok := s.ConsumeInstanceDCVToken(ctx, "revoked", DCVIdentity(alice.ID), "i-dev", time.Now()); ok {
 		t.Fatal("assignment revoked after issuance, token accepted")
 	}
 	due, e = s.DueSchedules(ctx, time.Now())

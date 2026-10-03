@@ -678,7 +678,7 @@ func (a *app) dcv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.db.Audit(r.Context(), u.Username, "dcv.token.issue", id, "ok", "60秒/1回限り")
-	_, _, mode, e := a.db.DCVConnection(r.Context(), id, u.ID, time.Now())
+	_, _, _, e = a.db.DCVConnection(r.Context(), id, u.ID, time.Now())
 	if e != nil {
 		http.Error(w, "DCV configuration error", 500)
 		return
@@ -698,9 +698,6 @@ func (a *app) dcv(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	scheme := "dcv://"
-	if mode == "web" {
-		scheme = "https://"
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	uri := scheme + x.DCVHost + ":8443/?authToken=" + url.QueryEscape(token) + "#" + url.PathEscape(x.DCVSessionID)

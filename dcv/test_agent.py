@@ -190,12 +190,12 @@ class AgentTest(unittest.TestCase):
         import stat
         config=pathlib.Path(self.tmp.name,"dcv.conf")
         self.a.dcv_config=config
-        config.write_text('[security]\nauth-token-verifier="http://127.0.0.1:8444"\n[session-management/defaults]\npermissions-file="'+str(pathlib.Path(self.tmp.name,"enforced.perm"))+'"\n')
+        config.write_text('[security]\nauth-token-verifier="http://127.0.0.1:8444"\nallowed-ws-origin-regex="^$"\n[session-management/defaults]\npermissions-file="'+str(pathlib.Path(self.tmp.name,"enforced.perm"))+'"\n')
         with patch.object(pathlib.Path,"lstat",return_value=types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG | 0o644)):
             agent.Agent.validate_enforcement(self.a)
         with patch.object(pathlib.Path,"lstat",return_value=types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG | 0o666)):
             with self.assertRaises(RuntimeError):agent.Agent.validate_enforcement(self.a)
-        config.write_text('[security]\nauth-token-verifier="http://127.0.0.1:8444"\n[session-management/defaults]\npermissions-file="/tmp/user.perm"\n')
+        config.write_text('[security]\nauth-token-verifier="http://127.0.0.1:8444"\nallowed-ws-origin-regex="^$"\n[session-management/defaults]\npermissions-file="/tmp/user.perm"\n')
         with patch.object(pathlib.Path,"lstat",return_value=types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG | 0o644)):
             with self.assertRaises(RuntimeError):agent.Agent.validate_enforcement(self.a)
 
@@ -204,6 +204,18 @@ class AgentTest(unittest.TestCase):
         self.sessions["awp-u1"]["x11-authority"]="/run/user/200002/dcv/awp-u1.xauth"
         ready,error=self.a.reconcile([self.account(1)])
         self.assertFalse(ready);self.assertTrue(error)
+
+    def test_browser_origin_guard_and_viewer_removal_are_required(self):
+        import stat
+        config=pathlib.Path(self.tmp.name,"dcv.conf");self.a.dcv_config=config
+        text='[security]\nauth-token-verifier="http://127.0.0.1:8444"\nallowed-ws-origin-regex="^$"\n[session-management/defaults]\npermissions-file="'+str(pathlib.Path(self.tmp.name,"enforced.perm"))+'"\n'
+        config.write_text(text.replace('allowed-ws-origin-regex="^$"','allowed-ws-origin-regex="^https://.+$"'))
+        with patch.object(pathlib.Path,"lstat",return_value=types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG | 0o644)):
+            with self.assertRaises(RuntimeError):agent.Agent.validate_enforcement(self.a)
+        config.write_text(text)
+        self.a.run=lambda *args,**kwargs:subprocess.CompletedProcess([],0,"installed","")
+        with patch.object(pathlib.Path,"lstat",return_value=types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG | 0o644)):
+            with self.assertRaises(RuntimeError):agent.Agent.validate_enforcement(self.a)
 
     def test_requires_https_and_safe_origin(self):
         for url in ("http://portal.example", "https://user:pass@portal.example", "https://portal.example/path"):

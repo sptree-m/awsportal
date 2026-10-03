@@ -21,7 +21,7 @@ func main() {
 	name := flag.String("name", "", "name")
 	host := flag.String("host", "", "DCV host")
 	group := flag.String("group", "", "group name")
-	dcvMode := flag.String("dcv-mode", "web", "web|native")
+	dcvMode := flag.String("dcv-mode", "native", "native only")
 	tokenFile := flag.String("dcv-token-file", "", "Root-only machine credential file")
 	flag.Parse()
 	ctx := context.Background()
