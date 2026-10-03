@@ -68,3 +68,35 @@ func TestInstanceAdminEndpointsAndDisabledOperations(t *testing.T) {
 		t.Fatal("stale admin session allowed")
 	}
 }
+
+func TestDCVPolicyHTTPRolesAndAdminUI(t *testing.T) {
+	a, _ := newHandlerTestApp(t)
+	ctx := context.Background()
+	for _, role := range []string{"portal_admin", "user", "group_admin"} {
+		if e := a.db.CreateUser(ctx, role, "x", role, ""); e != nil {
+			t.Fatal(e)
+		}
+	}
+	_, _ = a.db.DB.Exec(`INSERT INTO instances(instance_id,name,dcv_host) VALUES('i-a','A','host')`)
+	form := url.Values{"operation": {"dcv-policy"}, "instance_id": {"i-a"}, "dcv_features": {"display"}}.Encode()
+	for _, role := range []string{"portal_admin", "user", "group_admin"} {
+		u, _ := a.db.UserByName(ctx, role)
+		r := requestAs(a, u, "POST", "/admin/instances", strings.NewReader(form))
+		w := httptest.NewRecorder()
+		a.require(a.instanceAdminChange)(w, r)
+		want := 403
+		if role == "portal_admin" {
+			want = 303
+		}
+		if w.Code != want {
+			t.Fatal(role, w.Code, w.Body.String())
+		}
+	}
+	admin, _ := a.db.UserByName(ctx, "portal_admin")
+	r := requestAs(a, admin, "GET", "/admin/instances", nil)
+	w := httptest.NewRecorder()
+	a.require(a.instanceAdminPage)(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "スクリーンキャプチャ") || !strings.Contains(w.Body.String(), "未適用・新規接続停止") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

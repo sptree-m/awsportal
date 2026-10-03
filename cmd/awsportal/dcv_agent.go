@@ -34,8 +34,13 @@ func (a *app) dcvAgentState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB error", 500)
 		return
 	}
+	policy, e := a.db.DCVPolicy(r.Context(), id)
+	if e != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"instance_id": id, "accounts": accounts})
+	_ = json.NewEncoder(w).Encode(map[string]any{"instance_id": id, "accounts": accounts, "policy": policy})
 }
 func (a *app) dcvAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	id, ok := a.dcvAgentCredential(w, r)
@@ -43,15 +48,16 @@ func (a *app) dcvAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var report struct {
-		ReadyUsers []int64 `json:"ready_users"`
-		Error      string  `json:"error"`
+		AppliedRevision int64   `json:"applied_revision"`
+		ReadyUsers      []int64 `json:"ready_users"`
+		Error           string  `json:"error"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 128*1024)
 	if e := json.NewDecoder(r.Body).Decode(&report); e != nil {
 		http.Error(w, "invalid heartbeat", 400)
 		return
 	}
-	if e := a.db.DCVHeartbeat(r.Context(), id, report.ReadyUsers, report.Error, time.Now()); e != nil {
+	if e := a.db.DCVHeartbeat(r.Context(), id, report.ReadyUsers, report.Error, time.Now(), report.AppliedRevision); e != nil {
 		http.Error(w, "invalid heartbeat", 400)
 		return
 	}

@@ -60,7 +60,7 @@ func TestDCVAgentIsolationReadinessAndLifecycle(t *testing.T) {
 	if _, e = s.IssueDCVToken(ctx, alice, "i-a", "not-ready", now.Add(time.Minute)); e == nil {
 		t.Fatal("unready session accepted")
 	}
-	if e = s.DCVHeartbeat(ctx, "i-a", []int64{alice.ID, bob.ID}, "", now); e != nil {
+	if e = s.DCVHeartbeat(ctx, "i-a", []int64{alice.ID, bob.ID}, "", now, 1); e != nil {
 		t.Fatal(e)
 	}
 	issued, e := s.IssueDCVToken(ctx, alice, "i-a", "alice-token", now.Add(time.Minute))
@@ -145,11 +145,11 @@ func TestDCVStaleHeartbeatDeniesIssueAndConsume(t *testing.T) {
 		t.Fatal(e)
 	}
 	now := time.Now()
-	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now)
+	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1)
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "token", now.Add(time.Minute)); e != nil {
 		t.Fatal(e)
 	}
-	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now.Add(-2*time.Minute))
+	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now.Add(-2*time.Minute), 1)
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "token2", now.Add(time.Minute)); e == nil {
 		t.Fatal("stale heartbeat permitted token")
 	}

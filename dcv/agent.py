@@ -5,6 +5,8 @@ No portal passwords, AWS credentials, arbitrary commands or shell interpolation.
 Only accounts marked as created by this agent may be changed. Homes are retained.
 """
 import argparse
+import configparser
+import hashlib
 import fcntl
 import http.server
 import json
@@ -22,6 +24,20 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 
+FEATURES = frozenset("display keyboard mouse pointer audio-out audio-in clipboard-copy clipboard-paste file-download file-upload screenshot printer usb smartcard webcam gamepad stylus touch keyboard-sas webauthn-redirection extensions-client extensions-server unsupervised-access".split())
+DEFAULT_ALLOWED = ["display", "keyboard", "mouse", "pointer", "audio-out"]
+
+
+def permission_text(allowed, actor=None):
+    blocked = sorted(FEATURES - set(allowed))
+    lines = ["[permissions]"]
+    if actor and allowed:
+        lines.append(actor + " allow " + " ".join(sorted(allowed)))
+    if blocked:
+        lines.append("%any% deny " + " ".join(blocked))
+    return "\n".join(lines) + "\n"
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -33,6 +49,13 @@ def identity(user_id):
     return "awp-u" + str(user_id)
 
 
+def identity_id(name):
+    user_id = int(name.removeprefix("awp-u"))
+    if identity(user_id) != name:
+        raise ValueError("invalid managed identity")
+    return user_id
+
+
 def command(args, optional=False):
     result = subprocess.run(args, capture_output=True, text=True, timeout=60)
     if result.returncode and not optional:
@@ -42,7 +65,7 @@ def command(args, optional=False):
 
 
 class Agent:
-    def __init__(self, config, state_dir, run=command):
+    def __init__(self, config, state_dir, run=command, policy_dir="/etc/awsportal-dcv", dcv_config="/etc/dcv/dcv.conf"):
         url = urllib.parse.urlsplit(config["portal_url"])
         if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment or url.path not in ("", "/"):
             raise ValueError("portal_url must be an HTTPS origin")
@@ -62,6 +85,13 @@ class Agent:
         for key, value in self.managed.items():
             if key != identity(value["user_id"]):
                 raise ValueError("invalid local state")
+        self.policy_dir = pathlib.Path(policy_dir)
+        self.dcv_config = pathlib.Path(dcv_config)
+        self.policy_state = self.root / "policy.json"
+        previous = json.loads(self.policy_state.read_text()) if self.policy_state.exists() else {}
+        self.applied_revision = previous.get("revision", 0)
+        self.policy_fingerprint = previous.get("fingerprint", "")
+        self.allowed = []
         self.run = run
         self.last_ok = time.monotonic()
         self.lock = threading.Lock()
@@ -108,18 +138,74 @@ class Agent:
             raise RuntimeError("unexpected managed home path")
         os.chmod(account.pw_dir, 0o700)
 
-    def describe(self, name):
+    def validate_enforcement(self):
+        # The global default is merged into every session, even if a local user
+        # creates a new session or supplies their own permissions file.
+        for path in (self.dcv_config, self.policy_dir):
+            st = path.lstat()
+            if path.is_symlink() or st.st_uid != 0 or st.st_mode & 0o022:
+                raise RuntimeError("DCV enforcement path is not root protected")
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(self.dcv_config)
+        if config.get("session-management/defaults", "permissions-file").strip('"') != str(self.policy_dir / "enforced.perm"):
+            raise RuntimeError("server-wide DCV enforcement is not installed")
+        if config.get("security", "auth-token-verifier").strip('"') != "http://127.0.0.1:8444":
+            raise RuntimeError("unexpected external authentication verifier")
+
+    def write_policy(self, path, text):
+        if path.is_symlink():
+            raise RuntimeError("refusing policy symlink")
+        temporary = path.with_suffix(".tmp")
+        # Root-only directory prevents users replacing the temporary file.
+        with temporary.open("w") as f:
+            os.chmod(temporary, 0o600)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        temporary.replace(path)
+        os.chmod(path, 0o644)
+
+    def describe(self, name, allow_legacy=False):
         result = self.run(["/usr/bin/dcv", "describe-session", name, "--json"], optional=True)
         if result.returncode:
             return None
         session = json.loads(result.stdout)
-        if session.get("owner") != name or session.get("type") != "virtual":
+        owners = ("root", name) if allow_legacy and name in self.managed else ("root",)
+        if session.get("owner") not in owners or session.get("type") != "virtual":
             raise RuntimeError("unexpected session owner or type")
+        # Owner controls DCV management; Xauthority identifies the OS desktop UID.
+        uid = 200000 + identity_id(name)
+        if not str(session.get("x11-authority", "")).startswith("/run/user/" + str(uid) + "/dcv/"):
+            raise RuntimeError("unexpected virtual desktop OS identity")
         return session
+
+    def apply_policy(self, policy):
+        self.validate_enforcement()
+        revision, allowed = policy["revision"], policy["allowed"]
+        if type(revision) is not int or revision < 1 or not isinstance(allowed, list):
+            raise ValueError("invalid policy")
+        if any(type(code) is not str or code not in FEATURES or code == "unsupervised-access" for code in allowed) or len(set(allowed)) != len(allowed):
+            raise ValueError("invalid feature")
+        if ("screenshot" not in allowed and "clipboard-copy" in allowed) or ("keyboard-sas" in allowed and "keyboard" not in allowed):
+            raise ValueError("unsafe feature combination")
+        text = permission_text(allowed)
+        fingerprint = hashlib.sha256(text.encode()).hexdigest()
+        path = self.policy_dir / "enforced.perm"
+        changed = revision != self.applied_revision or fingerprint != self.policy_fingerprint or not path.exists() or path.read_text() != text
+        if changed:
+            # Defaults are loaded at session creation: close old desktops before
+            # replacing the global baseline. Never report a partially applied policy.
+            for name in self.managed:
+                if self.describe(name, allow_legacy=True) is not None:
+                    self.run(["/usr/bin/dcv", "close-session", name])
+            self.write_policy(path, text)
+        self.allowed = sorted(allowed)
+        self.applied_revision, self.policy_fingerprint = revision, fingerprint
+        self.write_policy(self.policy_state, json.dumps({"revision": revision, "fingerprint": fingerprint}))
 
     def revoke(self, name, user_id):
         self.check_account(name, user_id)
-        if self.describe(name) is not None:
+        if self.describe(name, allow_legacy=True) is not None:
             self.run(["/usr/bin/dcv", "close-session", name])
         self.run(["/usr/sbin/usermod", "--lock", "--shell", "/usr/sbin/nologin", name])
         # Stop desktop and other processes of this managed UID, including detached tasks.
@@ -147,10 +233,14 @@ class Agent:
         for name, user_id in desired.items():
             try:
                 self.ensure_account(name, user_id)
+                permissions = self.policy_dir / (name + ".perm")
+                self.write_policy(permissions, permission_text(self.allowed, name))
                 if self.describe(name) is None:
                     self.run(["/usr/bin/dcv", "create-session", "--type", "virtual", "--name", name,
-                              "--owner", name, "--user", name, "--gl", "off", "--permissions-file",
-                              "/etc/awsportal-dcv/user.perm", "--init", "/usr/local/libexec/awsportal-dcv-desktop", name])
+                              "--owner", "root", "--user", name, "--gl", "off", "--permissions-file",
+                              str(permissions), "--storage-root", "/home/" + name, "--init", "/usr/local/libexec/awsportal-dcv-desktop", name])
+                # Reapply the administrator's exact permissions on every successful sync.
+                self.run(["/usr/bin/dcv", "set-permissions", "--session", name, "--file", str(permissions)])
                 session = self.describe(name)
                 if session is None or not session.get("x11-display"):
                     raise RuntimeError("virtual desktop is not ready")
@@ -162,24 +252,31 @@ class Agent:
 
     def sync(self):
         with self.lock:
+            fetched = False
             try:
                 manifest = json.loads(self.request("/api/dcv/agent/state"))
+                fetched = True
                 if manifest["instance_id"] != self.instance_id:
                     raise ValueError("manifest belongs to a different instance")
+                self.apply_policy(manifest["policy"])
                 ready, error = self.reconcile(manifest["accounts"])
-                self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": ready, "error": error}).encode())
+                self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": ready, "error": error, "applied_revision":self.applied_revision}).encode())
                 self.last_ok = time.monotonic()
                 return not bool(error)
             except Exception:
                 # A network outage never creates users or grants local access.
                 # Existing managed sessions are closed after a bounded 90-second grace.
                 logging.error("DCV synchronization failed")
-                if time.monotonic() - self.last_ok >= 90:
+                if fetched or time.monotonic() - self.last_ok >= 90:
                     for name, account in self.managed.items():
                         try:
                             self.revoke(name, account["user_id"])
                         except Exception:
                             logging.error("Emergency DCV revocation failed for user ID %s", account["user_id"])
+                try:
+                    self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": [], "error": "DCV synchronization or policy enforcement failed", "applied_revision": 0}).encode())
+                except Exception:
+                    pass
                 return False
 
     def authenticate(self, body):

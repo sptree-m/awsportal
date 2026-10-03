@@ -47,7 +47,7 @@ sudo cloud-init status --wait
 sudo systemctl is-active dcvserver
 sudo systemctl is-active awsportal-dcv-agent
 sudo python3 - <<'"'"'PY'"'"'
-import json, pathlib, subprocess, time
+import json, pathlib, subprocess, time, pwd
 config=json.loads(pathlib.Path("/etc/awsportal-dcv/config.json").read_text())
 import importlib.machinery, types
 m=types.ModuleType("agent")
@@ -55,15 +55,27 @@ loader=importlib.machinery.SourceFileLoader("agent","/usr/local/libexec/awsporta
 loader.exec_module(m)
 a=m.Agent(config,"/var/lib/awsportal-dcv")
 for attempt in range(60):
-    accounts=json.loads(a.request("/api/dcv/agent/state"))["accounts"]
+    manifest=json.loads(a.request("/api/dcv/agent/state"))
+    accounts=manifest["accounts"]
     debug=next((x for x in accounts if x["username"]=="labdebug"),None)
     if debug:
         result=subprocess.run(["dcv","describe-session",debug["session_id"],"--json"],capture_output=True,text=True)
         if result.returncode==0:
             session=json.loads(result.stdout)
             licensed=any(item.get("product")=="dcv" and str(item.get("status","")).lower()=="licensed" for item in session.get("licenses",[]))
-            if session.get("owner")==debug["os_user"] and session.get("type")=="virtual" and session.get("x11-display") and licensed:
+            desktop=subprocess.run(["pgrep","-u",str(pwd.getpwnam(debug["os_user"]).pw_uid),"-x","xfce4-session"],capture_output=True)
+            if session.get("owner")=="root" and session.get("type")=="virtual" and session.get("x11-display") and licensed and desktop.returncode==0:
                 print("PASS: labdebug OS account, licensed DCV and virtual desktop",debug["os_user"])
+                a.validate_enforcement()
+                baseline=pathlib.Path("/etc/awsportal-dcv/enforced.perm").read_text()
+                assert "screenshot" in baseline and "clipboard-copy" in baseline, "FAIL: default capture protection missing"
+                for filename in ("/etc/dcv/dcv.conf", "/etc/dcv", "/etc/awsportal-dcv", "/etc/awsportal-dcv/enforced.perm", "/usr/local/libexec/awsportal-dcv-agent", "/etc/systemd/system/awsportal-dcv-agent.service"):
+                    writable=subprocess.run(["runuser","-u",debug["os_user"],"--","test","-w",filename],capture_output=True)
+                    assert writable.returncode!=0, "FAIL: user can write protected DCV path"
+                for option in (["--reset-builtin"], ["--file","/etc/dcv/default.perm"]):
+                    change=subprocess.run(["runuser","-u",debug["os_user"],"--","dcv","set-permissions","--session",debug["session_id"],*option],capture_output=True)
+                    assert change.returncode!=0, "FAIL: user changed administrator DCV permissions"
+                print("PASS: root-managed DCV policy and user permission-change rejection")
                 subprocess.run(["iptables","-C","OUTPUT","-d","169.254.169.254/32","-j","AWSPORTAL_IMDS"],check=True)
                 for address in ("http://169.254.169.254/latest/meta-data/", "http://[fd00:ec2::254]/latest/meta-data/"):
                     blocked=subprocess.run(["runuser","-u",debug["os_user"],"--","curl","--noproxy","*","-sS","--max-time","3",address],capture_output=True)

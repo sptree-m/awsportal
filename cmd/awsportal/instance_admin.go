@@ -6,6 +6,7 @@ import (
 	"github.com/sptree-m/awsportal/internal/store"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func (a *app) instanceAdminPage(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +55,8 @@ func (a *app) instanceAdminChange(w http.ResponseWriter, r *http.Request) {
 	var e error
 	secret := ""
 	switch op {
+	case "dcv-policy":
+		e = a.db.SetDCVPolicy(r.Context(), u, id, r.Form["dcv_features"])
 	case "dcv-config":
 		raw := make([]byte, 32)
 		if _, e = rand.Read(raw); e != nil {
@@ -91,10 +94,14 @@ func (a *app) instanceAdminChange(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "操作が不正です", 400)
 		return
 	}
-	detail := "kind=" + r.FormValue("kind") + ";subject=" + r.FormValue("subject_id") + ";permission=" + r.FormValue("permission") + ";group=" + r.FormValue("group_id") + ";user=" + r.FormValue("user_id") + ";name=" + r.FormValue("name")
+	detail := "kind=" + r.FormValue("kind") + ";subject=" + r.FormValue("subject_id") + ";permission=" + r.FormValue("permission") + ";group=" + r.FormValue("group_id") + ";user=" + r.FormValue("user_id") + ";name=" + r.FormValue("name") + ";dcv_features=" + strings.Join(r.Form["dcv_features"], ",")
 	if e != nil {
 		a.db.Audit(r.Context(), u.Username, "instance.admin."+op, id, "deny", detail)
-		http.Error(w, "設定できません。対象と入力を確認してください", 400)
+		if op == "dcv-policy" {
+			http.Error(w, e.Error(), 400)
+		} else {
+			http.Error(w, "設定できません。対象と入力を確認してください", 400)
+		}
 		return
 	}
 	a.db.Audit(r.Context(), u.Username, "instance.admin."+op, id, "ok", detail)

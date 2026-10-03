@@ -2,11 +2,11 @@
 
 CloudShellで実験環境を作成し、テスト後にスタックと有料資源を廃棄します。
 
-v1.4.1はDCV・軽量デスクトップ・ポータルアカウント同期に対応します。[CloudShell作成・試験・廃棄の手順](../docs/17-dcv-release-test.md) を参照してください。旧ラボは廃棄して作り直します。
+v1.5.0はDCV・軽量デスクトップ・ポータルアカウント同期に対応します。[CloudShell作成・試験・廃棄の手順](../docs/17-dcv-release-test.md) を参照してください。旧ラボは廃棄して作り直します。
 
 ```bash
 export AWS_REGION=ap-northeast-1
-export STACK=awsportal-lab-v141
+export STACK=awsportal-lab-v150
 bash lab/create.sh
 bash lab/test-dcv.sh
 # ブラウザ試験が終わったら
