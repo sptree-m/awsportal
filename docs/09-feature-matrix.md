@@ -111,4 +111,5 @@
 |---|---|---|
 | 登録HTTPSリポジトリの定期・手動同期 | ② | 管理UI、永続ジョブ、EC2用CLI。社内GitLab/AWS実機は未確認。docs/14-git-mirror.md。 |
 | ミラーのclone/fetch・push禁止 | ① | 実Git/HTTPSテスト、upload-packだけを許可。上流アクセス経路の遮断は初期設定が必要。 |
-| Git LFS / artifact / submodule再帰取得 | ④ | 未対応。 |
+| Git LFS取得専用ミラー | ① | 実Git LFS/HTTPSで同期・clone/fetch・upload拒否・未知OID・Range・破損修復・外部storage認証分離を検証。社内GitLab/S3実機・大容量性能は②。 |
+| artifact / submodule再帰取得 | ④ | 未対応。 |

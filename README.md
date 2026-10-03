@@ -31,7 +31,7 @@ t4g.micro相当テストはARM64、2 vCPU、1 GiB RAMを前提とし、4 GiB swa
 
 ## GitLab取得専用ミラー
 
-Portalで同期対象・間隔・読み取り/同期権限を設定し、利用者EC2から `awsportal-mirror sync ID --wait` で同期完了を待てます。GitLab資格情報はPortalだけに保持し、ミラーはclone/fetchのみを提供します。初期設定と自動化例は [Gitミラー運用](docs/14-git-mirror.md) を参照してください。
+Portalで同期対象・間隔・読み取り/同期権限を設定し、利用者EC2から `awsportal-mirror sync ID --wait` で同期完了を待てます。GitLab資格情報はPortalだけに保持し、ミラーはclone/fetchとGit LFSの読み取りだけを提供します。利用者EC2はGit LFSをインストールし、LFS配布用に管理画面のポータルHTTPS URLを設定してください。初期設定と自動化例は [Gitミラー運用](docs/14-git-mirror.md) を参照してください。
 
 ## 利用者マニュアル・サイト表示設定
 

@@ -26,6 +26,8 @@ type Manager struct {
 	Root, CredentialDir, CAFile, Git, Backend string
 	DB                                        *store.Store
 	slots                                     chan struct{}
+	LFSMaxObjectBytes, LFSMaxSyncBytes        int64
+	LFSDownloadOrigins                        []string
 }
 
 func New(db *store.Store, root, credentials, ca string) (*Manager, error) {
@@ -48,7 +50,11 @@ func New(db *store.Store, root, credentials, ca string) (*Manager, error) {
 	if e = os.MkdirAll(root, 0700); e != nil {
 		return nil, e
 	}
-	return &Manager{root, credentials, ca, git, backend, db, make(chan struct{}, 4)}, nil
+	m := &Manager{Root: root, CredentialDir: credentials, CAFile: ca, Git: git, Backend: backend, DB: db, slots: make(chan struct{}, 4), LFSMaxObjectBytes: 10 << 30, LFSMaxSyncBytes: 50 << 30}
+	if e = m.configureLFS(); e != nil {
+		return nil, e
+	}
+	return m, nil
 }
 func (m *Manager) Path(id int64) string {
 	return filepath.Join(m.Root, strconv.FormatInt(id, 10)+".git")
@@ -62,7 +68,7 @@ func gitEnv(config map[string]string) []string {
 		}
 		env = append(env, v)
 	}
-	base := map[string]string{"credential.helper": "", "protocol.allow": "never", "protocol.https.allow": "always", "http.followRedirects": "false", "http.sslVerify": "true", "core.hooksPath": "/dev/null", "gc.auto": "0", "pack.threads": "1", "pack.windowMemory": "16m", "core.deltaBaseCacheLimit": "16m", "fetch.fsckObjects": "true", "transfer.fsckObjects": "true", "http.receivepack": "false", "http.getanyfile": "false", "uploadpack.allowAnySHA1InWant": "false", "uploadpack.allowReachableSHA1InWant": "false", "uploadpack.allowTipSHA1InWant": "false"}
+	base := map[string]string{"credential.helper": "", "protocol.allow": "never", "protocol.https.allow": "always", "http.followRedirects": "false", "http.sslVerify": "true", "core.hooksPath": "/dev/null", "gc.auto": "0", "pack.threads": "1", "pack.windowMemory": "16m", "core.deltaBaseCacheLimit": "16m", "fetch.fsckObjects": "true", "transfer.fsckObjects": "true", "http.receivepack": "false", "http.getanyfile": "false", "transfer.hideRefs": stagePrefix, "uploadpack.allowAnySHA1InWant": "false", "uploadpack.allowReachableSHA1InWant": "false", "uploadpack.allowTipSHA1InWant": "false"}
 	for k, v := range config {
 		base[k] = v
 	}
@@ -122,11 +128,17 @@ func (m *Manager) Sync(ctx context.Context, r store.MirrorRepo) error {
 			return e
 		}
 	}
-	if e := run("-C", path, "fetch", "--atomic", "--prune", "--no-write-fetch-head", "--no-auto-maintenance", "--", r.Upstream, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"); e != nil {
+	if e := run("-C", path, "fetch", "--atomic", "--prune", "--no-write-fetch-head", "--no-auto-maintenance", "--", r.Upstream, "+refs/heads/*:"+stagePrefix+"heads/*", "+refs/tags/*:"+stagePrefix+"tags/*"); e != nil {
 		return e
 	}
 	// Verify the selected default branch before exposing the repository for its first clone.
-	if e := run("-C", path, "show-ref", "--verify", "refs/heads/"+r.Branch); e != nil {
+	if e := run("-C", path, "show-ref", "--verify", stagePrefix+"heads/"+r.Branch); e != nil {
+		return e
+	}
+	if e := m.syncLFS(ctx, r.ID, r.Upstream, config["http."+r.Upstream+".extraHeader"]); e != nil {
+		return e
+	}
+	if e := m.publishRefs(ctx, path, r.Branch); e != nil {
 		return e
 	}
 	return run("-C", path, "symbolic-ref", "HEAD", "refs/heads/"+r.Branch)

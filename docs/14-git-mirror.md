@@ -23,7 +23,7 @@ flowchart TD
 
 ## ポータルEC2の準備
 
-- OSのGit、git-http-backend、Python3（利用者コマンド側）が必要。GitはOS提供のセキュリティ更新を適用する。
+- OSのGit、git-http-backend、Python3とGit LFS（利用者コマンド側）が必要。GitはOS提供のセキュリティ更新を適用する。
 - `AWSPORTAL_MIRROR_ROOT=/var/lib/awsportal/mirrors` を設定してawsportalを再起動すると、同期workerが起動する。未設定なら機能は起動せず、同期/配布APIは503。
 - `AWSPORTAL_MIRROR_CREDENTIAL_DIR=/etc/awsportal/git-credentials` を指定。資格情報ファイルはPortal実行ユーザーだけ読める0600、親ディレクトリ0700で準備する。
 - 認証情報の参照名 `gitlab-read` に対応するファイルは `gitlab-read.json`。内容は `{"Username":"認証ユーザー名","Token":"GitLabトークン"}`。画面には参照名だけを登録し、トークンをURLやDBに保存しない。資格情報は上流fetchの子プロセス環境へ渡し、引数・ジョブ結果・監査ログには出さない。
@@ -81,6 +81,7 @@ awsportal-mirror clone 1 ./source
 awsportal-mirror fetch 1 ./source
 # 必要なら作業ツリーを明示的に更新（クライアントが勝手にreset/上書きしない）
 git -C ./source merge --ff-only origin/main
+git -C ./source lfs checkout
 
 # 待たずにジョブIDだけ受け取り、後から状態を確認
 awsportal-mirror sync 1
@@ -97,6 +98,7 @@ if [ ! -d ./source/.git ]; then
 else
   awsportal-mirror fetch 1 ./source
   git -C ./source merge --ff-only origin/main
+  git -C ./source lfs checkout
 fi
 # 同期とコード更新が成功した場合だけ、ここでビルド/タスクを実行する
 ```
@@ -117,11 +119,28 @@ Git配布はBearer、またはユーザー名＋専用トークンのBasic認証
 
 ジョブはSQLiteへ永続化。同じrepoのqueued/running要求は同じjob IDにまとめる。完了後の再要求は30秒以上空ける（429、Retry-After:30）。CLIの--waitはこの待機も期限内で自動再試行する。単一workerが同期を直列実行し、同期開始時に要求者の現在の権限を再検査する。定期同期は最後の要求時刻から設定間隔を空け、失敗時の過剰再試行を防ぐ。workerは5秒間隔でキューを確認し、fetchは最長10分。CLIのタイムアウトはジョブ自体をキャンセルしない。
 
-refsの更新はgit fetch --atomic。初回成功前は公開しない。同期失敗でも前回成功したミラーは残り、--waitが失敗した自動タスクは終了コードで停止できる。再起動時のrunningはerrorにし、queuedは引き継ぐ。単一Portalプロセスでの運用に限定する。
+Git fetchは非公開のステージング参照へ行い、LFS同期成功後に公開refsをgit update-refのトランザクションで更新する。初回成功前は公開しない。同期失敗でも前回成功したミラーは残り、--waitが失敗した自動タスクは終了コードで停止できる。再起動時のrunningはerrorにし、queuedは引き継ぐ。単一Portalプロセスでの運用に限定する。
+
+## Git LFS
+
+LFSのSHA-256 pointerを全ブランチ/タグ履歴から検出し、上流の固定URL `<登録Git URL>/info/lfs/objects/batch` へdownloadだけを要求する。リポジトリ内の`.lfsconfig`で同期先を変えない。取得したオブジェクトはサイズとSHA-256を検証し、ポータル内へ保存する。キャッシュも同期時に検証し、破損時は再取得する。LFS同期に失敗した場合は公開Git参照を更新しない。
+
+利用者向けのBatch APIもdownloadだけを受け付け、ローカルmanifestにある当該repoのOID/サイズだけを配布する。利用者の要求から上流の取得を起動しない。upload、verify、locks、削除は拒否する。オブジェクトのRange取得に対応。初回同期前は取得できない。
+
+- 管理者の「表示設定」で、**利用者EC2から届くポータルHTTPS URLを設定**する。LFSのdownload URLはこの値から作成する。未設定のLFS batchは503。
+- ポータル側はGoでLFS同期・配布するため、Git LFSバイナリは不要。利用者EC2は`git-lfs`をインストールする（例：Ubuntuの`sudo apt-get install git-lfs`）。
+- 同梱クライアントのcloneはLFS実体も取得する。fetchは更新されたremote refsのLFSをキャッシュし、作業ツリーを変更しない。merge後に`git lfs checkout`でキャッシュから実体を展開する。トークンは環境経由のHTTPヘッダーで渡し、Git設定に保存しない。
+- `.lfsconfig`に別URLがあっても同梱クライアントはポータルURLを固定し、basic転送だけを使用する。ローカルGit設定にもポータルLFS URLとskip-smudgeを設定する。
+- 上流GitLabと同じHTTPS originのdownload URLだけを既定で許可。外部ストレージを使う場合は`AWSPORTAL_MIRROR_LFS_DOWNLOAD_ORIGINS`にHTTPS originをカンマ区切りで登録し、ポータル側のネットワーク到達性も用意する。GitLab資格情報はそのストレージへ転送しない。上流が返すdownload action専用ヘッダーは適用する。リダイレクトは追跡しないため、最終的なダウンロードURLがbatchで返る構成が必要。
+- 既定の上限は1オブジェクト10GiB、1回の同期で新規/修復取得する合計50GiB。`AWSPORTAL_MIRROR_LFS_MAX_OBJECT_BYTES`と`AWSPORTAL_MIRROR_LFS_MAX_SYNC_BYTES`でバイト数を変更できる。既存の10分同期タイムアウト内に完了する必要がある。
+- メタデータ走査は最大200万Gitオブジェクト、1回の小さいblob候補は10万、LFS manifestはrepoごと最大10万件。オブジェクトはストリーム保存し、ファイル全体をRAMに載せない。配布はGitと共通で最大4並列、LFS配布のwrite deadlineは10分。TLS終端側にも必要な転送時間を確保する。
+- 履歴から削除されたオブジェクトも、そのrepoのキャッシュ/manifestには保持する。自動GC・容量管理は未実装。ディスク容量と転送量を監視する。pointer拡張、SSH LFS、カスタムtransfer、LFS lockは対象外。
+
+実Git LFSクライアントで、HTTPS上流同期・clone実体化・fetch、upload拒否・未知OID拒否・Range取得、破損修復・LFS不正時のGit参照維持、外部storageの明示許可と資格情報非転送を検証する。社内GitLab/S3実機と大規模データでの性能は別途確認する。
 
 ## 制約・テスト・終了
 
-Git LFSオブジェクト、GitLab API、添付ファイル、CI artifact、submoduleの自動再帰取得は未対応。必要なsubmoduleは個別のミラーIDで登録して明示的に扱う。リポジトリ履歴を含むbare mirrorがPortalディスクへ保存されるため、ディスク容量・暗号化・バックアップ・アクセス権を運用で管理する。大規模リポジトリと低メモリEC2の実容量/性能は実機確認が必要。
+GitLab API、添付ファイル、CI artifact、submoduleの自動再帰取得は未対応。必要なsubmoduleは個別のミラーIDで登録して明示的に扱う。リポジトリ履歴を含むbare mirrorがPortalディスクへ保存されるため、ディスク容量・暗号化・バックアップ・アクセス権を運用で管理する。大規模リポジトリと低メモリEC2の実容量/性能は実機確認が必要。
 
 Git push禁止だけで、全通信経路からのデータ漏洩を保証しない。他のIP例外・許可ドメイン・DNS・DCV転送等も制御する。ミラー機能だけでは利用者EC2のSGを自動変更しない。
 

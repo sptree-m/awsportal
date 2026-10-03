@@ -224,5 +224,19 @@ func (a *app) mirrorGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.db.RecordMirrorAccess(r.Context(), u)
-	a.mirrors.Serve(w, r, repo, r.PathValue("suffix"))
+	suffix := r.PathValue("suffix")
+	if strings.HasPrefix(suffix, "info/lfs/") {
+		if repo.LastSuccess == 0 {
+			http.Error(w, "mirror not ready", 409)
+			return
+		}
+		settings, err := a.db.SiteSettings(r.Context())
+		if err != nil {
+			http.Error(w, "site settings unavailable", 503)
+			return
+		}
+		a.mirrors.ServeLFS(w, r, id, suffix, settings.PortalURL)
+		return
+	}
+	a.mirrors.Serve(w, r, repo, suffix)
 }

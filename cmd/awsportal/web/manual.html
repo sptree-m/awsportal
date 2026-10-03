@@ -19,7 +19,7 @@ unset PROXY_USER PROXY_TOKEN</code></pre>
 </section>
 <section class="panel" id="git-guide"><p class="eyebrow">02 / SOURCE CODE</p><h2>Gitミラーの利用方法</h2>
 <p>ポータルが社内GitLabからコードを取得します。利用者EC2はポータル内のミラーからclone/fetchします。GitLabの資格情報をEC2へ配布せず、ミラーへのpushを拒否します。</p>
-<ol><li><a href="/mirrors" hx-boost="true">Git Mirrors画面</a>で割り当て済みのリポジトリIDを確認します。同期要求をするには「読み取り＋同期要求」の権限が必要です。</li><li>管理者からポータルの専用ミラートークンと社内CAを受け取ります。プロキシのトークンやPortalのパスワードとは別です。</li><li>EC2にPython3とGitを準備し、クライアントをポータルからダウンロードします。</li></ol>
+<ol><li><a href="/mirrors" hx-boost="true">Git Mirrors画面</a>で割り当て済みのリポジトリIDを確認します。同期要求をするには「読み取り＋同期要求」の権限が必要です。</li><li>管理者からポータルの専用ミラートークンと社内CAを受け取ります。プロキシのトークンやPortalのパスワードとは別です。</li><li>EC2にPython3、Git、Git LFSを準備し、クライアントをポータルからダウンロードします。</li></ol>
 <p>接続先：<code>{{.PortalExampleURL}}</code>{{if not .PortalConfigured}} <span class="muted">（例示です。管理者に確認した値へ置き換えてください。）</span>{{end}}</p>
 <p><a class="btn" href="/static/web/awsportal-mirror.py" download="awsportal-mirror" hx-boost="false">同期クライアントをダウンロード</a></p>
 <details open><summary>1. EC2へクライアントを配置</summary>
@@ -59,7 +59,8 @@ awsportal-mirror clone 1 ./source
 
 # 取得済みのリポジトリを更新
 awsportal-mirror fetch 1 ./source
-git -C ./source merge --ff-only origin/main</code></pre>
+git -C ./source merge --ff-only origin/main
+git -C ./source lfs checkout</code></pre>
 <p>読み取りのみの場合、<code>sync</code> は使えません。管理者の定期同期・初回同期が完了したミラーからclone/fetchしてください。fetchだけでは作業ツリーは変更されません。</p></details>
 <details><summary>自動タスクの実行例</summary>
 <pre class="manual-code"><code>set -eu
@@ -69,10 +70,11 @@ if [ ! -d ./source/.git ]; then
 else
   awsportal-mirror fetch 1 ./source
   git -C ./source merge --ff-only origin/main
+  git -C ./source lfs checkout
 fi
 # 同期・更新が成功した場合だけ、ここでビルドやタスクを実行</code></pre>
 <p>既定の待機は最大900秒。タイムアウトや同期失敗は終了コード1です。<code>awsportal-mirror status JOB_ID</code> で後から状態を確認できます。専用トークンの期限は更新されないため、定期的な交換が必要です。</p></details>
-<p class="muted">Git LFS、GitLab API・添付ファイル・CI artifact、サブモジュールの自動再帰取得は未対応です。</p>
+<p>LFSファイルもポータルから取得します。Git LFSをインストールしてから同梱クライアントを使ってください。cloneは実体を展開し、fetchはLFSをキャッシュします。merge後に <code>git lfs checkout</code> で実体を展開します。LFS uploadは拒否されます。</p><p class="muted">GitLab API・添付ファイル・CI artifact、サブモジュールの自動再帰取得は未対応です。</p>
 </section>
 <section class="panel" id="troubleshooting"><p class="eyebrow">03 / HELP</p><h2>困ったとき</h2>
 <dl class="manual-help"><dt>接続できない・タイムアウト</dt><dd>接続先、DNS、社内CA、EC2からの通信許可を管理者へ確認してください。GitミラーはポータルHTTPSへ直接接続します。SGやプロキシ許可を利用者が変更する必要はありません。</dd>
