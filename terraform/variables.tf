@@ -15,3 +15,8 @@ variable "managed_egress_instance_ids" {
   type    = set(string)
   default = []
 }
+
+variable "enable_mirror_access" {
+  type    = bool
+  default = false
+}

@@ -79,7 +79,7 @@ Resources:
               set -euxo pipefail
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
-              apt-get install -y curl sqlite3 ca-certificates
+              apt-get install -y curl sqlite3 ca-certificates git
               useradd --system --home /var/lib/awsportal --create-home awsportal
               mkdir -p /tmp/awsportal-bin
               curl -fL --retry 5 --retry-delay 2 "${BinaryURL}" -o /tmp/awsportal.tar.gz

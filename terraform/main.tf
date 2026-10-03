@@ -33,6 +33,17 @@ resource "aws_security_group" "portal" {
     }
   }
 
+  dynamic "ingress" {
+    for_each = var.enable_mirror_access ? aws_security_group.managed_egress : {}
+    content {
+      description     = "HTTPS mirror API and read-only Git from managed EC2"
+      from_port       = 443
+      to_port         = 443
+      protocol        = "tcp"
+      security_groups = [ingress.value.id]
+    }
+  }
+
   egress {
     description = "HTTPS for approved AWS/API path; production egress must be restricted by network policy"
     from_port   = 443

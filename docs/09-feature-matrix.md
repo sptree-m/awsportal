@@ -97,3 +97,11 @@
 - 使用するDCV versionでDLP permission名/挙動を確認。
 
 今回のインスタンス管理と将来拡張の詳細は docs/11-instance-administration.md を参照。
+
+## GitLab取得専用ミラー
+
+| 機能 | 状態 | 根拠 / 残課題 |
+|---|---|---|
+| 登録HTTPSリポジトリの定期・手動同期 | ② | 管理UI、永続ジョブ、EC2用CLI。社内GitLab/AWS実機は未確認。docs/14-git-mirror.md。 |
+| ミラーのclone/fetch・push禁止 | ① | 実Git/HTTPSテスト、upload-packだけを許可。上流アクセス経路の遮断は初期設定が必要。 |
+| Git LFS / artifact / submodule再帰取得 | ④ | 未対応。 |

@@ -16,6 +16,7 @@ import (
 	"github.com/skip2/go-qrcode"
 	"github.com/sptree-m/awsportal/internal/auth"
 	awsapi "github.com/sptree-m/awsportal/internal/aws"
+	"github.com/sptree-m/awsportal/internal/mirror"
 	forwardproxy "github.com/sptree-m/awsportal/internal/proxy"
 	"github.com/sptree-m/awsportal/internal/store"
 	"html/template"
@@ -41,6 +42,7 @@ type app struct {
 	db       *store.Store
 	egress   awsapi.EgressController
 	egressMu sync.Mutex
+	mirrors  *mirror.Manager
 	ec2      awsapi.Controller
 	cost     awsapi.CostReporter
 	tpl      *template.Template
@@ -63,6 +65,13 @@ func main() {
 		log.Fatal(e)
 	}
 	a := &app{db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), egress: awsapi.NewEgress(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
+	if root := env("AWSPORTAL_MIRROR_ROOT", ""); root != "" {
+		a.mirrors, e = mirror.New(db, root, env("AWSPORTAL_MIRROR_CREDENTIAL_DIR", ""), env("AWSPORTAL_MIRROR_CA_FILE", ""))
+		if e != nil {
+			log.Fatal("mirror startup failed: ", e)
+		}
+		go a.mirrors.Run(ctx)
+	}
 	go a.scheduler(ctx)
 	if addr := env("AWSPORTAL_PROXY_ADDR", ""); addr != "" {
 		host, _, err := net.SplitHostPort(addr)
@@ -106,6 +115,12 @@ func main() {
 	mux.HandleFunc("POST /admin/users/{username}/disable", a.require(a.adminDisableUser))
 	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
 	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
+	mux.HandleFunc("GET /mirrors", a.require(a.mirrorPage))
+	mux.HandleFunc("POST /mirrors", a.require(a.mirrorChange))
+	mux.HandleFunc("POST /api/mirrors/{id}/sync", a.mirrorSyncAPI)
+	mux.HandleFunc("GET /api/mirror-jobs/{id}", a.mirrorJobAPI)
+	mux.HandleFunc("GET /git/mirrors/{id}/{suffix...}", a.mirrorGit)
+	mux.HandleFunc("POST /git/mirrors/{id}/{suffix...}", a.mirrorGit)
 	mux.HandleFunc("GET /admin/egress", a.require(a.egressPage))
 	mux.HandleFunc("POST /admin/egress", a.require(a.egressChange))
 	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
