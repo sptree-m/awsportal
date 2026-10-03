@@ -1,4 +1,4 @@
-# v1.4.0 CloudShell試験・廃棄
+# v1.4.1 CloudShell試験・廃棄
 
 ## 旧ラボ
 
@@ -22,12 +22,12 @@ set -euo pipefail
 umask 077
 export AWS_PAGER=""
 export AWS_REGION=ap-northeast-1
-export STACK=awsportal-lab-v140
+export STACK=awsportal-lab-v141
 export INSTANCE_TYPE=t4g.micro
 export ALLOWED_CIDR=0.0.0.0/0
-export BINARY_URL=https://github.com/sptree-m/awsportal/releases/download/v1.4.0/awsportal-v1.4.0-linux-arm64.tar.gz
-git clone --depth 1 --branch v1.4.0 https://github.com/sptree-m/awsportal.git "$HOME/awsportal-test-v140"
-cd "$HOME/awsportal-test-v140"
+export BINARY_URL=https://github.com/sptree-m/awsportal/releases/download/v1.4.1/awsportal-v1.4.1-linux-arm64.tar.gz
+git clone --depth 1 --branch v1.4.1 https://github.com/sptree-m/awsportal.git "$HOME/awsportal-test-v141"
+cd "$HOME/awsportal-test-v141"
 bash lab/create.sh
 bash lab/test-dcv.sh
 )
@@ -58,8 +58,8 @@ bash lab/test-dcv.sh
 set -euo pipefail
 export AWS_PAGER=""
 export AWS_REGION=ap-northeast-1
-export STACK=awsportal-lab-v140
-cd "$HOME/awsportal-test-v140"
+export STACK=awsportal-lab-v141
+cd "$HOME/awsportal-test-v141"
 bash lab/debug-auth.sh on || true
 bash lab/destroy.sh
 )
@@ -71,7 +71,7 @@ EC2の停止だけではEBS料金が残ります。スタックを削除し、de
 
 ```bash
 export AWS_REGION=ap-northeast-1
-export STACK=awsportal-lab-v140
+export STACK=awsportal-lab-v141
 aws cloudformation describe-stack-events --stack-name "$STACK" --output table
 aws ssm describe-instance-information --output table
 ```

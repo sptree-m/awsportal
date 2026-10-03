@@ -61,8 +61,9 @@ for attempt in range(60):
         result=subprocess.run(["dcv","describe-session",debug["session_id"],"--json"],capture_output=True,text=True)
         if result.returncode==0:
             session=json.loads(result.stdout)
-            if session.get("owner")==debug["os_user"] and session.get("type")=="virtual" and session.get("x11-display"):
-                print("PASS: labdebug OS account and virtual desktop",debug["os_user"])
+            licensed=any(item.get("product")=="dcv" and str(item.get("status","")).lower()=="licensed" for item in session.get("licenses",[]))
+            if session.get("owner")==debug["os_user"] and session.get("type")=="virtual" and session.get("x11-display") and licensed:
+                print("PASS: labdebug OS account, licensed DCV and virtual desktop",debug["os_user"])
                 subprocess.run(["iptables","-C","OUTPUT","-d","169.254.169.254/32","-j","AWSPORTAL_IMDS"],check=True)
                 for address in ("http://169.254.169.254/latest/meta-data/", "http://[fd00:ec2::254]/latest/meta-data/"):
                     blocked=subprocess.run(["runuser","-u",debug["os_user"],"--","curl","--noproxy","*","-sS","--max-time","3",address],capture_output=True)
