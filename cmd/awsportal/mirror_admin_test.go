@@ -155,3 +155,51 @@ func TestAutomationCLISyncWaitOverTLS(t *testing.T) {
 		t.Fatal("unsafe credential permissions")
 	}
 }
+
+func TestLFSEndpointsRequireCurrentMirrorGrantAndReadToken(t *testing.T) {
+	a, _ := newHandlerTestApp(t)
+	ctx := context.Background()
+	if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil {
+		t.Fatal(err)
+	}
+	user, _ := a.db.UserByName(ctx, "alice")
+	if err := a.db.SaveMirror(ctx, store.MirrorRepo{Name: "code", Upstream: "https://gitlab.example/team/repo.git", Branch: "main", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	a.db.DB.Exec("UPDATE mirror_repos SET last_success=1 WHERE id=1")
+	a.db.SetMirrorGrant(ctx, 1, "user", user.ID, false, false)
+	token, _ := a.db.IssueMirrorToken(ctx, user.ID, "read", 1, false)
+	var err error
+	a.mirrors, err = mirror.New(a.db, filepath.Join(t.TempDir(), "mirrors"), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := store.DefaultSiteSettings()
+	settings.PortalURL = "https://portal.company.example"
+	a.db.SaveSiteSettings(ctx, store.User{Role: "portal_admin"}, settings)
+	request := func(secret, operation string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/git/mirrors/1/info/lfs/objects/batch", strings.NewReader(`{"operation":"`+operation+`","objects":[]}`))
+		r.SetPathValue("id", "1")
+		r.SetPathValue("suffix", "info/lfs/objects/batch")
+		r.Header.Set("Content-Type", "application/vnd.git-lfs+json")
+		if secret != "" {
+			r.Header.Set("Authorization", "Bearer "+secret)
+		}
+		w := httptest.NewRecorder()
+		a.mirrorGit(w, r)
+		return w
+	}
+	if w := request("", "download"); w.Code != 401 {
+		t.Fatal(w.Code)
+	}
+	if w := request(token, "download"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := request(token, "upload"); w.Code != 403 {
+		t.Fatal(w.Code)
+	}
+	a.db.SetMirrorGrant(ctx, 1, "user", user.ID, false, true)
+	if w := request(token, "download"); w.Code != 403 {
+		t.Fatal("revoked grant", w.Code)
+	}
+}

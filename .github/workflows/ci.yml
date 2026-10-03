@@ -12,6 +12,8 @@ jobs:
         with:
           go-version: '1.23.x'
           cache: false
+      - name: Install Git LFS for real integration tests
+        run: sudo apt-get update -qq && sudo apt-get install -y git-lfs
       - uses: hashicorp/setup-terraform@v3
       - run: bash scripts/test-all.sh
 

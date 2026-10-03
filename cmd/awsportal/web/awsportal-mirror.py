@@ -107,9 +107,18 @@ def main():
            if not key.startswith(('GIT_', 'SSH_')) and not key.upper().endswith('PROXY')}
     settings = {f'http.{url}.extraHeader': 'Authorization: Bearer ' + token, 'http.followRedirects': 'false',
                 'http.sslVerify': 'true', 'credential.helper': '', 'protocol.allow': 'never',
-                'protocol.https.allow': 'always', 'submodule.recurse': 'false', 'fetch.recurseSubmodules': 'false'}
+                'protocol.https.allow': 'always', 'submodule.recurse': 'false', 'fetch.recurseSubmodules': 'false',
+                'lfs.url': url + '/info/lfs', 'remote.origin.lfsurl': url + '/info/lfs',
+                'lfs.pushurl': url + '/info/lfs', 'lfs.basictransfersonly': 'true',
+                'lfs.concurrenttransfers': '2', 'lfs.fetchrecentalways': 'false', 'lfs.fetchinclude': '', 'lfs.fetchexclude': '',
+                'filter.lfs.required': 'true', 'filter.lfs.process': 'git-lfs filter-process',
+                'filter.lfs.smudge': 'git-lfs smudge -- %f', 'filter.lfs.clean': 'git-lfs clean -- %f'}
     if config.get('ca_file'):
         settings['http.sslCAInfo'] = config['ca_file']
+    if subprocess.run(['git', 'lfs', 'version'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+        raise RuntimeError('Git LFS is required; install git-lfs before clone/fetch')
+    # Clone skips automatic smudge, then resolves LFS explicitly against the fixed portal.
+    env['GIT_LFS_SKIP_SMUDGE'] = '1'
     env.update(GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_SYSTEM='/dev/null', GIT_TERMINAL_PROMPT='0',
                GIT_CONFIG_COUNT=str(len(settings)))
     for i, (key, value) in enumerate(settings.items()):
@@ -123,6 +132,17 @@ def main():
             raise RuntimeError('origin differs from registered portal mirror URL')
         command = ['git', '-C', args.directory, 'fetch', '--prune', 'origin']
     subprocess.run(command, env=env, check=True)
+    directory = args.directory
+    subprocess.run(['git', '-C', directory, 'config', '--local', 'lfs.url', url + '/info/lfs'], env=env, check=True)
+    subprocess.run(['git', '-C', directory, 'config', '--local', 'lfs.pushurl', url + '/info/lfs'], env=env, check=True)
+    subprocess.run(['git', '-C', directory, 'lfs', 'install', '--local', '--skip-smudge'], env=env, check=True)
+    if args.command == 'clone':
+        subprocess.run(['git', '-C', directory, 'lfs', 'pull'], env=env, check=True)
+    else:
+        # Cache objects for fetched refs without changing the work tree.
+        refs = subprocess.check_output(['git', '-C', directory, 'for-each-ref', '--format=%(refname)', 'refs/remotes/origin'], env=env, text=True).splitlines()
+        for start in range(0, len(refs), 100):
+            subprocess.run(['git', '-C', directory, 'lfs', 'fetch', 'origin', *refs[start:start + 100]], env=env, check=True)
 
 
 if __name__ == '__main__':
