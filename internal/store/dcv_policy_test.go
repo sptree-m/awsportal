@@ -43,7 +43,7 @@ func TestDCVPolicyAdministratorValidationAndRevisionGate(t *testing.T) {
 			t.Fatal("unsafe features accepted", features)
 		}
 	}
-	if e = s.ConfigureDCV(ctx, admin, "i-a", "host", "web", strings.Repeat("a", 64)); e != nil {
+	if e = s.ConfigureDCV(ctx, admin, "i-a", "host", "native", strings.Repeat("a", 64)); e != nil {
 		t.Fatal(e)
 	}
 	now := time.Now()
@@ -51,7 +51,7 @@ func TestDCVPolicyAdministratorValidationAndRevisionGate(t *testing.T) {
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "old-agent", now.Add(time.Minute)); e == nil {
 		t.Fatal("legacy agent bypassed policy gate")
 	}
-	s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1)
+	s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1, 1)
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "before", now.Add(time.Minute)); e != nil {
 		t.Fatal(e)
 	}
@@ -64,19 +64,19 @@ func TestDCVPolicyAdministratorValidationAndRevisionGate(t *testing.T) {
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "pending", now.Add(time.Minute)); e == nil {
 		t.Fatal("pending policy connection allowed")
 	}
-	s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1)
+	s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1, 1)
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "stale", now.Add(time.Minute)); e == nil {
 		t.Fatal("stale applied revision accepted")
 	}
-	s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 2)
+	s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 2, 1)
 	if _, e = s.IssueDCVToken(ctx, admin, "i-a", "ready", now.Add(time.Minute)); e != nil {
 		t.Fatal(e)
 	}
-	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1)
+	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 1, 1)
 	if _, ok := s.ConsumeInstanceDCVToken(ctx, "ready", DCVIdentity(admin.ID), "i-a", now); ok {
 		t.Fatal("token accepted after policy acknowledgment became stale")
 	}
-	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 2)
+	_ = s.DCVHeartbeat(ctx, "i-a", []int64{admin.ID}, "", now, 2, 1)
 	policy, e := s.DCVPolicy(ctx, "i-b")
 	if e != nil || policy.Revision != 1 || len(policy.Allowed) != 5 {
 		t.Fatal("other instance changed", policy, e)

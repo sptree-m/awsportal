@@ -151,6 +151,11 @@ class Agent:
             raise RuntimeError("server-wide DCV enforcement is not installed")
         if config.get("security", "auth-token-verifier").strip('"') != "http://127.0.0.1:8444":
             raise RuntimeError("unexpected external authentication verifier")
+        if config.get("security", "allowed-ws-origin-regex", fallback="").strip('"') != "^$":
+            raise RuntimeError("browser WebSocket rejection is not installed")
+        viewer = self.run(["/usr/bin/dpkg-query", "-W", "-f=${db:Status-Status}", "nice-dcv-web-viewer"], optional=True)
+        if viewer.returncode == 0 and viewer.stdout.strip() == "installed":
+            raise RuntimeError("browser viewer package must be removed")
 
     def write_policy(self, path, text):
         if path.is_symlink():
@@ -260,7 +265,7 @@ class Agent:
                     raise ValueError("manifest belongs to a different instance")
                 self.apply_policy(manifest["policy"])
                 ready, error = self.reconcile(manifest["accounts"])
-                self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": ready, "error": error, "applied_revision":self.applied_revision}).encode())
+                self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": ready, "error": error, "applied_revision":self.applied_revision,"browser_blocked":True}).encode())
                 self.last_ok = time.monotonic()
                 return not bool(error)
             except Exception:
@@ -274,7 +279,7 @@ class Agent:
                         except Exception:
                             logging.error("Emergency DCV revocation failed for user ID %s", account["user_id"])
                 try:
-                    self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": [], "error": "DCV synchronization or policy enforcement failed", "applied_revision": 0}).encode())
+                    self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": [], "error": "DCV synchronization or policy enforcement failed", "applied_revision": 0,"browser_blocked":False}).encode())
                 except Exception:
                     pass
                 return False

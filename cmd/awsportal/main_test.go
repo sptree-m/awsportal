@@ -210,49 +210,33 @@ func TestInstanceActionEnforcesAssignment(t *testing.T) {
 	}
 }
 
-func TestDCVHTTPTokenIsOneTimeAndBoundToAssignedInstance(t *testing.T) {
+func TestDCVUnmanagedLegacyConnectionRejected(t *testing.T) {
 	a, _ := newHandlerTestApp(t)
 	ctx := context.Background()
-	if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil {
-		t.Fatal(err)
+	if e := a.db.CreateUser(ctx, "alice", "x", "user", ""); e != nil {
+		t.Fatal(e)
 	}
 	u, _ := a.db.UserByName(ctx, "alice")
-	_, err := a.db.DB.ExecContext(ctx, `INSERT INTO instances(id,instance_id,name,dcv_host,dcv_session_id) VALUES(1,'i-ok','dev','dev.local','console'); INSERT INTO instance_users(instance_id,user_id,can_control) VALUES(1,?,1);`, u.ID)
-	if err != nil {
-		t.Fatal(err)
+	if _, e := a.db.DB.ExecContext(ctx, `INSERT INTO instances(id,instance_id,name,dcv_host,dcv_session_id) VALUES(1,'i-ok','dev','dev.local','console'); INSERT INTO instance_users VALUES(1,?,1);`, u.ID); e != nil {
+		t.Fatal(e)
 	}
-
 	r := requestAs(a, u, http.MethodGet, "/dcv/i-ok", nil)
 	r.SetPathValue("id", "i-ok")
 	w := httptest.NewRecorder()
 	a.require(a.dcv)(w, r)
-	if w.Code != http.StatusFound {
-		t.Fatalf("dcv redirect=%d body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unmanaged connection status=%d", w.Code)
 	}
-	loc, err := url.Parse(w.Header().Get("Location"))
-	if err != nil {
-		t.Fatal(err)
+	if _, e := a.db.DB.ExecContext(ctx, `INSERT INTO dcv_tokens(token_hash,user_id,instance_id,session_id,expires_at) VALUES(?,?,1,'console',?)`, store.DCVTokenHash("legacy-token"), u.ID, time.Now().Add(time.Minute).Unix()); e != nil {
+		t.Fatal(e)
 	}
-	token := loc.Query().Get("authToken")
-	if token == "" || loc.Fragment != "console" {
-		t.Fatalf("bad DCV redirect: %s", loc.String())
-	}
-
-	form := url.Values{"authenticationToken": {token}, "sessionId": {"console"}}.Encode()
-	first := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/dcv-auth", strings.NewReader(form))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	a.dcvAuth(first, req)
-	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `<auth result="yes"><username>alice</username></auth>`) {
-		t.Fatalf("first dcv auth code=%d body=%q", first.Code, first.Body.String())
-	}
-
-	second := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodPost, "/dcv-auth", strings.NewReader(form))
-	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	a.dcvAuth(second, req2)
-	if second.Code != http.StatusUnauthorized {
-		t.Fatalf("reused DCV token code=%d", second.Code)
+	form := url.Values{"authenticationToken": {"legacy-token"}, "sessionId": {"console"}}.Encode()
+	r = httptest.NewRequest(http.MethodPost, "/dcv-auth", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	a.dcvAuth(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("legacy authentication status=%d", w.Code)
 	}
 }
 

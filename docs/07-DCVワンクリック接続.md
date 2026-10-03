@@ -1,6 +1,6 @@
 # DCV接続とポータルアカウント同期（v1.4.0）
 
-Ubuntu 24.04（ARM64 / x86_64）の管理対象EC2で、ユーザー・グループ割り当てからOSユーザーと専用仮想デスクトップを自動準備します。ブラウザまたはDCVクライアントで接続し、EC2パスワードの入力・保存・同期は不要です。
+Ubuntu 24.04（ARM64 / x86_64）の管理対象EC2で、ユーザー・グループ割り当てからOSユーザーと専用仮想デスクトップを自動準備します。DCVネイティブクライアントで接続し、EC2パスワードの入力・保存・同期は不要です。
 
 ## 構成
 
@@ -39,9 +39,9 @@ flowchart TD
 
 ## 導入手順
 
-1. Instance AdminでDCVホストと接続方法を保存します。ホストにはDNS名、IPv4、`ec2-public`、`ec2-private` を指定できます。EC2アドレス指定時は接続ごとにAWS APIから最新IPを取得し、停止・再起動によるIP変更に追従します。
+1. Instance AdminでDCVホストを保存（接続方法はnative固定）します。ホストにはDNS名、IPv4、`ec2-public`、`ec2-private` を指定できます。EC2アドレス指定時は接続ごとにAWS APIから最新IPを取得し、停止・再起動によるIP変更に追従します。
 2. EC2専用認証キーを保存します。一度だけ表示し、DBにはSHA-256ハッシュのみ保存します。再発行すると旧キーと未使用接続トークンが失効します。
-3. リリースアーカイブを対象Ubuntu 24.04へ展開し、rootで `bash dcv/install.sh` を実行します。DCV・Xdcv・Web Viewer・Xfce・systemdサービスを導入します。既存dcv.confはバックアップして専用構成に置き換えるため、共有DCV環境では設定を統合してから適用してください。
+3. リリースアーカイブを対象Ubuntu 24.04へ展開し、rootで `bash dcv/install.sh` を実行します。DCV・Xdcv・Xfce・systemdサービスを導入し、Web Viewerを削除します。既存dcv.confはバックアップして専用構成に置き換えるため、共有DCV環境では設定を統合してから適用してください。
 4. `/etc/awsportal-dcv/config.json` をroot所有・0600で作成します。
 
 ```json
@@ -112,3 +112,9 @@ sudo systemctl status awsportal-dcv-agent --no-pager
 - [DCVセッション権限変更](https://docs.aws.amazon.com/dcv/latest/adminguide/managing-session-perms.html)
 - [サーバー共通権限設定](https://docs.aws.amazon.com/dcv/latest/adminguide/config-param-ref.html)
 - [DCVスクリーンショット制限](https://docs.aws.amazon.com/dcv/latest/userguide/saving-a-screenshot.html)
+
+## ネイティブ接続の固定（v1.6.0以降）
+
+接続モードはnativeに固定しました。サーバーでWeb Viewerを削除し、`[security] allowed-ws-origin-regex="^$"` により非空Originを持つブラウザWebSocketを拒否します。エージェントは設定・Viewer不在を検査し、準備完了の報告に `browser_blocked=true` を含めます。報告なし・古い報告・未管理EC2では新規認証を拒否します。旧 `/dcv-auth` も無効です。既存EC2は更新したインストーラーの再実行が必要です。
+
+Originを付けない独自クライアントまで公式アプリと区別する機能ではありません。公式アプリ限定の保証には管理端末側の統制が必要です。サーバーのOrigin設定は [AWS公式パラメーター](https://docs.aws.amazon.com/dcv/latest/adminguide/config-param-ref.html)、外部認証の入力は [AWS公式認証仕様](https://docs.aws.amazon.com/dcv/latest/adminguide/external-authentication.html) を参照してください。

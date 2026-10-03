@@ -18,9 +18,13 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 curl -fL --retry 5 "https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2404-$ARCH.tgz" -o "$WORK/dcv.tgz"
 tar -xzf "$WORK/dcv.tgz" -C "$WORK"
-mapfile -t PACKAGES < <(find "$WORK" -type f \( -name 'nice-dcv-server_*.deb' -o -name 'nice-dcv-web-viewer_*.deb' -o -name 'nice-xdcv_*.deb' \))
-[[ "${#PACKAGES[@]}" == 3 ]] || { echo 'Missing DCV packages'; exit 1; }
+mapfile -t PACKAGES < <(find "$WORK" -type f \( -name 'nice-dcv-server_*.deb' -o -name 'nice-xdcv_*.deb' \))
+[[ "${#PACKAGES[@]}" == 2 ]] || { echo 'Missing DCV packages'; exit 1; }
 apt-get install -y "${PACKAGES[@]}"
+# Removing the hosted viewer alone is insufficient; reject browser Origins below.
+if [[ "$(dpkg-query -W -f='${db:Status-Status}' nice-dcv-web-viewer 2>/dev/null || true)" == installed ]]; then
+  apt-get purge -y nice-dcv-web-viewer
+fi
 usermod -aG video dcv
 # EC2 UserData and instance-role credentials must not be readable by desktop users.
 # IMDSv2 alone does not distinguish a root process from an unprivileged local user.
@@ -50,6 +54,7 @@ cat > /etc/dcv/dcv.conf <<'CONF'
 [security]
 authentication="none"
 auth-token-verifier="http://127.0.0.1:8444"
+allowed-ws-origin-regex="^$"
 [connectivity]
 web-port=8443
 enable-quic-frontend=false

@@ -4,7 +4,7 @@ STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 umask 077
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.5.0/awsportal-v1.5.0-linux-arm64.tar.gz}"
+BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.6.0/awsportal-v1.6.0-linux-arm64.tar.gz}"
 fail(){ rc=$?; echo; echo "RESULT: FAIL - create/verification failed (exit=$rc)"; exit "$rc"; }
 trap fail ERR
 

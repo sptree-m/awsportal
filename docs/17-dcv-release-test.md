@@ -1,4 +1,4 @@
-# v1.5.0 CloudShell試験・廃棄
+# v1.6.0 CloudShell試験・廃棄
 
 ## 旧ラボ
 
@@ -22,12 +22,12 @@ set -euo pipefail
 umask 077
 export AWS_PAGER=""
 export AWS_REGION=ap-northeast-1
-export STACK=awsportal-lab-v150
+export STACK=awsportal-lab-v160
 export INSTANCE_TYPE=t4g.micro
 export ALLOWED_CIDR=0.0.0.0/0
-export BINARY_URL=https://github.com/sptree-m/awsportal/releases/download/v1.5.0/awsportal-v1.5.0-linux-arm64.tar.gz
-git clone --depth 1 --branch v1.5.0 https://github.com/sptree-m/awsportal.git "$HOME/awsportal-test-v150"
-cd "$HOME/awsportal-test-v150"
+export BINARY_URL=https://github.com/sptree-m/awsportal/releases/download/v1.6.0/awsportal-v1.6.0-linux-arm64.tar.gz
+git clone --depth 1 --branch v1.6.0 https://github.com/sptree-m/awsportal.git "$HOME/awsportal-test-v160"
+cd "$HOME/awsportal-test-v160"
 bash lab/create.sh
 bash lab/test-dcv.sh
 )
@@ -35,12 +35,12 @@ bash lab/test-dcv.sh
 
 この一時ラボはPortal/Testそれぞれt4g.micro、PortalのEBS8GiB・TestのEBS16GiB（swap2GiBを含む）、公開IPv4を使用します。NAT Gateway・ALB・EIPは作成しません。初回DCVパッケージ導入に時間がかかります。快適性を優先する場合は `INSTANCE_TYPE=t4g.small` を指定できます（両EC2に適用）。画面確認中もEC2・EBS・IPv4料金が発生します。
 
-## ブラウザ試験
+## ポータル・ネイティブクライアント試験
 
 1. 作成コマンドが表示するPortal URLを開きます。
 2. `labdebug` と `debug_password=` のパスワードでログインします。OTP不要です。`labadmin` はOTPが必要です。
-3. `lab/test-dcv.sh` が表示するDCV URLを開き、ラボEC2の自己署名証明書を確認して許可します。
-4. ポータルのEC2一覧から「接続」を押します。ブラウザDCVが本人の `awp-u<ID>` セッションへ接続し、Xfceデスクトップが表示されることを確認します。
+3. [公式DCVネイティブクライアント](https://www.amazondcv.com/)を端末にインストールします。接続時はラボEC2の自己署名証明書を確認して許可します。
+4. ポータルのEC2一覧から「接続」を押します。ネイティブクライアントが本人の `awp-u<ID>` セッションへ接続し、Xfceデスクトップが表示されることを確認します。
 5. DCV内の端末で `whoami` と `id` を実行し、マニュアルに表示されたOSユーザーと一致することを確認します。DCVのセッション管理上のownerはrootですが、デスクトップの実行ユーザーは本人です。sudo権限は自動付与されません。
 6. 通常ユーザーも試す場合、Usersで作成→本人ログインで初回パスワード変更→Instance Adminで個別またはグループ割り当て→同期完了後に接続します。別のOSユーザー・ホーム・DCVセッションになることを確認します。
 7. 通常ユーザーのすべての個別／グループ割り当てを解除すると、次の同期でデスクトップと実行中タスクが終了します。再割り当てするとホームが保持されることを確認します。Portal Adminは割り当てなしでも全有効インスタンスへの権限を持つため、この解除試験には通常ユーザーを使ってください。
@@ -48,7 +48,7 @@ bash lab/test-dcv.sh
 9. Instance Adminで「DCV機能・持ち出し制御」を開き、初期設定のキャプチャ・クリップボード・ファイル転送が禁止されていることを確認します。機能を変更して保存すると、次の同期で旧セッションが閉じ、設定版とEC2適用版が一致するまで新規接続を停止することを確認します。一般ユーザー／Group Adminでは管理画面に入れず、DCV内から設定ファイルやセッション権限を変更できないことも確認します。
 10. テストEC2を停止→起動し、起動と同期を待って再接続します。公開IP変更に追従します。Portal EC2を停止するとラボ画面自体が使えなくなるので、利用者EC2を操作してください。
 
-自動試験はDCVサービス・実セッション・認証通信を確認します。画面描画と操作はブラウザで最終確認してください。LFS・プロキシ・SG適用の実機試験には別途環境設定が必要です。
+自動試験はDCVサービス・実セッション・認証通信を確認します。画面描画と操作はネイティブクライアントで最終確認してください。LFS・プロキシ・SG適用の実機試験には別途環境設定が必要です。
 
 ## 廃棄
 
@@ -59,8 +59,8 @@ bash lab/test-dcv.sh
 set -euo pipefail
 export AWS_PAGER=""
 export AWS_REGION=ap-northeast-1
-export STACK=awsportal-lab-v150
-cd "$HOME/awsportal-test-v150"
+export STACK=awsportal-lab-v160
+cd "$HOME/awsportal-test-v160"
 bash lab/debug-auth.sh on || true
 bash lab/destroy.sh
 )
@@ -72,9 +72,17 @@ EC2の停止だけではEBS料金が残ります。スタックを削除し、de
 
 ```bash
 export AWS_REGION=ap-northeast-1
-export STACK=awsportal-lab-v150
+export STACK=awsportal-lab-v160
 aws cloudformation describe-stack-events --stack-name "$STACK" --output table
 aws ssm describe-instance-information --output table
 ```
 
 SSMでTest EC2上の `cloud-init status --long`、`systemctl status dcvserver awsportal-dcv-agent`、`journalctl -u awsportal-dcv-agent`、`dcv list-sessions` を確認します。認証キー、ユーザーパスワード、DCVトークンは共有ログへ貼り付けないでください。
+
+## v1.6.0の接続制限と更新
+
+Web Viewerを削除し、DCVの `allowed-ws-origin-regex="^$"` で非空OriginのWebSocket接続を拒否します。ポータルは `dcv://` のみ発行します。ブラウザからDCVのHTTPS URLを開いてもWeb Viewerを利用できないことも確認してください。外部Web SDKを含む実接続の拒否とネイティブ接続の成功は実機で確認が必要です。単なる画面非表示の試験はSDK拒否の証明にはなりません。
+
+既存環境はポータルだけでなく、各EC2でv1.6.0の `dcv/install.sh` をrootで再実行（既存の `/etc/awsportal-dcv/config.json` を維持）してください。エージェントがブラウザ拒否を報告するまで接続を停止します。旧エージェント・未管理EC2・旧 `/dcv-auth` 認証は利用できません。
+
+DCV認証にはクライアント種別を証明する情報がなく、Originを付けない独自クライアントやOriginを除去する中継まで識別できません。公式ネイティブアプリだけへの厳密な限定には管理端末のアプリ実行・通信制限が必要です。

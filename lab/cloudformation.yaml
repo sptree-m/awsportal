@@ -154,7 +154,7 @@ Resources:
               sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET role='portal_admin', totp_secret='${LabTOTPSecret}' WHERE username='labadmin';"
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host ec2-public
               echo "${DCVAgentToken}" > /tmp/dcv-agent-token
-              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd configure-dcv -instance ${TestId} -host ec2-public -dcv-mode web -dcv-token-file /tmp/dcv-agent-token
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd configure-dcv -instance ${TestId} -host ec2-public -dcv-mode native -dcv-token-file /tmp/dcv-agent-token
               rm /tmp/dcv-agent-token
 
               # Lab-only MFA-free debug user (disabled by default)
