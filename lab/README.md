@@ -1,19 +1,22 @@
 # Disposable AWS lab
 
-CloudShellで実験専用環境を作成・完全削除するための構成です。
+CloudShellで実験環境を作成し、テスト後にスタックと有料資源を廃棄します。
 
-## 作成
+v1.4.0はDCV・軽量デスクトップ・ポータルアカウント同期に対応します。[CloudShell作成・試験・廃棄の手順](../docs/17-dcv-release-test.md) を参照してください。旧ラボは廃棄して作り直します。
+
 ```bash
-git clone --depth 1 https://github.com/sptree-m/awsportal.git && cd awsportal && bash lab/create.sh
+export AWS_REGION=ap-northeast-1
+export STACK=awsportal-lab-v140
+bash lab/create.sh
+bash lab/test-dcv.sh
+# ブラウザ試験が終わったら
+bash lab/destroy.sh
 ```
 
-## 完全削除
-```bash
-cd ~/awsportal && bash lab/destroy.sh
-```
+専用VPC / public subnet / IGW / route table / Portal SG / Test SG / Portal・Test IAM role + profile / t4g.micro x2 / encrypted gp3 8GiB + 16GiBを作成します。NAT Gateway・ALB・EIPは作成しません。SSMは管理者の導入・試験用で、利用者にAWS権限を付与しません。
 
-作成物: 専用VPC / public subnet / IGW / route table / Portal SG / Test SG / Portal IAM role + instance profile / SSM bootstrap parameter / t4g.micro Portal EC2 / t4g.micro Ubuntu test EC2 / encrypted 8 GiB gp3 x2。NAT Gateway、ALB、Elastic IPは作成しません。
+一時ラボでは8080/TCP（Portal）と8443/TCP（DCV）をALLOWED_CIDR（既定0.0.0.0/0）に許可します。CloudShellのヘルス確認とブラウザ接続元の両方を許可する必要があります。Portal内部認証用8444/TCPはTest SGからだけ許可します。認証通信は専用証明書を検証するHTTPSです。ブラウザ画面用PortalはHTTP、DCVは自己署名HTTPSで、一時試験専用です。
 
-Disposable LabではPortalの8080/TCPを既定で `0.0.0.0/0` に許可します（移動回線・変動IPからのブラウザ試験用）。必要なら `ALLOWED_CIDR` で制限できます。本番構成には適用しません。create.shはCloudFormation作成後、2台のEC2がrunningかつARM64であることとPortalの `/healthz` 応答まで確認し、全検査合格時のみ `RESULT: PASS` を出力します。起動失敗時はSSMでcloud-init/systemd/journal診断を収集します。テストEC2はinbound 0です。両EC2のEBSはDeleteOnTermination=trueです。
+create.shはARM64・EC2 running・Portal healthを検証します。test-dcv.shは実DCVサービス・OSユーザー／仮想セッション・ポータルトークンによる外部認証と再利用拒否を検証します。画面描画と入力はブラウザで確認してください。
 
-destroy.shは削除前にCloudFormationの物理Resource IDを記録し、削除完了後にStack消滅、Project=awsportal-labタグ、EC2/EBS/ENI/VPC/SG、IAM role/profile、および記録済みVPC/Subnet/SG/IGW/RouteTable等を再検査します。残留または削除エラーが1件でもあれば `RESULT: FAIL` と終了コード2、全検査合格時のみ `RESULT: PASS` を出力します。Tagging APIの参照件数と、AWSが履歴として返すterminated EC2の件数・Instance IDも表示しますが、terminated EC2は残留リソースとは判定しません。
+作成時にEC2とEBSのIDを ~/.awsportal-lab/region/stack/ に記録します。destroy.shはAPIの権限不足や取得失敗を成功扱いせず、CloudFormation削除完了、EC2終了、保存済みEBSとネットワーク・IAM資源の消滅を検査します。terminated EC2は履歴として扱います。ホーム上の検査記録は有料AWS資源ではありません。

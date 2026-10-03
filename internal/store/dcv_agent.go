@@ -1,0 +1,151 @@
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net"
+	"strings"
+	"time"
+)
+
+const dcvAgentSchema = `CREATE TABLE IF NOT EXISTS dcv_agents(instance_id INTEGER PRIMARY KEY REFERENCES instances(id),token_hash TEXT NOT NULL UNIQUE,last_seen INTEGER NOT NULL DEFAULT 0,ready_users TEXT NOT NULL DEFAULT '[]',error TEXT NOT NULL DEFAULT '');`
+
+type DCVAccount struct {
+	UserID    int64  `json:"user_id"`
+	Username  string `json:"username"`
+	OSUser    string `json:"os_user"`
+	SessionID string `json:"session_id"`
+}
+
+func DCVIdentity(id int64) string { return fmt.Sprintf("awp-u%d", id) }
+func DCVTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// ConfigureDCV enables per-user sessions and rotates the instance's machine credential.
+// OS usernames use database IDs, never administrator-supplied shell fragments.
+func (s *Store) ConfigureDCV(ctx context.Context, admin User, awsID, host, mode, token string) error {
+	if e := adminOnly(admin); e != nil {
+		return e
+	}
+	if mode != "web" && mode != "native" {
+		return fmt.Errorf("invalid connection mode")
+	}
+	if host == "" || len(host) > 253 || strings.ContainsAny(host, "/:?#@\\ \t\r\n") {
+		return fmt.Errorf("host must be a hostname or IPv4 address")
+	}
+	if net.ParseIP(host) == nil {
+		for _, label := range strings.Split(host, ".") {
+			if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+				return fmt.Errorf("invalid hostname")
+			}
+			for _, c := range label {
+				if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+					return fmt.Errorf("invalid hostname")
+				}
+			}
+		}
+	}
+	if len(token) != 64 {
+		return fmt.Errorf("machine token must contain 32 random bytes encoded as hex")
+	}
+	if _, e := hex.DecodeString(token); e != nil {
+		return e
+	}
+	tx, e := s.DB.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	res, e := tx.ExecContext(ctx, "UPDATE instances SET dcv_host=?,dcv_connect_mode=? WHERE instance_id=?", host, mode, awsID)
+	if e != nil {
+		return e
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("instance not found")
+	}
+	_, e = tx.ExecContext(ctx, `INSERT INTO dcv_agents(instance_id,token_hash) SELECT id,? FROM instances WHERE instance_id=? ON CONFLICT(instance_id) DO UPDATE SET token_hash=excluded.token_hash,last_seen=0,ready_users='[]',error=''`, DCVTokenHash(token), awsID)
+	if e != nil {
+		return e
+	}
+	_, e = tx.ExecContext(ctx, "DELETE FROM dcv_tokens WHERE instance_id=(SELECT id FROM instances WHERE instance_id=?)", awsID)
+	if e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DCVAgentInstance(ctx context.Context, token string) (string, error) {
+	if len(token) != 64 {
+		return "", fmt.Errorf("invalid credential")
+	}
+	var id string
+	e := s.DB.QueryRowContext(ctx, "SELECT i.instance_id FROM dcv_agents a JOIN instances i ON i.id=a.instance_id WHERE a.token_hash=?", DCVTokenHash(token)).Scan(&id)
+	return id, e
+}
+
+// The manifest includes administrators, individual grants and expanded group grants.
+// Disabled instances deliberately return an empty manifest so the agent revokes sessions.
+func (s *Store) DCVAccounts(ctx context.Context, awsID string, now time.Time) ([]DCVAccount, error) {
+	rs, e := s.DB.QueryContext(ctx, `SELECT u.id,u.username FROM users u JOIN instances i ON i.instance_id=? WHERE i.enabled=1 AND u.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users g WHERE g.instance_id=i.id AND g.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups g JOIN group_members m ON m.group_id=g.group_id WHERE g.instance_id=i.id AND m.user_id=u.id)) ORDER BY u.id`, awsID, now.Unix())
+	if e != nil {
+		return nil, e
+	}
+	defer rs.Close()
+	out := []DCVAccount{}
+	for rs.Next() {
+		var a DCVAccount
+		if e = rs.Scan(&a.UserID, &a.Username); e != nil {
+			return nil, e
+		}
+		a.OSUser = DCVIdentity(a.UserID)
+		a.SessionID = a.OSUser
+		out = append(out, a)
+	}
+	return out, rs.Err()
+}
+func (s *Store) DCVHeartbeat(ctx context.Context, awsID string, ready []int64, detail string, now time.Time) error {
+	if len(ready) > 10000 || len(detail) > 512 {
+		return fmt.Errorf("heartbeat too large")
+	}
+	for _, id := range ready {
+		if id < 1 {
+			return fmt.Errorf("invalid user ID")
+		}
+	}
+	if ready == nil {
+		ready = []int64{}
+	}
+	raw, e := json.Marshal(ready)
+	if e != nil {
+		return e
+	}
+	_, e = s.DB.ExecContext(ctx, "UPDATE dcv_agents SET last_seen=?,ready_users=?,error=? WHERE instance_id=(SELECT id FROM instances WHERE instance_id=?)", now.Unix(), string(raw), detail, awsID)
+	return e
+}
+func (s *Store) DCVConnection(ctx context.Context, awsID string, uid int64, now time.Time) (managed, ready bool, mode string, err error) {
+	var seen int64
+	var raw string
+	err = s.DB.QueryRowContext(ctx, `SELECT i.dcv_connect_mode,COALESCE(a.last_seen,0),COALESCE(a.ready_users,''),a.instance_id IS NOT NULL FROM instances i LEFT JOIN dcv_agents a ON a.instance_id=i.id WHERE i.instance_id=?`, awsID).Scan(&mode, &seen, &raw, &managed)
+	if err != nil || !managed {
+		return
+	}
+	if seen < now.Add(-90*time.Second).Unix() {
+		return
+	}
+	var ids []int64
+	if err = json.Unmarshal([]byte(raw), &ids); err != nil {
+		return
+	}
+	for _, id := range ids {
+		if id == uid {
+			ready = true
+		}
+	}
+	return
+}

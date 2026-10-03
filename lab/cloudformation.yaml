@@ -7,6 +7,9 @@ Parameters:
   LabTOTPSecret: {Type: String, NoEcho: true, MinLength: 16}
   InstanceType: {Type: String, Default: t4g.micro}
   BinaryURL: {Type: String}
+  DCVAgentToken: {Type: String, NoEcho: true, MinLength: 64, MaxLength: 64}
+  LabTLSCert: {Type: String, NoEcho: true}
+  LabTLSKey: {Type: String, NoEcho: true}
 Resources:
   Vpc:
     Type: AWS::EC2::VPC
@@ -27,11 +30,21 @@ Resources:
       SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 8080, ToPort: 8080, CidrIp: {Ref: AllowedCidr}}]
       SecurityGroupEgress: [{IpProtocol: -1, CidrIp: 0.0.0.0/0}]
       Tags: [{Key: Project, Value: {Ref: ProjectTag}}]
+  PortalAgentIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties: {GroupId: {Ref: PortalSG}, IpProtocol: tcp, FromPort: 8444, ToPort: 8444, SourceSecurityGroupId: {Ref: TestSG}}
+  TestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {Version: '2012-10-17', Statement: [{Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: 'sts:AssumeRole'}]}
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore]
+  TestProfile: {Type: AWS::IAM::InstanceProfile, Properties: {Roles: [{Ref: TestRole}]}}
   TestSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: awsportal lab test host no ingress
+      GroupDescription: awsportal lab DCV only
       VpcId: {Ref: Vpc}
+      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 8443, ToPort: 8443, CidrIp: {Ref: AllowedCidr}}]
       SecurityGroupEgress: [{IpProtocol: -1, CidrIp: 0.0.0.0/0}]
       Tags: [{Key: Project, Value: {Ref: ProjectTag}}]
   PortalRole:
@@ -51,21 +64,55 @@ Resources:
   PortalProfile: {Type: AWS::IAM::InstanceProfile, Properties: {Roles: [{Ref: PortalRole}]}}
   TestInstance:
     Type: AWS::EC2::Instance
+    DependsOn: [Route, Assoc]
     Properties:
+      IamInstanceProfile: {Ref: TestProfile}
+      PrivateIpAddress: 10.77.0.11
       ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id}}'
       InstanceType: {Ref: InstanceType}
       SubnetId: {Ref: Subnet}
       SecurityGroupIds: [{Ref: TestSG}]
       MetadataOptions: {HttpTokens: required}
-      BlockDeviceMappings: [{DeviceName: /dev/sda1, Ebs: {VolumeType: gp3, VolumeSize: 8, Encrypted: true, DeleteOnTermination: true}}]
+      BlockDeviceMappings: [{DeviceName: /dev/sda1, Ebs: {VolumeType: gp3, VolumeSize: 16, Encrypted: true, DeleteOnTermination: true}}]
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash
+            set -euo pipefail
+            umask 077
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y curl ca-certificates
+            snap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic
+            snap start amazon-ssm-agent
+            mkdir -p /tmp/awsportal-bin /etc/awsportal-dcv
+            curl -fL --retry 5 '${BinaryURL}' -o /tmp/awsportal.tar.gz
+            curl -fL --retry 5 '${BinaryURL}.sha256' -o /tmp/awsportal.tar.gz.sha256
+            test "$(awk '{print $1}' /tmp/awsportal.tar.gz.sha256)" = "$(sha256sum /tmp/awsportal.tar.gz | awk '{print $1}')"
+            tar -xzf /tmp/awsportal.tar.gz -C /tmp/awsportal-bin
+            echo '${LabTLSCert}' | base64 -d > /etc/awsportal-dcv/portal-ca.pem
+            IMDS_TOKEN="$(curl -fsS -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)"
+            THIS_ID="$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)"
+            cat > /etc/awsportal-dcv/config.json <<CONFIG
+            {"portal_url":"https://10.77.0.10:8444","instance_id":"$THIS_ID","token":"${DCVAgentToken}","ca_file":"/etc/awsportal-dcv/portal-ca.pem"}
+            CONFIG
+            chmod 600 /etc/awsportal-dcv/config.json
+            # Swap keeps the two debug virtual desktops usable on t4g.micro.
+            fallocate -l 2G /swapfile
+            chmod 600 /swapfile
+            mkswap /swapfile
+            swapon /swapfile
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            bash /tmp/awsportal-bin/dcv/install.sh
       Tags: [{Key: Name, Value: awsportal-lab-test}, {Key: Project, Value: {Ref: ProjectTag}}, {Key: awsportal-user, Value: test-user01}]
   PortalInstance:
     Type: AWS::EC2::Instance
-    DependsOn: [TestInstance]
+    DependsOn: [Route, Assoc, PortalAgentIngress]
     Properties:
       ImageId: '{{resolve:ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id}}'
       InstanceType: {Ref: InstanceType}
       IamInstanceProfile: {Ref: PortalProfile}
+      PrivateIpAddress: 10.77.0.10
       SubnetId: {Ref: Subnet}
       SecurityGroupIds: [{Ref: PortalSG}]
       MetadataOptions: {HttpTokens: required}
@@ -76,10 +123,11 @@ Resources:
           Fn::Sub:
             - |
               #!/bin/bash
-              set -euxo pipefail
+              set -euo pipefail
+              umask 077
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
-              apt-get install -y curl sqlite3 ca-certificates git git-lfs
+              apt-get install -y curl sqlite3 ca-certificates git git-lfs nginx
               useradd --system --home /var/lib/awsportal --create-home awsportal
               mkdir -p /tmp/awsportal-bin
               curl -fL --retry 5 --retry-delay 2 "${BinaryURL}" -o /tmp/awsportal.tar.gz
@@ -96,7 +144,10 @@ Resources:
               PASS="${LabPassword}"
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role user > /tmp/admin.txt
               sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET role='portal_admin', totp_secret='${LabTOTPSecret}' WHERE username='labadmin';"
-              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host 127.0.0.1
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host ec2-public
+              echo "${DCVAgentToken}" > /tmp/dcv-agent-token
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd configure-dcv -instance ${TestId} -host ec2-public -dcv-mode web -dcv-token-file /tmp/dcv-agent-token
+              rm /tmp/dcv-agent-token
 
               # Lab-only MFA-free debug user (disabled by default)
               DEBUGPASS="Debug-$PASS"
@@ -132,6 +183,28 @@ Resources:
               [Install]
               WantedBy=multi-user.target
               UNIT
+              mkdir -p /etc/awsportal-tls
+              echo '${LabTLSCert}' | base64 -d > /etc/awsportal-tls/server.pem
+              echo '${LabTLSKey}' | base64 -d > /etc/awsportal-tls/server.key
+              chmod 600 /etc/awsportal-tls/server.key
+              rm -f /etc/nginx/sites-enabled/default
+              cat > /etc/nginx/sites-available/awsportal-agent <<'NGINX'
+              server {
+                listen 8444 ssl;
+                ssl_certificate /etc/awsportal-tls/server.pem;
+                ssl_certificate_key /etc/awsportal-tls/server.key;
+                ssl_protocols TLSv1.2 TLSv1.3;
+                location /api/dcv/agent/ {
+                  proxy_pass http://127.0.0.1:8080;
+                  proxy_set_header Authorization $http_authorization;
+                  proxy_read_timeout 20s;
+                }
+                location / { return 404; }
+              }
+              NGINX
+              ln -sf /etc/nginx/sites-available/awsportal-agent /etc/nginx/sites-enabled/awsportal-agent
+              nginx -t
+              systemctl restart nginx
               systemctl daemon-reload
               systemctl enable --now awsportal
             - {TestId: {Ref: TestInstance}, LabPassword: {Ref: LabPassword}, LabTOTPSecret: {Ref: LabTOTPSecret}, BinaryURL: {Ref: BinaryURL}}
@@ -139,3 +212,4 @@ Outputs:
   PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
   PortalInstanceId: {Value: {Ref: PortalInstance}}
   TestInstanceId: {Value: {Ref: TestInstance}}
+  DCVURL: {Value: {Fn::Sub: 'https://${TestInstance.PublicIp}:8443'}}

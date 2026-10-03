@@ -1,28 +1,82 @@
-# DCVワンクリック接続
+# DCV接続とポータルアカウント同期（v1.4.0）
 
-## 動作
-ユーザーはawsportalへ一度ログインします。EC2一覧の「DCV接続」を押すと、ポータルが対象EC2への権限を再確認し、暗号学的乱数から60秒・1回限りの認証トークンを発行します。
+Ubuntu 24.04（ARM64 / x86_64）の管理対象EC2で、ユーザー・グループ割り当てからOSユーザーと専用仮想デスクトップを自動準備します。ブラウザまたはDCVクライアントで接続し、EC2パスワードの入力・保存・同期は不要です。
 
-ブラウザーは `dcv://<host>:8443/?authToken=<token>#<session-id>` を開き、Amazon DCVネイティブクライアントを起動します。DCV ServerはExternal Authenticatorとしてawsportalの認証エンドポイントへトークンを照会します。成功時はポータルユーザー名を返し、トークンはその時点で使用済みにします。
+## 構成
 
-ユーザーがEC2/DCV用パスワードを入力する方式ではなく、ポータルにもDCVパスワードを保存しません。
+```mermaid
+flowchart TD
+  U[利用者] -->|ログイン・接続| P[awsportal]
+  P -->|権限・準備状態確認| D[ユーザー・グループ割り当て]
+  P -->|60秒・1回限りのトークン| U
+  U -->|HTTPS 8443・本人のセッション| C[EC2 DCV Server]
+  C -->|外部認証| A[EC2同期エージェント]
+  A -->|検証済みHTTPS・EC2専用認証キー| P
+  A -->|ユーザー作成・セッション開始／終了| C
+```
 
-## DCV Server設定
-各DCV Serverから、TLSで保護されたawsportalの `/dcv-auth` へ到達できるようにします。DCV ServerのExternal Authentication URLにはこのURLを設定します。設定キー・設定ファイルの場所はDCV ServerのOS/バージョンにより異なるため、導入時はAWS公式のExternal Authentication設定手順に従います。
+エージェントはrootで動作し、30秒周期でそのEC2のアカウントだけを取得します。DCVの外部認証先は同じEC2の `http://127.0.0.1:8444`。この仲介サービスが専用キーでポータルへHTTPS照会します。証明書検証は常に有効で、HTTPとリダイレクトへの認証情報転送は拒否します。
 
-認証エンドポイントは一般クライアント向けに公開せず、Security Group/FirewallでDCV Server群からだけ到達可能にする構成を推奨します。
+## アカウントと権限
 
-## セキュリティ
-- Token TTL: 60秒
-- Tokenは1回限り
-- DBには生Tokenを保存せずSHA-256値のみ保存
-- Tokenはユーザー、対象Instance、DCV Session IDに紐付け
-- 発行と消費を監査ログへ記録
-- Portalのログインセッションとは別Token
-- DCV接続権限がないInstanceにはTokenを発行しない
+| 項目 | 動作 |
+|---|---|
+| OSユーザー・セッション | `awp-u<ポータルユーザーID>` |
+| OS UID | `200000 + ID`。対応IDは1〜1,000,000 |
+| ホーム | `/home/awp-u<ID>`、モード0700 |
+| OSパスワード | ロック。ポータルのパスワードをEC2へ渡さない |
+| 割り当て | 個別権限とグループ権限の和集合。電源操作と接続は別権限 |
+| Portal Admin | 全有効インスタンスへの接続権限。sudo/rootは付与しない |
+| 無効・期限切れ・パスワード変更待ち | 同期対象から除外 |
+| インスタンス無効 | 全ユーザーを除外 |
+| 割り当て解除 | 残る権限がなければ本人のDCVと実行中プロセスを終了 |
+| データ | OSユーザーとホームを保持。再割り当てで同じUID・ホームを利用 |
+| 通信障害 | 新規接続拒否。同期成功から90秒経過後、管理対象セッションを終了 |
 
-## OSユーザー
-External AuthenticationはDCVへの認証をポータルへ委譲する仕組みです。実際のデスクトップセッションで使用するOSユーザー/セッションの準備は別途必要です。ユーザーに個別EC2パスワードを管理させない方針のため、OSユーザーはポータルのユーザー割当と同期して自動プロビジョニングする設計とします。
+管理対象以外のOSユーザー・DCVセッションは変更しません。EC2メタデータ（UserData・IAM資格情報）はrootとDCVシステムユーザーだけに許可し、デスクトップ利用者からのIPv4/IPv6アクセスを永続ファイアウォールで拒否します。EFSのマウントは別途必要です。標準DCV権限は所有者への画面・入力・音声出力のみで、ファイル転送、クリップボード、印刷、USB、スクリーンショットを拒否します。外向き通信制御は別途設定してください。
 
-## クライアント
-利用PCにはAmazon DCVネイティブクライアントを導入し、`dcv://` URL SchemeをDCVクライアントへ関連付けます。初回だけブラウザーが外部アプリ起動確認を表示する場合があります。
+接続時とトークン消費時に最新の権限を照会します。別EC2のキー・別ユーザーのセッション・再利用・期限切れ・古い同期報告は拒否します。既存セッションの終了は次の同期処理に依存します。
+
+## 導入手順
+
+1. Instance AdminでDCVホストと接続方法を保存します。ホストにはDNS名、IPv4、`ec2-public`、`ec2-private` を指定できます。EC2アドレス指定時は接続ごとにAWS APIから最新IPを取得し、停止・再起動によるIP変更に追従します。
+2. EC2専用認証キーを保存します。一度だけ表示し、DBにはSHA-256ハッシュのみ保存します。再発行すると旧キーと未使用接続トークンが失効します。
+3. リリースアーカイブを対象Ubuntu 24.04へ展開し、rootで `bash dcv/install.sh` を実行します。DCV・Xdcv・Web Viewer・Xfce・systemdサービスを導入します。既存dcv.confはバックアップして専用構成に置き換えるため、共有DCV環境では設定を統合してから適用してください。
+4. `/etc/awsportal-dcv/config.json` をroot所有・0600で作成します。
+
+```json
+{
+  "portal_url": "https://portal.company.example",
+  "instance_id": "i-0123456789abcdef0",
+  "token": "管理画面で発行した64桁の認証キー",
+  "ca_file": "/etc/awsportal-dcv/company-ca.pem"
+}
+```
+
+公開CAの場合は `ca_file` を省略できます。キーは当該EC2の同期・DCV認証だけに使用できます。
+
+```bash
+sudo chown root:root /etc/awsportal-dcv/config.json
+sudo chmod 600 /etc/awsportal-dcv/config.json
+sudo systemctl enable --now awsportal-dcv-agent
+sudo systemctl status awsportal-dcv-agent --no-pager
+sudo dcv list-sessions
+```
+
+5. SGに利用端末からのTCP8443を許可します。ポータルAPIはDCV EC2からだけ到達できるHTTPS経路で公開し、信頼できるリバースプロキシでTLSを終端し、Authorizationを引き継いでください。22/3389の開放・利用者へのSSM権限付与は不要です。
+6. ユーザー／グループを割り当て、準備済みユーザーIDを確認して接続します。ネイティブ方式では利用端末へのDCVクライアント導入が必要です。
+
+## ラボの検証
+
+`lab/create.sh` はDCV構成を含む新品のEC2を作成します。既存スタックへの上書きは拒否します。UserDataは更新だけでは再実行されないため、旧ラボは廃棄して作り直してください。
+
+`lab/test-dcv.sh` は管理者のSSMを使い、DCVサービス、labdebugのOSユーザーと仮想セッション、実際のポータルトークンによるHTTPS外部認証、再利用拒否を検証します。利用者へSSM権限を付与するものではありません。
+
+DCVの表示用証明書は自己署名です。表示先URLを一度開き、ラボEC2であることを確認して証明書を許可した後、ポータルから接続してください。内部認証は専用CAで検証します。この内部証明書は7日間有効な一時試験用です。画面描画・マウス・キーボード操作は利用端末で最終確認してください。
+
+## 公式仕様
+
+- [DCV外部認証](https://docs.aws.amazon.com/dcv/latest/adminguide/external-authentication.html)
+- [Linuxへの導入](https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-server.html)
+- [仮想セッション作成](https://docs.aws.amazon.com/dcv/latest/adminguide/managing-sessions-start.html)
+- [セッション権限](https://docs.aws.amazon.com/dcv/latest/adminguide/security-authorization-file-create-permission.html)

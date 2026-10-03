@@ -1,7 +1,10 @@
-# DCV設定
+# DCV
 
-normal-user.perm は一般ユーザー、admin.perm は管理者向けの権限ベースラインです。
+v1.4.0からUbuntu 24.04 ARM64/x86_64のDCV自動導入、ポータル割り当てに連動するOSユーザー・仮想セッション同期に対応します。
 
-ワンクリック接続ではDCV ServerのExternal Authenticatorをawsportalの /dcv-auth に設定します。詳細は docs/07-DCVワンクリック接続.md を参照してください。
+- `install.sh`: DCV / Xdcv / Web Viewer / Xfceとsystemdサービス
+- `agent.py`: root専用の同期・外部認証仲介。EC2専用キーと検証済みHTTPSを使用
+- `desktop.sh`: 本人の権限でXfceを起動
+- `test_agent.py`: 作成・終了・再割り当て・既存ユーザー保護・通信障害の自動テスト
 
-本番適用前に、使用するAmazon DCV Serverバージョンでpermission名とExternal Authentication設定を必ず検証してください。
+導入・設定・権限・構成図は [DCV接続手順](../docs/07-DCVワンクリック接続.md) を参照してください。既存環境へはdcv.confとSG設定を確認して適用します。

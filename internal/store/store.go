@@ -44,10 +44,10 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.DB.Close() }
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema); e != nil {
+	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema); e != nil {
 		return e
 	}
-	for _, q := range []string{"ALTER TABLE proxy_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'domain'", "ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"} {
+	for _, q := range []string{"ALTER TABLE instances ADD COLUMN dcv_connect_mode TEXT NOT NULL DEFAULT 'native'", "ALTER TABLE proxy_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'domain'", "ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"} {
 		if _, e := s.DB.ExecContext(ctx, q); e != nil && !strings.Contains(e.Error(), "duplicate column name") {
 			return e
 		}
@@ -149,10 +149,42 @@ func (s *Store) IssueDCVToken(ctx context.Context, u User, awsID, tokenHash stri
 	if err != nil {
 		return x, err
 	}
+	managed, ready, _, e := s.DCVConnection(ctx, awsID, u.ID, time.Now())
+	if e != nil {
+		return x, e
+	}
+	if managed {
+		if !ready {
+			return x, fmt.Errorf("DCV session is not ready")
+		}
+		x.DCVSessionID = DCVIdentity(u.ID)
+	}
+	accounts, e := s.DCVAccounts(ctx, awsID, time.Now())
+	if e != nil {
+		return x, e
+	}
+	allowed := false
+	for _, account := range accounts {
+		if account.UserID == u.ID {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return x, fmt.Errorf("DCV access denied")
+	}
 	_, err = s.DB.ExecContext(ctx, "INSERT INTO dcv_tokens(token_hash,user_id,instance_id,session_id,expires_at) VALUES(?,?,?,?,?)", tokenHash, u.ID, x.ID, x.DCVSessionID, expires.Unix())
 	return x, err
 }
 func (s *Store) ConsumeDCVToken(ctx context.Context, tokenHash, sessionID string, now time.Time) (string, bool) {
+	return s.consumeDCVToken(ctx, tokenHash, sessionID, "", now)
+}
+func (s *Store) ConsumeInstanceDCVToken(ctx context.Context, tokenHash, sessionID, awsID string, now time.Time) (string, bool) {
+	if awsID == "" {
+		return "", false
+	}
+	return s.consumeDCVToken(ctx, tokenHash, sessionID, awsID, now)
+}
+func (s *Store) consumeDCVToken(ctx context.Context, tokenHash, sessionID, awsID string, now time.Time) (string, bool) {
 	tx, e := s.DB.BeginTx(ctx, nil)
 	if e != nil {
 		return "", false
@@ -160,11 +192,19 @@ func (s *Store) ConsumeDCVToken(ctx context.Context, tokenHash, sessionID string
 	defer tx.Rollback()
 	var id int64
 	var username string
+	var uid int64
+	var managed bool
 	var expires int64
 	var used sql.NullInt64
-	e = tx.QueryRowContext(ctx, `SELECT t.id,u.username,t.expires_at,t.used_at FROM dcv_tokens t JOIN users u ON u.id=t.user_id JOIN instances i ON i.id=t.instance_id WHERE t.token_hash=? AND t.session_id=? AND u.enabled=1 AND i.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id))`, tokenHash, sessionID, now.Unix()).Scan(&id, &username, &expires, &used)
+	e = tx.QueryRowContext(ctx, `SELECT t.id,u.username,t.expires_at,t.used_at,u.id,EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id) FROM dcv_tokens t JOIN users u ON u.id=t.user_id JOIN instances i ON i.id=t.instance_id WHERE t.token_hash=? AND t.session_id=? AND ((?='' AND NOT EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id)) OR (?<>'' AND i.instance_id=? AND EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id))) AND (?='' OR EXISTS(SELECT 1 FROM dcv_agents a,json_each(a.ready_users) j WHERE a.instance_id=i.id AND a.last_seen>=? AND j.value=u.id)) AND u.enabled=1 AND i.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id))`, tokenHash, sessionID, awsID, awsID, awsID, awsID, now.Add(-90*time.Second).Unix(), now.Unix()).Scan(&id, &username, &expires, &used, &uid, &managed)
 	if e != nil || used.Valid || now.Unix() > expires {
 		return "", false
+	}
+	if managed {
+		username = DCVIdentity(uid)
+		if sessionID != username {
+			return "", false
+		}
 	}
 	res, e := tx.ExecContext(ctx, "UPDATE dcv_tokens SET used_at=? WHERE id=? AND used_at IS NULL", now.Unix(), id)
 	if e != nil {

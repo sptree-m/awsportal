@@ -14,6 +14,8 @@ jobs:
           cache: false
       - name: Install Git LFS for real integration tests
         run: sudo apt-get update -qq && sudo apt-get install -y git-lfs
+      - name: Install CloudFormation validation tools
+        run: pip install 'cfn-lint==1.40.2'
       - uses: hashicorp/setup-terraform@v3
       - run: bash scripts/test-all.sh
 

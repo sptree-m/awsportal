@@ -2,8 +2,9 @@
 set -Eeuo pipefail
 STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
+umask 077
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.3.0/awsportal-v1.3.0-linux-arm64.tar.gz}"
+BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.4.0/awsportal-v1.4.0-linux-arm64.tar.gz}"
 fail(){ rc=$?; echo; echo "RESULT: FAIL - create/verification failed (exit=$rc)"; exit "$rc"; }
 trap fail ERR
 
@@ -23,12 +24,26 @@ echo "[3/6] Instance type: $TYPE (ARM64 verified)"
 
 PASS="Lab-$(openssl rand -hex 12)-A1!"
 TOTP="$(openssl rand 20 | base32 | tr -d '=\n')"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 7 -subj '/CN=awsportal-lab-internal' -addext 'subjectAltName=IP:10.77.0.10' -keyout "$WORK/server.key" -out "$WORK/server.pem" >/dev/null 2>&1
+LAB_CERT="$(base64 -w0 "$WORK/server.pem")"
+LAB_KEY="$(base64 -w0 "$WORK/server.key")"
+AGENT_TOKEN="$(openssl rand -hex 32)"
+EXISTING="$(aws cloudformation list-stacks --region "$REGION" --query "length(StackSummaries[?StackName=='$STACK' && StackStatus!='DELETE_COMPLETE'])" --output text)"
+[[ "$EXISTING" == 0 ]] || {
+  echo "Stack $STACK already exists. Destroy it first; EC2 userdata does not reinstall DCV on update."
+  exit 1
+}
 echo "[4/6] Deploying $STACK"
-aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE" BinaryURL="$BINARY_URL"
+aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE" BinaryURL="$BINARY_URL" DCVAgentToken="$AGENT_TOKEN" LabTLSCert="$LAB_CERT" LabTLSKey="$LAB_KEY"
 
 PORTAL_ID="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`PortalInstanceId`].OutputValue' --output text)"
 TEST_ID="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`TestInstanceId`].OutputValue' --output text)"
 URL="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`PortalURL`].OutputValue' --output text)"
+STATE_DIR="$HOME/.awsportal-lab/$REGION/$STACK"
+mkdir -p "$STATE_DIR"
+aws ec2 describe-instances --region "$REGION" --instance-ids "$PORTAL_ID" "$TEST_ID" --output json > "$STATE_DIR/instances-created.json"
 echo "[5/6] EC2 verification"
 aws ec2 wait instance-running --region "$REGION" --instance-ids "$PORTAL_ID" "$TEST_ID"
 LIVE_ARCH="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$PORTAL_ID" "$TEST_ID" --query 'Reservations[].Instances[].Architecture' --output text)"
@@ -56,7 +71,7 @@ fi
 echo "[OK] /healthz: ok"
 
 echo "------------------------------------------------------------"
-echo "RESULT: PASS - ARM lab deployment and application health verified"
+echo "RESULT: PASS - ARM lab deployment and portal health verified; run lab/test-dcv.sh after enabling labdebug"
 echo "Portal URL: $URL"
 echo "username=labadmin"
 echo "password=$PASS"

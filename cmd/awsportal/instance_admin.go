@@ -1,12 +1,17 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"github.com/sptree-m/awsportal/internal/store"
 	"net/http"
 	"strconv"
 )
 
 func (a *app) instanceAdminPage(w http.ResponseWriter, r *http.Request) {
+	a.instanceAdminPageSecret(w, r, "")
+}
+func (a *app) instanceAdminPageSecret(w http.ResponseWriter, r *http.Request, secret string) {
 	u := r.Context().Value("user").(store.User)
 	if u.Role != "portal_admin" {
 		http.Error(w, "管理者のみ実行できます", 403)
@@ -32,7 +37,7 @@ func (a *app) instanceAdminPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB error", 500)
 		return
 	}
-	a.renderView(w, r, "instance-admin.html", "instance-admin-live", "instance-admin-live", map[string]any{"User": u, "Instances": xs, "Users": users, "Groups": groups, "Members": members})
+	a.renderView(w, r, "instance-admin.html", "instance-admin-live", "instance-admin-live", map[string]any{"User": u, "Instances": xs, "Users": users, "Groups": groups, "Members": members, "DCVSecret": secret})
 }
 func (a *app) instanceAdminChange(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value("user").(store.User)
@@ -47,7 +52,16 @@ func (a *app) instanceAdminChange(w http.ResponseWriter, r *http.Request) {
 	op := r.FormValue("operation")
 	id := r.FormValue("instance_id")
 	var e error
+	secret := ""
 	switch op {
+	case "dcv-config":
+		raw := make([]byte, 32)
+		if _, e = rand.Read(raw); e != nil {
+			http.Error(w, "生成失敗", 500)
+			return
+		}
+		secret = hex.EncodeToString(raw)
+		e = a.db.ConfigureDCV(r.Context(), u, id, r.FormValue("dcv_host"), r.FormValue("dcv_mode"), secret)
 	case "disable", "enable":
 		e = a.db.SetInstanceEnabled(r.Context(), u, id, op == "enable")
 	case "assign", "unassign":
@@ -84,6 +98,11 @@ func (a *app) instanceAdminChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.db.Audit(r.Context(), u.Username, "instance.admin."+op, id, "ok", detail)
+	if secret != "" {
+		w.Header().Set("Cache-Control", "no-store")
+		a.instanceAdminPageSecret(w, r, secret)
+		return
+	}
 	if r.Header.Get("HX-Request") == "true" {
 		a.instanceAdminPage(w, r)
 		return
