@@ -76,7 +76,8 @@
 | Outbound Allowlist / Firewall | ③ | Terraformは443/0.0.0.0/0のbaseline。承認済みFirewall/Proxyへの制限は未実装。 |
 | CloudTrail / VPC Flow Logs / 中央ログ | ④ | docs/03の本番要件だがTerraform実装なし。 |
 | Proxy管理機能 | ② | UI/認証付きHTTP転送・HTTPS CONNECT・許可/拒否ルールを実装。実ネットワーク/利用ツールは未検証。docs/12-proxy.md。 |
-| HTTPS内部メソッド/URL検査・直接通信の迂回防止 | ④ | TLS検査は対象外。利用EC2の直接外向き通信制限は別途必要。 |
+| EC2 IP/CIDR outbound管理 | ② | Portal Adminが専用SGを確認・適用。IPv4/IPv6、TCP/UDP、ポート範囲。実機未確認。docs/13-egress.md。 |
+| HTTPS内部メソッド/URL検査 | ④ | TLS検査は対象外。 |
 
 ## 今回の監査で修正した不具合・不足
 

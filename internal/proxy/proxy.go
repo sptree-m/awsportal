@@ -23,7 +23,7 @@ type Handler struct {
 }
 
 func New(db *store.Store) *Handler {
-	return &Handler{DB: db, slots: make(chan struct{}, 64), dial: publicDial, transport: &http.Transport{Proxy: nil, DialContext: publicDial, DisableKeepAlives: true, ResponseHeaderTimeout: 20 * time.Second, MaxResponseHeaderBytes: 1 << 20}}
+	return &Handler{DB: db, slots: make(chan struct{}, 64), transport: &http.Transport{Proxy: nil, DialContext: publicDial, DisableKeepAlives: true, ResponseHeaderTimeout: 20 * time.Second, MaxResponseHeaderBytes: 1 << 20}}
 }
 
 var blocked = []string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "::/96", "::ffff:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/23", "2002::/16", "fc00::/7", "fe80::/10", "ff00::/8"}
@@ -44,7 +44,13 @@ func PublicIP(ip net.IP) bool {
 	}
 	return true
 }
+
+var errPolicyDenied = errors.New("destination policy denied")
+
 func publicDial(ctx context.Context, network, address string) (net.Conn, error) {
+	return checkedDial(ctx, network, address, nil)
+}
+func checkedDial(ctx context.Context, network, address string, check func([]netip.Addr) bool) (net.Conn, error) {
 	host, port, e := net.SplitHostPort(address)
 	if e != nil {
 		return nil, e
@@ -58,6 +64,19 @@ func publicDial(ctx context.Context, network, address string) (net.Conn, error) 
 	for _, ip := range ips {
 		if !PublicIP(ip) {
 			return nil, errors.New("non-public destination")
+		}
+	}
+	if check != nil {
+		addresses := []netip.Addr{}
+		for _, ip := range ips {
+			a, ok := netip.AddrFromSlice(ip)
+			if !ok {
+				return nil, errPolicyDenied
+			}
+			addresses = append(addresses, a.Unmap())
+		}
+		if !check(addresses) {
+			return nil, errPolicyDenied
 		}
 	}
 	var last error
@@ -135,7 +154,9 @@ func (p *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	port = strconv.Itoa(n)
-	if _, e = store.CanonicalDomain(host); e != nil || !p.DB.ProxyAllowed(r.Context(), u, host, port, r.Method) {
+	_, domainErr := store.CanonicalDomain(host)
+	_, ipErr := netip.ParseAddr(host)
+	if (domainErr != nil && ipErr != nil) || (!p.DB.ProxyAllowed(r.Context(), u, host, port, r.Method) && !p.DB.HasProxyCIDRRule(r.Context(), u, port, r.Method)) {
 		p.DB.Audit(r.Context(), u.Username, "proxy.request", net.JoinHostPort(host, port), "deny", r.Method)
 		http.Error(w, "destination denied", 403)
 		return
@@ -143,11 +164,21 @@ func (p *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	audit := func(result string) {
 		p.DB.Audit(r.Context(), u.Username, "proxy.request", net.JoinHostPort(host, port), result, r.Method)
 	}
+	dial := p.dial
+	if dial == nil {
+		dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+			return checkedDial(ctx, network, address, func(ips []netip.Addr) bool { return p.DB.ProxyResolvedAllowed(ctx, u, host, ips, port, r.Method) })
+		}
+	}
 	if r.Method == "CONNECT" {
-		upstream, e := p.dial(r.Context(), "tcp", net.JoinHostPort(host, port))
+		upstream, e := dial(r.Context(), "tcp", net.JoinHostPort(host, port))
 		if e != nil {
 			audit("deny")
-			http.Error(w, "destination unavailable", 502)
+			status := 502
+			if errors.Is(e, errPolicyDenied) {
+				status = 403
+			}
+			http.Error(w, "destination unavailable", status)
 			return
 		}
 		defer upstream.Close()
@@ -194,10 +225,17 @@ func (p *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	out.Header = r.Header.Clone()
 	stripHop(out.Header)
 	out.Body = http.MaxBytesReader(w, r.Body, 32<<20)
-	resp, e := p.transport.RoundTrip(out)
+	tr := p.transport.Clone()
+	tr.DialContext = dial
+	defer tr.CloseIdleConnections()
+	resp, e := tr.RoundTrip(out)
 	if e != nil {
 		audit("deny")
-		http.Error(w, "upstream unavailable", 502)
+		status := 502
+		if errors.Is(e, errPolicyDenied) {
+			status = 403
+		}
+		http.Error(w, "upstream unavailable", status)
 		return
 	}
 	defer resp.Body.Close()

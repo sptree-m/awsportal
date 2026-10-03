@@ -39,6 +39,8 @@ type session struct {
 }
 type app struct {
 	db       *store.Store
+	egress   awsapi.EgressController
+	egressMu sync.Mutex
 	ec2      awsapi.Controller
 	cost     awsapi.CostReporter
 	tpl      *template.Template
@@ -60,7 +62,7 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	a := &app{db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
+	a := &app{db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), egress: awsapi.NewEgress(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
 	go a.scheduler(ctx)
 	if addr := env("AWSPORTAL_PROXY_ADDR", ""); addr != "" {
 		host, _, err := net.SplitHostPort(addr)
@@ -104,6 +106,8 @@ func main() {
 	mux.HandleFunc("POST /admin/users/{username}/disable", a.require(a.adminDisableUser))
 	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
 	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
+	mux.HandleFunc("GET /admin/egress", a.require(a.egressPage))
+	mux.HandleFunc("POST /admin/egress", a.require(a.egressChange))
 	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
 	mux.HandleFunc("POST /admin/proxy", a.require(a.proxyAdminChange))
 	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))

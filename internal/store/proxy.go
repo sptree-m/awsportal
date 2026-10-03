@@ -7,15 +7,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type ProxyRule struct {
-	ID, SubjectID                                        int64
-	Name, Scope, Subject, Domain, Ports, Methods, Effect string
-	Enabled                                              bool
+	ID, SubjectID                                              int64
+	Name, Scope, Subject, Domain, Ports, Methods, Effect, Kind string
+	Enabled                                                    bool
 }
 type ProxyCredential struct {
 	ID, UserID, Expires int64
@@ -59,7 +60,17 @@ func NormalizeProxyRule(r ProxyRule) (ProxyRule, error) {
 	if len(r.Name) < 1 || len(r.Name) > 80 {
 		return r, fmt.Errorf("name required")
 	}
-	r.Domain, e = CanonicalDomain(r.Domain)
+	if r.Kind == "" {
+		r.Kind = "domain"
+	}
+	switch r.Kind {
+	case "domain":
+		r.Domain, e = CanonicalDomain(r.Domain)
+	case "cidr":
+		r.Domain, e = NormalizeCIDR(r.Domain)
+	default:
+		e = fmt.Errorf("destination kind")
+	}
 	if e != nil {
 		return r, e
 	}
@@ -115,9 +126,9 @@ func (s *Store) SaveProxyRule(ctx context.Context, r ProxyRule) error {
 		}
 	}
 	if r.ID == 0 {
-		_, e = s.DB.ExecContext(ctx, "INSERT INTO proxy_rules(name,scope,subject_id,domain,ports,methods,effect,enabled) VALUES(?,?,?,?,?,?,?,?)", r.Name, r.Scope, r.SubjectID, r.Domain, r.Ports, r.Methods, r.Effect, r.Enabled)
+		_, e = s.DB.ExecContext(ctx, "INSERT INTO proxy_rules(name,scope,subject_id,domain,ports,methods,effect,enabled,kind) VALUES(?,?,?,?,?,?,?,?,?)", r.Name, r.Scope, r.SubjectID, r.Domain, r.Ports, r.Methods, r.Effect, r.Enabled, r.Kind)
 	} else {
-		_, e = s.DB.ExecContext(ctx, "UPDATE proxy_rules SET name=?,scope=?,subject_id=?,domain=?,ports=?,methods=?,effect=?,enabled=? WHERE id=?", r.Name, r.Scope, r.SubjectID, r.Domain, r.Ports, r.Methods, r.Effect, r.Enabled, r.ID)
+		_, e = s.DB.ExecContext(ctx, "UPDATE proxy_rules SET name=?,scope=?,subject_id=?,domain=?,ports=?,methods=?,effect=?,enabled=?,kind=? WHERE id=?", r.Name, r.Scope, r.SubjectID, r.Domain, r.Ports, r.Methods, r.Effect, r.Enabled, r.Kind, r.ID)
 	}
 	return e
 }
@@ -126,7 +137,7 @@ func (s *Store) DeleteProxyRule(ctx context.Context, id int64) error {
 	return e
 }
 func (s *Store) ProxyRules(ctx context.Context) ([]ProxyRule, error) {
-	rows, e := s.DB.QueryContext(ctx, `SELECT p.id,p.name,p.scope,p.subject_id,COALESCE(CASE p.scope WHEN 'user' THEN u.username WHEN 'group' THEN g.name ELSE '全員' END,'削除済み'),p.domain,p.ports,p.methods,p.effect,p.enabled FROM proxy_rules p LEFT JOIN users u ON p.scope='user' AND u.id=p.subject_id LEFT JOIN groups g ON p.scope='group' AND g.id=p.subject_id ORDER BY p.id`)
+	rows, e := s.DB.QueryContext(ctx, `SELECT p.id,p.name,p.scope,p.subject_id,COALESCE(CASE p.scope WHEN 'user' THEN u.username WHEN 'group' THEN g.name ELSE '全員' END,'削除済み'),p.domain,p.ports,p.methods,p.effect,p.enabled,p.kind FROM proxy_rules p LEFT JOIN users u ON p.scope='user' AND u.id=p.subject_id LEFT JOIN groups g ON p.scope='group' AND g.id=p.subject_id ORDER BY p.id`)
 	if e != nil {
 		return nil, e
 	}
@@ -134,7 +145,7 @@ func (s *Store) ProxyRules(ctx context.Context) ([]ProxyRule, error) {
 	out := []ProxyRule{}
 	for rows.Next() {
 		var r ProxyRule
-		if e = rows.Scan(&r.ID, &r.Name, &r.Scope, &r.SubjectID, &r.Subject, &r.Domain, &r.Ports, &r.Methods, &r.Effect, &r.Enabled); e != nil {
+		if e = rows.Scan(&r.ID, &r.Name, &r.Scope, &r.SubjectID, &r.Subject, &r.Domain, &r.Ports, &r.Methods, &r.Effect, &r.Enabled, &r.Kind); e != nil {
 			return nil, e
 		}
 		out = append(out, r)
@@ -157,29 +168,62 @@ func csvContains(csv, v string) bool {
 	return false
 }
 func (s *Store) ProxyAllowed(ctx context.Context, u User, host, port, method string) bool {
+	return s.ProxyResolvedAllowed(ctx, u, host, nil, port, method)
+}
+
+// Evaluate each resolved IP: an allow for the domain OR IP is needed; either deny wins.
+func (s *Store) ProxyResolvedAllowed(ctx context.Context, u User, host string, ips []netip.Addr, port, method string) bool {
 	if !s.ProxyEnabled(ctx) {
 		return false
 	}
-	rows, e := s.DB.QueryContext(ctx, `SELECT domain,ports,methods,effect FROM proxy_rules WHERE enabled=1 AND (scope='all' OR (scope='user' AND subject_id=?) OR (scope='group' AND subject_id IN (SELECT group_id FROM group_members WHERE user_id=?)))`, u.ID, u.ID)
+	rows, e := s.DB.QueryContext(ctx, `SELECT domain,ports,methods,effect,kind FROM proxy_rules WHERE enabled=1 AND (scope='all' OR (scope='user' AND subject_id=?) OR (scope='group' AND subject_id IN (SELECT group_id FROM group_members WHERE user_id=?)))`, u.ID, u.ID)
 	if e != nil {
 		return false
 	}
 	defer rows.Close()
-	allow := false
+	type rule struct{ target, effect, kind string }
+	rules := []rule{}
 	for rows.Next() {
-		var d, p, m, f string
-		if rows.Scan(&d, &p, &m, &f) != nil {
+		var d, p, m, f, k string
+		if rows.Scan(&d, &p, &m, &f, &k) != nil {
 			return false
 		}
-		if DomainMatches(d, host) && csvContains(p, port) && csvContains(m, method) {
-			if f == "deny" {
-				return false
-			}
-			allow = true
+		if csvContains(p, port) && csvContains(m, method) {
+			rules = append(rules, rule{d, f, k})
 		}
 	}
-	return rows.Err() == nil && allow
+	if rows.Err() != nil {
+		return false
+	}
+	if len(ips) == 0 {
+		if ip, e := netip.ParseAddr(host); e == nil {
+			ips = []netip.Addr{ip.Unmap()}
+		} else {
+			ips = []netip.Addr{{}}
+		}
+	}
+	for _, ip := range ips {
+		allow := false
+		for _, r := range rules {
+			match := r.kind == "domain" && DomainMatches(r.target, host)
+			if r.kind == "cidr" && ip.IsValid() {
+				p, e := netip.ParsePrefix(r.target)
+				match = e == nil && p.Contains(ip.Unmap())
+			}
+			if match {
+				if r.effect == "deny" {
+					return false
+				}
+				allow = true
+			}
+		}
+		if !allow {
+			return false
+		}
+	}
+	return true
 }
+
 func tokenHash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
@@ -228,4 +272,22 @@ func (s *Store) ProxyCredentials(ctx context.Context) ([]ProxyCredential, error)
 func (s *Store) RevokeProxyCredential(ctx context.Context, id int64) error {
 	_, e := s.DB.ExecContext(ctx, "DELETE FROM proxy_credentials WHERE id=?", id)
 	return e
+}
+
+func (s *Store) HasProxyCIDRRule(ctx context.Context, u User, port, method string) bool {
+	rows, e := s.DB.QueryContext(ctx, `SELECT ports,methods FROM proxy_rules WHERE enabled=1 AND kind='cidr' AND effect='allow' AND (scope='all' OR (scope='user' AND subject_id=?) OR (scope='group' AND subject_id IN (SELECT group_id FROM group_members WHERE user_id=?)))`, u.ID, u.ID)
+	if e != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p, m string
+		if rows.Scan(&p, &m) != nil {
+			return false
+		}
+		if csvContains(p, port) && csvContains(m, method) {
+			return true
+		}
+	}
+	return false
 }
