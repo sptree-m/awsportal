@@ -13,7 +13,7 @@ case "$(dpkg --print-architecture)" in
   *) echo 'Unsupported architecture'; exit 1;;
 esac
 apt-get update
-apt-get install -y curl ca-certificates python3 xfce4 xfce4-terminal dbus-x11 xauth fonts-noto-cjk
+apt-get install -y curl ca-certificates python3 xfce4 xfce4-terminal dbus-x11 xauth fonts-noto-cjk iptables iptables-persistent
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 curl -fL --retry 5 "https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2404-$ARCH.tgz" -o "$WORK/dcv.tgz"
@@ -22,6 +22,19 @@ mapfile -t PACKAGES < <(find "$WORK" -type f \( -name 'nice-dcv-server_*.deb' -o
 [[ "${#PACKAGES[@]}" == 3 ]] || { echo 'Missing DCV packages'; exit 1; }
 apt-get install -y "${PACKAGES[@]}"
 usermod -aG video dcv
+# EC2 UserData and instance-role credentials must not be readable by desktop users.
+# IMDSv2 alone does not distinguish a root process from an unprivileged local user.
+for TOOL in iptables ip6tables; do
+  if [[ "$TOOL" == iptables ]]; then TARGET=169.254.169.254/32; else TARGET=fd00:ec2::254/128; fi
+  "$TOOL" -N AWSPORTAL_IMDS 2>/dev/null || "$TOOL" -L AWSPORTAL_IMDS >/dev/null
+  "$TOOL" -F AWSPORTAL_IMDS
+  "$TOOL" -A AWSPORTAL_IMDS -m owner --uid-owner 0 -j RETURN
+  "$TOOL" -A AWSPORTAL_IMDS -m owner --uid-owner "$(id -u dcv)" -j RETURN
+  "$TOOL" -A AWSPORTAL_IMDS -j REJECT
+  "$TOOL" -C OUTPUT -d "$TARGET" -j AWSPORTAL_IMDS 2>/dev/null || \
+    "$TOOL" -I OUTPUT 1 -d "$TARGET" -j AWSPORTAL_IMDS
+done
+netfilter-persistent save
 install -d -m 0700 /etc/awsportal-dcv /var/lib/awsportal-dcv
 install -d /usr/local/libexec
 install -m 0755 "$HERE/agent.py" /usr/local/libexec/awsportal-dcv-agent
