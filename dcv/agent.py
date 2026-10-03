@@ -135,11 +135,15 @@ class Agent:
                 raise ValueError("invalid or duplicate account manifest")
             desired[name] = account["user_id"]
         # Revocation precedes provisioning. Never delete the home or the UID mapping.
+        failures = 0
         for name, account in list(self.managed.items()):
             if name not in desired:
-                self.revoke(name, account["user_id"])
+                try:
+                    self.revoke(name, account["user_id"])
+                except (RuntimeError, ValueError, KeyError, OSError, subprocess.TimeoutExpired):
+                    failures += 1
+                    logging.error("DCV revocation failed for user ID %s", account["user_id"])
         ready = []
-        failures = 0
         for name, user_id in desired.items():
             try:
                 self.ensure_account(name, user_id)
@@ -154,7 +158,7 @@ class Agent:
             except (RuntimeError, ValueError, KeyError, OSError, subprocess.TimeoutExpired):
                 failures += 1
                 logging.error("DCV provisioning failed for user ID %s", user_id)
-        return ready, ("%d account(s) failed provisioning" % failures if failures else "")
+        return ready, ("%d account(s) failed synchronization" % failures if failures else "")
 
     def sync(self):
         with self.lock:
@@ -165,13 +169,18 @@ class Agent:
                 ready, error = self.reconcile(manifest["accounts"])
                 self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": ready, "error": error}).encode())
                 self.last_ok = time.monotonic()
+                return not bool(error)
             except Exception:
                 # A network outage never creates users or grants local access.
                 # Existing managed sessions are closed after a bounded 90-second grace.
                 logging.error("DCV synchronization failed")
                 if time.monotonic() - self.last_ok >= 90:
                     for name, account in self.managed.items():
-                        self.revoke(name, account["user_id"])
+                        try:
+                            self.revoke(name, account["user_id"])
+                        except Exception:
+                            logging.error("Emergency DCV revocation failed for user ID %s", account["user_id"])
+                return False
 
     def authenticate(self, body):
         form = urllib.parse.parse_qs(body.decode(), strict_parsing=True)
@@ -228,7 +237,8 @@ def main():
     with (agent.root / "agent.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if args.once:
-            agent.sync()
+            if not agent.sync():
+                raise SystemExit("DCV synchronization failed")
             return
         server = broker(agent)
         threading.Thread(target=server.serve_forever, daemon=True).start()

@@ -111,6 +111,19 @@ class AgentTest(unittest.TestCase):
         self.a.sync()
         self.assertFalse(self.commands)
 
+    def test_one_broken_account_does_not_prevent_other_revocations(self):
+        self.a.reconcile([self.account(1), self.account(2)])
+        # Simulate an operator modifying one account outside the agent.
+        self.users["awp-u1"].pw_gecos = "unmanaged"
+        ready, error = self.a.reconcile([])
+        self.assertFalse(ready)
+        self.assertTrue(error)
+        self.assertNotIn("awp-u2", self.sessions)
+
+    def test_single_sync_reports_failure(self):
+        self.a.request = lambda *args: (_ for _ in ()).throw(OSError("offline"))
+        self.assertFalse(self.a.sync())
+
     def test_broker_rejects_wrong_identity_and_never_follows_redirect(self):
         self.a.request = lambda *args: b'<auth result="yes"><username>root</username></auth>'
         with self.assertRaises(ValueError):
