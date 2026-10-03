@@ -38,6 +38,14 @@ Resources:
     Properties:
       AssumeRolePolicyDocument: {Version: '2012-10-17', Statement: [{Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: 'sts:AssumeRole'}]}
       ManagedPolicyArns: [arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore]
+      Policies:
+        - PolicyName: DCVLicenseRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: {Fn::Sub: 'arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*'}
   TestProfile: {Type: AWS::IAM::InstanceProfile, Properties: {Roles: [{Ref: TestRole}]}}
   TestSG:
     Type: AWS::EC2::SecurityGroup

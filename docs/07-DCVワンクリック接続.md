@@ -66,11 +66,13 @@ sudo dcv list-sessions
 5. SGに利用端末からのTCP8443を許可します。ポータルAPIはDCV EC2からだけ到達できるHTTPS経路で公開し、信頼できるリバースプロキシでTLSを終端し、Authorizationを引き継いでください。22/3389の開放・利用者へのSSM権限付与は不要です。
 6. ユーザー／グループを割り当て、準備済みユーザーIDを確認して接続します。ネイティブ方式では利用端末へのDCVクライアント導入が必要です。
 
+EC2のIAMロールには、当該リージョンの `arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*` に対する `s3:GetObject` を許可してください。DCVからS3へのHTTPS到達性も必要です。ラボではこの読み取り権限を設定済みで、S3バケットは新規作成しません。
+
 ## ラボの検証
 
 `lab/create.sh` はDCV構成を含む新品のEC2を作成します。既存スタックへの上書きは拒否します。UserDataは更新だけでは再実行されないため、旧ラボは廃棄して作り直してください。
 
-`lab/test-dcv.sh` は管理者のSSMを使い、DCVサービス、labdebugのOSユーザーと仮想セッション、実際のポータルトークンによるHTTPS外部認証、再利用拒否を検証します。利用者へSSM権限を付与するものではありません。
+`lab/test-dcv.sh` は管理者のSSMを使い、DCVサービスとライセンス有効状態、labdebugのOSユーザーと仮想セッション、実際のポータルトークンによるHTTPS外部認証、再利用拒否を検証します。利用者へSSM権限を付与するものではありません。
 
 DCVの表示用証明書は自己署名です。表示先URLを一度開き、ラボEC2であることを確認して証明書を許可した後、ポータルから接続してください。内部認証は専用CAで検証します。この内部証明書は7日間有効な一時試験用です。画面描画・マウス・キーボード操作は利用端末で最終確認してください。
 
@@ -80,3 +82,5 @@ DCVの表示用証明書は自己署名です。表示先URLを一度開き、�
 - [Linuxへの導入](https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-server.html)
 - [仮想セッション作成](https://docs.aws.amazon.com/dcv/latest/adminguide/managing-sessions-start.html)
 - [セッション権限](https://docs.aws.amazon.com/dcv/latest/adminguide/security-authorization-file-create-permission.html)
+
+- [EC2のDCVライセンス設定](https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-license.html)

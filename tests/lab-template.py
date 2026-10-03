@@ -53,3 +53,9 @@ for name in ("TestInstance", "PortalInstance"):
 assert resources["TestInstance"]["Properties"]["IamInstanceProfile"] == {"Ref": "TestProfile"}
 assert resources["PortalAgentIngress"]["Properties"]["SourceSecurityGroupId"] == {"Ref": "TestSG"}
 print("PASS: CloudFormation dependency graph, substitutions and userdata shell syntax")
+
+license_policy = resources["TestRole"]["Properties"]["Policies"]
+assert license_policy == [{"PolicyName": "DCVLicenseRead", "PolicyDocument": {
+    "Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:GetObject",
+    "Resource": {"Fn::Sub": "arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*"}}]}}]
+print("PASS: EC2 DCV license role grants only regional license object reads")
