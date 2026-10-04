@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	awsapi "github.com/sptree-m/awsportal/internal/aws"
 	"github.com/sptree-m/awsportal/internal/mirror"
+	"github.com/sptree-m/awsportal/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -77,7 +80,22 @@ func TestBrowserConsole(t *testing.T) {
 	a.cost = browserCost{}
 	a.ec2 = &browserEC2{state: "stopped"}
 	a.sessions["browser-session"] = session{User: admin, Expires: time.Now().Add(time.Hour)}
+	if _, err := a.db.DB.Exec(`INSERT INTO groups(id,name) VALUES(99,'Shared pilot');INSERT INTO environments(id,name,mode,group_id,profile_id) VALUES(1,'Shared Analysis','shared',99,'shared-cpu-v1');`); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []store.User{admin, alice} {
+		id := strings.Repeat("a", 32)
+		if u.ID == alice.ID {
+			id = strings.Repeat("b", 32)
+		}
+		raw, _ := json.Marshal(store.JobMeasurement{JobID: id, UserID: u.ID, State: "RUNNING", Quality: "ok", CPUUsec: 1234, MemoryBytes: 4096, ReadBytes: 100, WriteBytes: 200})
+		if _, err := a.db.DB.Exec(`INSERT INTO managed_jobs SELECT id,?,1,?,'boot-test','RUNNING',1,0,?,? FROM instances WHERE instance_id='i-dev'`, id, u.ID, time.Now().Add(-2*time.Minute).Unix(), string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /environments", a.require(a.environmentPage))
+	mux.HandleFunc("GET /admin/environments", a.require(a.environmentAdminPage))
 	mux.HandleFunc("GET /", a.require(a.dashboard))
 	mux.HandleFunc("GET /instances", a.require(a.instancesPage))
 	mux.HandleFunc("GET /instances/{id}/row", a.require(a.instanceRow))

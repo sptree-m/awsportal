@@ -4,7 +4,7 @@
 
 ## この変更の範囲
 
-これは第1段階の接続・予約・HOME・計測基盤を追加する変更であり、二段階全体の完成版ではない。第1段階の公開受入も未完了。VERSIONは変更しない。本番へ自動反映しない。既存instancesは自動でOwnerを推定せずlegacyとして残す。
+これは第1段階の接続・予約・HOME・計測基盤を追加する変更であり、二段階全体の完成版ではない。第1段階の公開受入も未完了。本基盤PR単体ではVERSIONを変更しない。後続のJob計測変更と合わせて1.7.0-rc.1候補版を配布する（第1段階受入完了ではない）。本番へ自動反映しない。既存instancesは自動でOwnerを推定せずlegacyとして残す。
 
 | 領域 | この変更で追加したもの | 未完了・別変更が必要なもの |
 |---|---|---|
@@ -12,7 +12,7 @@
 | 固定Shared | 1環境1台、定員2人、要求の冪等性、原子的予約、単一HOME lease、controller再開 | 120秒予約TTLの自動整理、Workflow期限、複数controller fencing |
 | 割当 | CPU/Memory平均70%未満、5分窓、90秒鮮度、boot/sequence/generation、60秒warmup例外の記録 | 本番負荷による閾値・sample粒度の承認 |
 | DCV | Assignment限定manifest、本人EFS・session・policy証明、native token、旧API電源/接続/スケジュール迂回拒否 | AWS上のDCV実接続・EFS他人HOME遮断試験 |
-| Job/終了 | systemd user scopeラッパー、/procの保守的作業検出、切断保持、2段階の明示解放、idle15分の候補記録のみ | 完全なmanaged job台帳、cgroup CPU/Memory/I/O積算、プロセス分類の実機精査 |
+| Job/終了 | Job登録、cgroup v2 CPU/Memory/I/O raw計測、systemd user scopeラッパー、/procの保守的作業検出、切断保持、2段階の明示解放、idle15分の候補記録のみ | Memory時間積分・終了瞬間counter完全性、プロセス分類の実機精査 |
 | Metrics | Agentの30秒sample、実接続とsessionを別計測、永続S3出力queue・checksum・retry、重複再送排除 | Parquet出力、Storage容量/counter計測、30日Dashboard、履歴保持期間/圧縮 |
 | IaC | オプトインの固定EC2/User EFS/AP/Backup/S3/限定SG/限定Role module | Group EFS、scratch XFS quota、Dataset cache/manifest、CUR出力・保存設定 |
 | 第2段階 | 後方互換のrequest/assignment/generation契約とfeature境界 | 動的増設/drain/終了、請求配賦/照合、Windows Box Importは未実装 |
@@ -95,7 +95,7 @@ Stage 1では停止中EC2を要求から起動しない。管理者がIaC/AWS管
 5. 通信切断後は同じ要求から再接続する。席もHOMEも維持される。
 6. Jobを終え、作業を保存し、アプリを終了して「利用終了」を押す。RELEASINGはAgentの確認待ち。手動でDBからseatを削除しない。
 
-現在のプロセス分類は保守的で、通常アプリを残すと解放が保留される。認識済desktopプロセス名に依存するため、これを自動Terminateの最終安全証明として利用してはいけない。第2段階にはcgroup/job台帳と未分類作業検証が必要。
+現在のプロセス分類は保守的で、通常アプリを残すと解放が保留される。認識済desktopプロセス名に依存するため、これを自動Terminateの最終安全証明として利用してはいけない。Job/cgroupの追加・品質・既知制限は docs/19-release-1.7.0-rc.1.md を参照。第2段階には欠測/終了瞬間counterと未分類作業の実機検証が必要。
 
 ## 検証と受入の対応
 
@@ -128,7 +128,7 @@ Stage 1では停止中EC2を要求から起動しない。管理者がIaC/AWS管
 
 ## 次の変更単位
 
-1. 第1段階の残り：Personal EFS切替、Group EFS、cache/manifest/quota、完全Job/cgroup計測、Storage/Parquet/履歴、CUR、移行/復旧試験。
+1. 第1段階の残り：Personal EFS切替、Group EFS、cache/manifest/quota、Job/cgroupの実機検証と計測完全性、Storage/Parquet/履歴、CUR、移行/復旧試験。
 2. 第1段階のAWS受入と5営業日pilot。
 3. 第2段階：Provisioning/再照合を別PRで追加。
 4. 第2段階：drain/安全な終了を別PRで追加。まず判定のみ。

@@ -80,6 +80,21 @@ const assert=require('node:assert/strict');
  await userPage.locator('nav a[href="/"]').click();await userPage.waitForURL(base+'/');assert.equal(await userPage.locator('.brand strong').textContent(),brand);assert.equal(await userPage.locator('h1').textContent(),'研究環境ホーム');
  await page.locator('nav a[href="/manual"]').click();await page.waitForURL(base+'/manual');assert.match(await page.locator('#proxy-guide').textContent(),/https:\/\/proxy.company.example:3128/);assert.match(await page.locator('#git-guide').textContent(),/https:\/\/portal.company.example/);assert.match(await page.locator('.manual-content').textContent(),/研究環境の管理者/);
  assert.equal(documents,afterSaveDocuments,'navigation after save must remain boosted');
+ // Job history has owner boundaries and stays usable at desktop/mobile widths.
+ await userPage.goto(base+'/environments');
+ assert.equal(await userPage.getByText('a'.repeat(32),{exact:true}).count(),0);
+ assert.equal(await userPage.getByText('b'.repeat(32),{exact:true}).count(),1);
+ for(const path of ['/environments','/admin/environments']){
+  await page.goto(base+path);
+  assert.equal(await page.getByText('a'.repeat(32),{exact:true}).count(),1);
+  assert.equal(await page.getByText('b'.repeat(32),{exact:true}).count(),1);
+  assert.match(await page.locator('main').textContent(),/計測が古い/);
+  for(const [width,height] of [[1366,768],[1920,1080],[2560,1440],[3840,2160],[390,844]]){
+   await page.setViewportSize({width,height});
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`job history overflow at ${width} (${path})`);
+   if(process.env.AWSPORTAL_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/jobs-${path.includes('admin')?'admin':'user'}-${width}x${height}.png`,fullPage:true});
+  }
+ }
  await userContext.close();
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
  console.log('PASS: boosted navigation, repeated search, partial refresh, detail action/poll termination, idle traffic, errors, cost month/history URL, four desktop resolutions plus mobile logout, administrator-only instance disable/reactivate, user/group grants and effective user access, no external requests');

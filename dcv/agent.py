@@ -24,6 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from job_metrics import JobLedger, job_broker, TERMINAL
 
 
 FEATURES = frozenset("display keyboard mouse pointer audio-out audio-in clipboard-copy clipboard-paste file-download file-upload screenshot printer usb smartcard webcam gamepad stylus touch keyboard-sas webauthn-redirection extensions-client extensions-server unsupervised-access".split())
@@ -103,6 +104,8 @@ class Agent:
         self.previous_cpu = None
         self.last_ok = time.monotonic()
         self.lock = threading.Lock()
+        self.job_users = set()
+        self.jobs = JobLedger(self.root, self.boot_id, self.write_policy)
 
     def request(self, path, body=None, content_type="application/json"):
         req = urllib.request.Request(self.base + path, data=body, headers={
@@ -213,8 +216,11 @@ class Agent:
 
     def release_assignments(self, releases):
         closed = []
+        measured = self.jobs.sample()
         for account in releases:
             name = identity(account["user_id"])
+            if any(j["user_id"] == account["user_id"] and j["state"] not in TERMINAL for j in measured):
+                continue
             jobs, unknown = self.user_work(account["user_id"])
             if jobs or unknown:
                 continue
@@ -232,10 +238,14 @@ class Agent:
         cpu = 100 * (1 - (idle - self.previous_cpu[1]) / (total - self.previous_cpu[0])) if valid else 100
         self.previous_cpu = (total, idle)
         mem = {line.split(":")[0]: int(line.split()[1]) for line in pathlib.Path("/proc/meminfo").read_text().splitlines()}
+        measurements = self.jobs.sample()
         work = []
         for a in accounts + releases:
             name, uid = identity(a["user_id"]), a["user_id"]
             jobs, unknown = self.user_work(uid)
+            measured = [j for j in measurements if j["user_id"] == uid and j["state"] not in TERMINAL]
+            jobs = max(jobs, len(measured))
+            unknown = unknown or any(j["state"] == "UNKNOWN" for j in measured)
             session = self.describe(name)
             count = session.get("num-of-connections") if session else 0
             # An older DCV that cannot report real connections is unsuitable for
@@ -256,7 +266,8 @@ class Agent:
         self.write_policy(sequence_path, json.dumps({"boot_id": self.boot_id, "sequence": sequence}))
         return {"agent_version": 2, "generation": self.generation, "boot_id": self.boot_id, "sequence": sequence,
                 "observed_at": int(time.time()), "cpu": max(0, min(100, cpu)), "memory": 100 * (1 - mem["MemAvailable"] / mem["MemTotal"]),
-                "metrics_valid": valid, "storage_busy": False, "work": work, "closed_assignments": closed}
+                "metrics_valid": valid, "storage_busy": False, "work": work, "closed_assignments": closed,
+                "measurement_version": 1, "job_measurements": measurements}
 
     def validate_enforcement(self):
         # The global default is merged into every session, even if a local user
@@ -391,6 +402,7 @@ class Agent:
                 self.generation = environment.get("generation", 0)
                 self.write_policy(self.root / "environment.json", json.dumps({"shared": self.shared,"generation":self.generation}))
                 releases = environment.get("release", [])
+                self.job_users = {a["user_id"] for a in manifest["accounts"]} if self.shared else set()
                 self.releasing_names = {identity(a["user_id"]) for a in releases}
                 self.apply_policy(manifest["policy"])
                 ready, error = self.reconcile(manifest["accounts"])
@@ -399,6 +411,8 @@ class Agent:
                     closed = self.release_assignments(releases)
                     report.update(self.environment_report(manifest["accounts"], releases, closed))
                 self.request("/api/dcv/agent/heartbeat", json.dumps(report).encode())
+                if self.shared:
+                    self.jobs.acknowledge(report["job_measurements"])
                 self.last_ok = time.monotonic()
                 return not bool(error)
             except Exception:
@@ -477,6 +491,8 @@ def main():
             return
         server = broker(agent)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        jobs = job_broker(agent)
+        threading.Thread(target=jobs.serve_forever, daemon=True).start()
         while True:
             agent.sync()
             time.sleep(30)

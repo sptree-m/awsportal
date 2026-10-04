@@ -47,7 +47,8 @@ sudo cloud-init status --wait
 sudo systemctl is-active dcvserver
 sudo systemctl is-active awsportal-dcv-agent
 sudo python3 - <<'"'"'PY'"'"'
-import json, pathlib, subprocess, time, pwd
+import json, pathlib, subprocess, time, pwd, sys
+sys.path.insert(0, "/usr/local/libexec")
 config=json.loads(pathlib.Path("/etc/awsportal-dcv/config.json").read_text())
 import importlib.machinery, types
 m=types.ModuleType("agent")
@@ -70,7 +71,7 @@ for attempt in range(60):
                 print("PASS: native-only server configuration and Web Viewer removal (actual client connection requires manual test)")
                 baseline=pathlib.Path("/etc/dcv/awsportal-policy/enforced.perm").read_text()
                 assert "screenshot" in baseline and "clipboard-copy" in baseline, "FAIL: default capture protection missing"
-                for filename in ("/etc/dcv/dcv.conf", "/etc/dcv", "/etc/awsportal-dcv", "/etc/dcv/awsportal-policy", "/etc/dcv/awsportal-policy/enforced.perm", "/usr/local/libexec/awsportal-dcv-agent", "/etc/systemd/system/awsportal-dcv-agent.service"):
+                for filename in ("/etc/dcv/dcv.conf", "/etc/dcv", "/etc/awsportal-dcv", "/etc/dcv/awsportal-policy", "/etc/dcv/awsportal-policy/enforced.perm", "/usr/local/libexec/awsportal-dcv-agent", "/usr/local/libexec/job_metrics.py", "/usr/local/bin/awsportal-job", "/etc/systemd/system/awsportal-dcv-agent.service"):
                     writable=subprocess.run(["runuser","-u",debug["os_user"],"--","test","-w",filename],capture_output=True)
                     assert writable.returncode!=0, "FAIL: user can write protected DCV path"
                 for option in (["--reset-builtin"], ["--file","/etc/dcv/default.perm"]):
