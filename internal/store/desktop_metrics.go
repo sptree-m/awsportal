@@ -28,7 +28,7 @@ func recordDesktop(ctx context.Context, tx *sql.Tx, iid int64, r, previous Envir
 				if before.UserID != w.UserID || p == nil || p.Quality != "ok" {
 					continue
 				}
-				if previous.BootID != r.BootID || r.ObservedAt-previous.ObservedAt > 90 {
+				if previous.BootID != r.BootID || previous.Generation != r.Generation || previous.Sequence+1 != r.Sequence || r.ObservedAt <= previous.ObservedAt || r.ObservedAt-previous.ObservedAt > 90 {
 					quality = "gap"
 				} else if m.CounterEpoch != p.CounterEpoch || m.CPUUsec < p.CPUUsec || m.ReadBytes < p.ReadBytes || m.WriteBytes < p.WriteBytes {
 					quality = "counter_reset"

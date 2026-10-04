@@ -379,3 +379,18 @@ func TestCancelledImportCannotBeSubmittedByStaleWorker(t *testing.T) {
  if err=s.CancelImport(ctx,a,id);err!=nil{t.Fatal(err)}
  if err=s.MarkImportProvision(ctx,id,"");err==nil{t.Fatal("cancelled import submitted")}
 }
+
+func TestDesktopMeasurementGapNeverInventsCounterDelta(t *testing.T) {
+	s, _, us, _, now := sharedFixture(t)
+	ctx := context.Background()
+	before := EnvironmentReport{BootID: "boot", Generation: 1, Sequence: 1, ObservedAt: now.Unix(), Work: []UserWork{{UserID: us[0].ID, DesktopMeasurement: &DesktopMeasurement{Quality: "ok", CounterEpoch: "scope", CPUUsec: 10, ReadBytes: 10, WriteBytes: 10}}}}
+	after := EnvironmentReport{BootID: "boot", Generation: 1, Sequence: 3, ObservedAt: now.Add(30*time.Second).Unix(), Work: []UserWork{{UserID: us[0].ID, DesktopMeasurement: &DesktopMeasurement{Quality: "ok", CounterEpoch: "scope", CPUUsec: 20, ReadBytes: 20, WriteBytes: 20}}}}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil { t.Fatal(err) }
+	if err = recordDesktop(ctx, tx, 1, after, before); err != nil { tx.Rollback(); t.Fatal(err) }
+	if err = tx.Commit(); err != nil { t.Fatal(err) }
+	var quality string
+	var delta any
+	if err = s.DB.QueryRow(`SELECT quality,cpu_delta FROM desktop_samples WHERE sequence=3`).Scan(&quality, &delta); err != nil { t.Fatal(err) }
+	if quality != "gap" || delta != nil { t.Fatal(quality, delta) }
+}
