@@ -93,6 +93,13 @@ func (s *Store) SetDCVPolicy(ctx context.Context, admin User, id string, allowed
 		return e
 	}
 	defer tx.Rollback()
+	var occupied int
+	if e = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM environment_assignments ea JOIN instances i ON i.id=ea.instance_id WHERE i.instance_id=? AND ea.state!='RELEASED'`, id).Scan(&occupied); e != nil {
+		return e
+	}
+	if occupied > 0 {
+		return fmt.Errorf("Shared policy change requires all users to release first")
+	}
 	result, e := tx.ExecContext(ctx, "UPDATE instances SET dcv_policy_json=?,dcv_policy_revision=dcv_policy_revision+1 WHERE instance_id=?", string(raw), id)
 	if e != nil {
 		return e

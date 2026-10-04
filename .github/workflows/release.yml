@@ -40,7 +40,7 @@ jobs:
                 if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] \
                   && grep -Fxq "awsportal" <<<"$CONTENTS" \
                   && grep -Fxq "awsportal-admin" <<<"$CONTENTS" \
-                  && [ "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 5 ]; then
+                  && [ "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 6 ]; then
                   echo "$TAG already exists and archive/checksum are valid"
                   exit 0
                 fi
@@ -49,19 +49,19 @@ jobs:
             echo "$TAG exists but assets are incomplete or invalid; rebuilding/uploading"
           fi
           mkdir -p dist/pkg/dcv
-          cp dcv/agent.py dcv/install.sh dcv/desktop.sh dist/pkg/dcv/
+          cp dcv/agent.py dcv/install.sh dcv/desktop.sh dcv/awsportal-job dist/pkg/dcv/
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal ./cmd/awsportal
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal-admin ./cmd/awsportal-admin
           test -x dist/pkg/awsportal
           test -x dist/pkg/awsportal-admin
-          tar -C dist/pkg -czf "dist/$ASSET" awsportal awsportal-admin dcv/agent.py dcv/install.sh dcv/desktop.sh
+          tar -C dist/pkg -czf "dist/$ASSET" awsportal awsportal-admin dcv/agent.py dcv/install.sh dcv/desktop.sh dcv/awsportal-job
           CONTENTS="$(tar -tzf "dist/$ASSET")"
           grep -Fxq "awsportal" <<<"$CONTENTS"
           grep -Fxq "awsportal-admin" <<<"$CONTENTS"
-          for FILE in dcv/agent.py dcv/install.sh dcv/desktop.sh; do
+          for FILE in dcv/agent.py dcv/install.sh dcv/desktop.sh dcv/awsportal-job; do
             grep -Fxq "$FILE" <<<"$CONTENTS"
           done
-          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 5
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 6
           sha256sum "dist/$ASSET" > "dist/$ASSET.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
@@ -91,8 +91,8 @@ jobs:
           CONTENTS="$(tar -tzf "dist/verify/$ASSET")"
           grep -Fxq "awsportal" <<<"$CONTENTS"
           grep -Fxq "awsportal-admin" <<<"$CONTENTS"
-          for FILE in dcv/agent.py dcv/install.sh dcv/desktop.sh; do
+          for FILE in dcv/agent.py dcv/install.sh dcv/desktop.sh dcv/awsportal-job; do
             grep -Fxq "$FILE" <<<"$CONTENTS"
           done
-          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 5
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 6
           echo "RESULT: PASS - $TAG ARM64 release archive and checksum verified"

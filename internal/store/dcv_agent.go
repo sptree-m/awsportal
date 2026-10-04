@@ -14,10 +14,13 @@ import (
 const dcvAgentSchema = `CREATE TABLE IF NOT EXISTS dcv_agents(instance_id INTEGER PRIMARY KEY REFERENCES instances(id),token_hash TEXT NOT NULL UNIQUE,last_seen INTEGER NOT NULL DEFAULT 0,ready_users TEXT NOT NULL DEFAULT '[]',error TEXT NOT NULL DEFAULT '');`
 
 type DCVAccount struct {
-	UserID    int64  `json:"user_id"`
-	Username  string `json:"username"`
-	OSUser    string `json:"os_user"`
-	SessionID string `json:"session_id"`
+	UserID          int64        `json:"user_id"`
+	Username        string       `json:"username"`
+	OSUser          string       `json:"os_user"`
+	SessionID       string       `json:"session_id"`
+	Home            *HomeStorage `json:"home,omitempty"`
+	AssignmentID    int64        `json:"assignment_id,omitempty"`
+	StorageRevision int64        `json:"storage_revision,omitempty"`
 }
 
 func DCVIdentity(id int64) string { return fmt.Sprintf("awp-u%d", id) }
@@ -92,7 +95,10 @@ func (s *Store) DCVAgentInstance(ctx context.Context, token string) (string, err
 // The manifest includes administrators, individual grants and expanded group grants.
 // Disabled instances deliberately return an empty manifest so the agent revokes sessions.
 func (s *Store) DCVAccounts(ctx context.Context, awsID string, now time.Time) ([]DCVAccount, error) {
-	rs, e := s.DB.QueryContext(ctx, `SELECT u.id,u.username FROM users u JOIN instances i ON i.instance_id=? WHERE i.enabled=1 AND u.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users g WHERE g.instance_id=i.id AND g.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups g JOIN group_members m ON m.group_id=g.group_id WHERE g.instance_id=i.id AND m.user_id=u.id)) ORDER BY u.id`, awsID, now.Unix())
+	if s.IsSharedInstance(ctx, awsID) {
+		return s.SharedDCVAccounts(ctx, awsID, now)
+	}
+	rs, e := s.DB.QueryContext(ctx, `SELECT u.id,u.username FROM users u JOIN instances i ON i.instance_id=? WHERE i.enabled=1 AND u.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users g WHERE g.instance_id=i.id AND g.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups g JOIN group_members m ON m.group_id=g.group_id WHERE g.instance_id=i.id AND m.user_id=u.id)) AND NOT EXISTS(SELECT 1 FROM environment_assignments ea WHERE ea.user_id=u.id AND ea.state!='RELEASED') ORDER BY u.id`, awsID, now.Unix())
 	if e != nil {
 		return nil, e
 	}
@@ -140,6 +146,9 @@ func (s *Store) DCVHeartbeat(ctx context.Context, awsID string, ready []int64, d
 	return e
 }
 func (s *Store) DCVConnection(ctx context.Context, awsID string, uid int64, now time.Time) (managed, ready bool, mode string, err error) {
+	if s.IsSharedInstance(ctx, awsID) {
+		return s.SharedDCVConnection(ctx, awsID, uid, now)
+	}
 	var seen int64
 	var raw string
 	err = s.DB.QueryRowContext(ctx, `SELECT 'native',CASE WHEN a.applied_revision=i.dcv_policy_revision AND a.browser_blocked=1 THEN COALESCE(a.last_seen,0) ELSE 0 END,COALESCE(a.ready_users,''),a.instance_id IS NOT NULL FROM instances i LEFT JOIN dcv_agents a ON a.instance_id=i.id WHERE i.instance_id=?`, awsID).Scan(&mode, &seen, &raw, &managed)

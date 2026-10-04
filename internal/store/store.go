@@ -44,7 +44,7 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.DB.Close() }
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema); e != nil {
+	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema); e != nil {
 		return e
 	}
 	for _, q := range []string{"ALTER TABLE dcv_agents ADD COLUMN browser_blocked INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_policy_json TEXT NOT NULL DEFAULT ''", "ALTER TABLE instances ADD COLUMN dcv_policy_revision INTEGER NOT NULL DEFAULT 1", "ALTER TABLE dcv_agents ADD COLUMN applied_revision INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_connect_mode TEXT NOT NULL DEFAULT 'native'", "ALTER TABLE proxy_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'domain'", "ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"} {
@@ -71,7 +71,7 @@ func (s *Store) CreateUser(ctx context.Context, n, h, role, totp string) error {
 const accessSQL = `(?='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=?) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=?))`
 
 func (s *Store) VisibleInstances(ctx context.Context, u User) ([]Instance, error) {
-	q := `SELECT i.id,i.instance_id,i.name,i.dcv_host,i.dcv_session_id, (?='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=? AND iu.can_control=1) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=? AND ig.can_control=1)) FROM instances i WHERE i.enabled=1 AND ` + accessSQL + ` ORDER BY i.name`
+	q := `SELECT i.id,i.instance_id,i.name,i.dcv_host,i.dcv_session_id, (?='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=? AND iu.can_control=1) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=? AND ig.can_control=1)) FROM instances i WHERE i.enabled=1 AND ` + accessSQL + ` AND ` + nonSharedInstance + ` ORDER BY i.name`
 	rows, e := s.DB.QueryContext(ctx, q, u.Role, u.ID, u.ID, u.Role, u.ID, u.ID)
 	if e != nil {
 		return nil, e
@@ -89,10 +89,13 @@ func (s *Store) VisibleInstances(ctx context.Context, u User) ([]Instance, error
 }
 func (s *Store) CanControl(ctx context.Context, u User, awsID string) bool {
 	var allowed bool
-	e := s.DB.QueryRowContext(ctx, `SELECT (?='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=? AND iu.can_control=1) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=? AND ig.can_control=1)) FROM instances i WHERE i.instance_id=? AND i.enabled=1`, u.Role, u.ID, u.ID, awsID).Scan(&allowed)
+	e := s.DB.QueryRowContext(ctx, `SELECT (?='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=? AND iu.can_control=1) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=? AND ig.can_control=1)) FROM instances i WHERE i.instance_id=? AND i.enabled=1 AND `+nonSharedInstance, u.Role, u.ID, u.ID, awsID).Scan(&allowed)
 	return e == nil && allowed
 }
 func (s *Store) AddSchedule(ctx context.Context, u User, awsID, action, hhmm, weekdays, tz string) error {
+	if s.IsSharedInstance(ctx, awsID) {
+		return fmt.Errorf("Shared power schedules are forbidden")
+	}
 	var iid int64
 	if e := s.DB.QueryRowContext(ctx, "SELECT id FROM instances WHERE instance_id=?", awsID).Scan(&iid); e != nil {
 		return e
@@ -104,7 +107,7 @@ func (s *Store) DueSchedules(ctx context.Context, t time.Time) ([]struct {
 	Schedule
 	InstanceID string
 }, error) {
-	rows, e := s.DB.QueryContext(ctx, `SELECT s.id,s.instance_id,s.owner_user_id,s.action,s.time_hhmm,s.weekdays,s.timezone,s.enabled,i.instance_id FROM schedules s JOIN instances i ON i.id=s.instance_id WHERE s.enabled=1 AND i.enabled=1 AND EXISTS(SELECT 1 FROM users u WHERE u.id=s.owner_user_id AND u.enabled=1 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id AND iu.can_control=1) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id AND ig.can_control=1)))`, t.Unix())
+	rows, e := s.DB.QueryContext(ctx, `SELECT s.id,s.instance_id,s.owner_user_id,s.action,s.time_hhmm,s.weekdays,s.timezone,s.enabled,i.instance_id FROM schedules s JOIN instances i ON i.id=s.instance_id WHERE s.enabled=1 AND i.enabled=1 AND `+nonSharedInstance+` AND EXISTS(SELECT 1 FROM users u WHERE u.id=s.owner_user_id AND u.enabled=1 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id AND iu.can_control=1) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id AND ig.can_control=1)))`, t.Unix())
 	if e != nil {
 		return nil, e
 	}
@@ -195,7 +198,7 @@ func (s *Store) consumeDCVToken(ctx context.Context, tokenHash, sessionID, awsID
 	var managed bool
 	var expires int64
 	var used sql.NullInt64
-	e = tx.QueryRowContext(ctx, `SELECT t.id,u.username,t.expires_at,t.used_at,u.id,EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id) FROM dcv_tokens t JOIN users u ON u.id=t.user_id JOIN instances i ON i.id=t.instance_id WHERE t.token_hash=? AND t.session_id=? AND i.instance_id=? AND EXISTS(SELECT 1 FROM dcv_agents a,json_each(a.ready_users) j WHERE a.instance_id=i.id AND a.last_seen>=? AND a.applied_revision=i.dcv_policy_revision AND a.browser_blocked=1 AND j.value=u.id) AND u.enabled=1 AND i.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id))`, tokenHash, sessionID, awsID, now.Add(-90*time.Second).Unix(), now.Unix()).Scan(&id, &username, &expires, &used, &uid, &managed)
+	e = tx.QueryRowContext(ctx, `SELECT t.id,u.username,t.expires_at,t.used_at,u.id,EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id) FROM dcv_tokens t JOIN users u ON u.id=t.user_id JOIN instances i ON i.id=t.instance_id WHERE t.token_hash=? AND t.session_id=? AND i.instance_id=? AND EXISTS(SELECT 1 FROM dcv_agents a,json_each(a.ready_users) j WHERE a.instance_id=i.id AND a.last_seen>=? AND a.applied_revision=i.dcv_policy_revision AND a.browser_blocked=1 AND j.value=u.id) AND u.enabled=1 AND i.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND ((`+nonSharedInstance+` AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id))) OR `+sharedDCVAccess+`)`, tokenHash, sessionID, awsID, now.Add(-90*time.Second).Unix(), now.Unix(), now.Unix()).Scan(&id, &username, &expires, &used, &uid, &managed)
 	if e != nil || used.Valid || now.Unix() > expires {
 		return "", false
 	}

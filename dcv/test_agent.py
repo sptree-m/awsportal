@@ -225,3 +225,45 @@ class AgentTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class SharedSafetyTest(AgentTest):
+    def test_shared_home_missing_never_creates_local_home(self):
+        self.a.shared = True
+        ready, error = self.a.reconcile([self.account(1)])
+        self.assertFalse(ready)
+        self.assertTrue(error)
+        self.assertFalse(any(c[0].endswith("useradd") for c in self.commands))
+
+    def test_shared_mount_failure_never_creates_account(self):
+        self.a.shared = True
+        account = self.account(1)
+        account["home"] = {"efs_id":"fs-12345678", "access_point_id":"fsap-12345678", "uid":200001,"gid":200001,"revision":1}
+        with patch.object(self.a, "ensure_home", side_effect=RuntimeError("mount failed")):
+            ready, error = self.a.reconcile([account])
+        self.assertFalse(ready)
+        self.assertTrue(error)
+        self.assertFalse(any(c[0].endswith("useradd") for c in self.commands))
+
+    def test_shared_portal_outage_preserves_jobs_and_desktop(self):
+        self.a.reconcile([self.account(1)])
+        self.a.shared = True
+        self.a.last_ok -= 1000
+        self.commands.clear()
+        self.a.request = lambda *args: (_ for _ in ()).throw(OSError("offline"))
+        self.assertFalse(self.a.sync())
+        self.assertIn("awp-u1", self.sessions)
+        self.assertFalse(any(c[0].endswith("pkill") for c in self.commands))
+
+    def test_shared_release_requires_no_work_and_session_cleanup(self):
+        self.a.reconcile([self.account(1)])
+        self.a.shared = True
+        account = self.account(1)
+        account["assignment_id"] = 123
+        with patch.object(self.a, "user_work", return_value=(1, False)):
+            self.assertEqual(self.a.release_assignments([account]), [])
+            self.assertIn("awp-u1", self.sessions)
+        with patch.object(self.a, "user_work", return_value=(0, True)):
+            self.assertEqual(self.a.release_assignments([account]), [])
+        with patch.object(self.a, "user_work", return_value=(0, False)):
+            self.assertEqual(self.a.release_assignments([account]), [123])
+            self.assertNotIn("awp-u1", self.sessions)
