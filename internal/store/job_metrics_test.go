@@ -3,10 +3,33 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLegacyMetricReplayAcrossJobMigration(t *testing.T) {
+	s, _, _, _, now := sharedFixture(t)
+	ctx := context.Background()
+	// Stored v2 reports from PR #38 do not contain the optional job extension.
+	if _, err := s.DB.Exec(`UPDATE instance_samples SET payload=json_remove(payload,'$.measurement_version','$.job_measurements'); UPDATE instance_observations SET payload=json_remove(payload,'$.measurement_version','$.job_measurements')`); err != nil {
+		t.Fatal(err)
+	}
+	r := sample(6, now)
+	raw, _ := json.Marshal(r)
+	if strings.Contains(string(raw), "measurement_version") || strings.Contains(string(raw), "job_measurements") {
+		t.Fatal("legacy wire format changed")
+	}
+	if err := s.EnvironmentHeartbeat(ctx, "i-shared", r, now.Add(time.Second)); err != nil {
+		t.Fatal("legacy retry rejected after migration", err)
+	}
+	var received int64
+	s.DB.QueryRow(`SELECT received_at FROM instance_observations`).Scan(&received)
+	if received != now.Unix() {
+		t.Fatal("retry renewed sample freshness")
+	}
+}
 
 func TestJobMetricsLedgerReplayResetAndOwnerBoundary(t *testing.T) {
 	s, admin, users, eid, now := sharedFixture(t)

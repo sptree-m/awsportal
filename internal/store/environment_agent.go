@@ -27,8 +27,8 @@ type UserWork struct {
 	Connected       bool  `json:"connected"`
 }
 type EnvironmentReport struct {
-	MeasurementVersion int              `json:"measurement_version"`
-	JobMeasurements    []JobMeasurement `json:"job_measurements"`
+	MeasurementVersion int              `json:"measurement_version,omitempty"`
+	JobMeasurements    []JobMeasurement `json:"job_measurements,omitempty"`
 	AgentVersion       int              `json:"agent_version"`
 	Generation         int64            `json:"generation"`
 	BootID             string           `json:"boot_id"`
