@@ -14,6 +14,8 @@ import logging
 import os
 import pathlib
 import pwd
+import re
+import uuid
 import ssl
 import subprocess
 import threading
@@ -93,6 +95,12 @@ class Agent:
         self.policy_fingerprint = previous.get("fingerprint", "")
         self.allowed = []
         self.run = run
+        previous_environment = json.loads((self.root / "environment.json").read_text()) if (self.root / "environment.json").exists() else {}
+        self.shared = previous_environment.get("shared", False)
+        self.generation = previous_environment.get("generation", 0)
+        self.sequence = 0
+        self.boot_id = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        self.previous_cpu = None
         self.last_ok = time.monotonic()
         self.lock = threading.Lock()
 
@@ -121,22 +129,134 @@ class Agent:
             raise RuntimeError("refusing to modify an unmanaged OS account")
         return account
 
-    def ensure_account(self, name, user_id):
+    def ensure_account(self, name, user_id, home=None):
+        if self.shared and home is None:
+            raise RuntimeError("Shared HOME storage required")
+        if home is not None:
+            self.ensure_home(name, user_id, home)
         try:
             self.check_account(name, user_id)
         except KeyError:
-            self.run(["/usr/sbin/useradd", "--create-home", "--user-group", "--uid", str(200000 + user_id),
-                      "--shell", "/bin/bash", "--comment", "awsportal:" + str(user_id), name])
+            if home is not None:
+                self.run(["/usr/sbin/groupadd", "--gid", str(200000 + user_id), name], optional=True)
+                self.run(["/usr/sbin/useradd", "--no-create-home", "--gid", str(200000 + user_id), "--uid", str(200000 + user_id),
+                          "--shell", "/bin/bash", "--comment", "awsportal:" + str(user_id), name])
+            else:
+                self.run(["/usr/sbin/useradd", "--create-home", "--user-group", "--uid", str(200000 + user_id),
+                          "--shell", "/bin/bash", "--comment", "awsportal:" + str(user_id), name])
             self.check_account(name, user_id)
         # Persist ownership before the next command can fail or the process can exit.
         self.managed[name] = {"user_id": user_id}
         self.save()
         self.run(["/usr/sbin/usermod", "--lock", "--shell", "/bin/bash", name])
         account = self.check_account(name, user_id)
+        if home is not None and account.pw_gid != 200000 + user_id:
+            raise RuntimeError("unexpected Shared OS group identity")
         # Do not follow a user-controlled home symlink while running as root.
         if account.pw_dir != "/home/" + name or pathlib.Path(account.pw_dir).is_symlink():
             raise RuntimeError("unexpected managed home path")
-        os.chmod(account.pw_dir, 0o700)
+        if home is None:
+            os.chmod(account.pw_dir, 0o700)
+
+    def ensure_home(self, name, user_id, home):
+        uid = 200000 + user_id
+        efs, ap = home["efs_id"], home["access_point_id"]
+        if not re.fullmatch(r"fs-[a-f0-9]{8,17}", efs) or not re.fullmatch(r"fsap-[a-f0-9]{8,17}", ap):
+            raise ValueError("invalid EFS storage identity")
+        if home["uid"] != uid or home["gid"] != uid or type(home["revision"]) is not int:
+            raise ValueError("unexpected storage POSIX identity")
+        path = pathlib.Path("/home") / name
+        if path.is_symlink():
+            raise RuntimeError("refusing HOME symlink")
+        marker = self.root / (name + ".efs.json")
+        mounted = self.run(["/usr/bin/findmnt", "--mountpoint", str(path), "--noheadings", "--output", "FSTYPE"], optional=True)
+        if mounted.returncode == 0:
+            if mounted.stdout.strip() != "nfs4" or not marker.exists() or json.loads(marker.read_text()) != home:
+                raise RuntimeError("unexpected HOME mount; manual migration required")
+        else:
+            if path.exists() and any(path.iterdir()):
+                raise RuntimeError("local HOME is not empty; manual migration required")
+            path.mkdir(mode=0o700, exist_ok=True)
+            self.run(["/usr/bin/mount", "-t", "efs", "-o", "tls,iam,accesspoint=" + ap, efs + ":/", str(path)])
+            mounted = self.run(["/usr/bin/findmnt", "--mountpoint", str(path), "--noheadings", "--output", "FSTYPE"])
+            if mounted.stdout.strip() != "nfs4":
+                raise RuntimeError("EFS HOME mount not verified")
+            self.write_policy(marker, json.dumps(home, sort_keys=True))
+        st = path.stat()
+        if st.st_uid != uid or st.st_gid != uid or st.st_mode & 0o077:
+            raise RuntimeError("EFS access point ownership or permissions mismatch")
+
+    def user_work(self, user_id):
+        # Unknown processes, inaccessible /proc entries, and cgroup ambiguity hold
+        # the seat. No low-CPU heuristic is used to decide whether work is safe.
+        jobs, unknown = set(), False
+        desktop = {"Xdcv", "dcvagent", "dcvsession", "xfce4-session", "xfwm4", "xfdesktop", "xfce4-panel",
+                   "xfsettingsd", "dbus-daemon", "dbus-broker", "systemd", "(sd-pam)", "at-spi-bus-laun", "at-spi2-registr",
+                   "pulseaudio", "pipewire", "wireplumber", "gvfsd", "gvfsd-fuse", "dconf-service", "ssh-agent", "gpg-agent"}
+        for proc in pathlib.Path("/proc").iterdir():
+            if not proc.name.isdecimal():
+                continue
+            try:
+                if proc.stat().st_uid != 200000 + user_id:
+                    continue
+                group = (proc / "cgroup").read_text()
+                match = re.search(r"awsportal-job-[a-f0-9]+\.scope", group)
+                if match:
+                    jobs.add(match.group())
+                elif (proc / "comm").read_text().strip() not in desktop:
+                    unknown = True
+            except FileNotFoundError:
+                pass  # Process exited during sampling.
+            except (PermissionError, OSError):
+                unknown = True
+        return len(jobs), unknown
+
+    def release_assignments(self, releases):
+        closed = []
+        for account in releases:
+            name = identity(account["user_id"])
+            jobs, unknown = self.user_work(account["user_id"])
+            if jobs or unknown:
+                continue
+            if self.describe(name) is not None:
+                self.run(["/usr/bin/dcv", "close-session", name])
+            jobs, unknown = self.user_work(account["user_id"])
+            if self.describe(name) is None and not jobs and not unknown:
+                closed.append(account["assignment_id"])
+        return closed
+
+    def environment_report(self, accounts, releases, closed):
+        cpu_values = [int(x) for x in pathlib.Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
+        total, idle = sum(cpu_values), cpu_values[3] + cpu_values[4]
+        valid = self.previous_cpu is not None and total > self.previous_cpu[0]
+        cpu = 100 * (1 - (idle - self.previous_cpu[1]) / (total - self.previous_cpu[0])) if valid else 100
+        self.previous_cpu = (total, idle)
+        mem = {line.split(":")[0]: int(line.split()[1]) for line in pathlib.Path("/proc/meminfo").read_text().splitlines()}
+        work = []
+        for a in accounts + releases:
+            name, uid = identity(a["user_id"]), a["user_id"]
+            jobs, unknown = self.user_work(uid)
+            session = self.describe(name)
+            count = session.get("num-of-connections") if session else 0
+            # An older DCV that cannot report real connections is unsuitable for
+            # Shared. The error is surfaced and no usable sample is emitted.
+            if type(count) is not int or count < 0:
+                raise RuntimeError("DCV connection count unavailable")
+            marker = self.root / (name + ".efs.json")
+            mounted = self.run(["/usr/bin/findmnt", "--mountpoint", "/home/" + name, "--noheadings", "--output", "FSTYPE"], optional=True)
+            home = json.loads(marker.read_text()) if marker.exists() else {}
+            work.append({"user_id": uid, "jobs": jobs, "unclassified": unknown, "session_present": session is not None,
+                         "connected": count > 0, "home_mounted": mounted.returncode == 0 and mounted.stdout.strip() == "nfs4",
+                         "storage_revision": home.get("revision", 0)})
+        # Sequence is persisted, so an agent restart within the same OS boot never
+        # reuses a (boot_id, sequence) sample identity.
+        sequence_path = self.root / "sequence.json"
+        previous = json.loads(sequence_path.read_text()) if sequence_path.exists() else {}
+        sequence = previous.get("sequence", 0) + 1 if previous.get("boot_id") == self.boot_id else 1
+        self.write_policy(sequence_path, json.dumps({"boot_id": self.boot_id, "sequence": sequence}))
+        return {"agent_version": 2, "generation": self.generation, "boot_id": self.boot_id, "sequence": sequence,
+                "observed_at": int(time.time()), "cpu": max(0, min(100, cpu)), "memory": 100 * (1 - mem["MemAvailable"] / mem["MemTotal"]),
+                "metrics_valid": valid, "storage_busy": False, "work": work, "closed_assignments": closed}
 
     def validate_enforcement(self):
         # The global default is merged into every session, even if a local user
@@ -198,6 +318,8 @@ class Agent:
         path = self.policy_dir / "enforced.perm"
         changed = revision != self.applied_revision or fingerprint != self.policy_fingerprint or not path.exists() or path.read_text() != text
         if changed:
+            if self.shared and self.applied_revision and any(self.describe(name) is not None for name in self.managed):
+                raise RuntimeError("Shared policy update requires released desktops")
             # Defaults are loaded at session creation: close old desktops before
             # replacing the global baseline. Never report a partially applied policy.
             for name in self.managed:
@@ -224,20 +346,21 @@ class Agent:
             name = identity(account["user_id"])
             if account["os_user"] != name or account["session_id"] != name or name in desired:
                 raise ValueError("invalid or duplicate account manifest")
-            desired[name] = account["user_id"]
+            desired[name] = account
         # Revocation precedes provisioning. Never delete the home or the UID mapping.
         failures = 0
         for name, account in list(self.managed.items()):
-            if name not in desired:
+            if name not in desired and name not in getattr(self, "releasing_names", set()):
                 try:
                     self.revoke(name, account["user_id"])
                 except (RuntimeError, ValueError, KeyError, OSError, subprocess.TimeoutExpired):
                     failures += 1
                     logging.error("DCV revocation failed for user ID %s", account["user_id"])
         ready = []
-        for name, user_id in desired.items():
+        for name, account in desired.items():
+            user_id = account["user_id"]
             try:
-                self.ensure_account(name, user_id)
+                self.ensure_account(name, user_id, account.get("home"))
                 permissions = self.policy_dir / (name + ".perm")
                 self.write_policy(permissions, permission_text(self.allowed, name))
                 if self.describe(name) is None:
@@ -263,16 +386,26 @@ class Agent:
                 fetched = True
                 if manifest["instance_id"] != self.instance_id:
                     raise ValueError("manifest belongs to a different instance")
+                environment = manifest.get("environment", {})
+                self.shared = environment.get("shared", False)
+                self.generation = environment.get("generation", 0)
+                self.write_policy(self.root / "environment.json", json.dumps({"shared": self.shared,"generation":self.generation}))
+                releases = environment.get("release", [])
+                self.releasing_names = {identity(a["user_id"]) for a in releases}
                 self.apply_policy(manifest["policy"])
                 ready, error = self.reconcile(manifest["accounts"])
-                self.request("/api/dcv/agent/heartbeat", json.dumps({"ready_users": ready, "error": error, "applied_revision":self.applied_revision,"browser_blocked":True}).encode())
+                report = {"ready_users": ready, "error": error, "applied_revision":self.applied_revision,"browser_blocked":True}
+                if self.shared:
+                    closed = self.release_assignments(releases)
+                    report.update(self.environment_report(manifest["accounts"], releases, closed))
+                self.request("/api/dcv/agent/heartbeat", json.dumps(report).encode())
                 self.last_ok = time.monotonic()
                 return not bool(error)
             except Exception:
                 # A network outage never creates users or grants local access.
                 # Existing managed sessions are closed after a bounded 90-second grace.
                 logging.error("DCV synchronization failed")
-                if fetched or time.monotonic() - self.last_ok >= 90:
+                if not self.shared and (fetched or time.monotonic() - self.last_ok >= 90):
                     for name, account in self.managed.items():
                         try:
                             self.revoke(name, account["user_id"])

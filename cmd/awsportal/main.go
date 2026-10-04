@@ -18,6 +18,7 @@ import (
 	awsapi "github.com/sptree-m/awsportal/internal/aws"
 	"github.com/sptree-m/awsportal/internal/mirror"
 	forwardproxy "github.com/sptree-m/awsportal/internal/proxy"
+	"github.com/sptree-m/awsportal/internal/shared"
 	"github.com/sptree-m/awsportal/internal/store"
 	"html/template"
 	"log"
@@ -73,6 +74,14 @@ func main() {
 		go a.mirrors.Run(ctx)
 	}
 	go a.scheduler(ctx)
+	sharedWorker := &shared.Controller{Store: db}
+	if bucket := env("AWSPORTAL_USAGE_BUCKET", ""); bucket != "" {
+		sharedWorker.Sink, e = awsapi.NewUsageS3(cfg, bucket)
+		if e != nil {
+			log.Fatal(e)
+		}
+	}
+	go sharedWorker.Run(ctx)
 	if addr := env("AWSPORTAL_PROXY_ADDR", ""); addr != "" {
 		host, _, err := net.SplitHostPort(addr)
 		if err != nil {
@@ -138,6 +147,13 @@ func main() {
 	mux.HandleFunc("GET /instances", a.require(a.instancesPage))
 	mux.HandleFunc("GET /instances/{id}/row", a.require(a.instanceRow))
 	mux.HandleFunc("GET /instances/{id}", a.require(a.instanceDetail))
+	mux.HandleFunc("GET /environments", a.require(a.environmentPage))
+	mux.HandleFunc("POST /environments/{id}/connect", a.require(a.environmentConnect))
+	mux.HandleFunc("GET /environment-requests/{id}", a.require(a.environmentRequestState))
+	mux.HandleFunc("POST /environment-requests/{id}/end", a.require(a.environmentEnd))
+	mux.HandleFunc("POST /environment-requests/{id}/dcv", a.require(a.environmentDCV))
+	mux.HandleFunc("GET /admin/environments", a.require(a.environmentAdminPage))
+	mux.HandleFunc("POST /admin/environments", a.require(a.environmentAdminChange))
 	mux.HandleFunc("GET /costs", a.require(a.costDashboard))
 	mux.HandleFunc("GET /costs.csv", a.require(a.costCSV))
 	mux.HandleFunc("POST /instance/{id}/{action}", a.require(a.instanceAction))
@@ -665,6 +681,9 @@ func (a *app) dcv(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "権限がありません", 403)
 		return
 	}
+	a.issueNativeDCV(w, r, u, id)
+}
+func (a *app) issueNativeDCV(w http.ResponseWriter, r *http.Request, u store.User, id string) {
 	raw := make([]byte, 32)
 	if _, e := rand.Read(raw); e != nil {
 		http.Error(w, "token error", 500)

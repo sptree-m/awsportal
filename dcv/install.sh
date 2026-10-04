@@ -41,6 +41,7 @@ done
 netfilter-persistent save
 install -d -m 0700 /etc/awsportal-dcv /var/lib/awsportal-dcv
 install -d /usr/local/libexec
+install -m 0755 "$HERE/awsportal-job" /usr/local/bin/awsportal-job
 install -m 0755 "$HERE/agent.py" /usr/local/libexec/awsportal-dcv-agent
 install -m 0755 "$HERE/desktop.sh" /usr/local/libexec/awsportal-dcv-desktop
 install -d -o root -g root -m 0755 /etc/dcv/awsportal-policy

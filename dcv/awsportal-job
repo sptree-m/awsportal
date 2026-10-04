@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""Run a user job in a measured systemd user scope. No root privileges."""
+import os
+import sys
+import uuid
+if len(sys.argv) < 2:
+    raise SystemExit('Usage: awsportal-job COMMAND [ARG ...]')
+if os.geteuid() < 200001 or os.geteuid() > 1200000:
+    raise SystemExit('Run this from your awsportal desktop account')
+os.execv('/usr/bin/systemd-run', ['systemd-run', '--user', '--scope', '--quiet',
+         '--unit=awsportal-job-' + uuid.uuid4().hex, '--'] + sys.argv[1:])

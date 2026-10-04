@@ -39,12 +39,31 @@ func (a *app) dcvAgentState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB error", 500)
 		return
 	}
+	environment, e := a.db.EnvironmentAgentState(r.Context(), id)
+	if e != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"instance_id": id, "accounts": accounts, "policy": policy, "browser_block_required": true})
+	_ = json.NewEncoder(w).Encode(map[string]any{"instance_id": id, "accounts": accounts, "policy": policy, "browser_block_required": true, "environment": environment})
 }
 func (a *app) dcvAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	id, ok := a.dcvAgentCredential(w, r)
 	if !ok {
+		return
+	}
+	if a.db.IsSharedInstance(r.Context(), id) {
+		var report store.EnvironmentReport
+		r.Body = http.MaxBytesReader(w, r.Body, 128*1024)
+		if e := json.NewDecoder(r.Body).Decode(&report); e != nil {
+			http.Error(w, "invalid report", 400)
+			return
+		}
+		if e := a.db.EnvironmentHeartbeat(r.Context(), id, report, time.Now()); e != nil {
+			http.Error(w, "invalid Shared report", 400)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	var report struct {
