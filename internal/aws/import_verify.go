@@ -47,7 +47,7 @@ func NewImportVerifier(cfg sdk.Config, bucket string) *ImportVerifier {
 }
 func (v *ImportVerifier) artifact(ctx context.Context, raw, job string) ([]byte, error) {
 	var ref ArtifactRef
-	if json.Unmarshal([]byte(raw), &ref) != nil || ref.Bucket != v.bucket || !strings.HasPrefix(ref.Key, ".awsportal-evidence/"+job+"/") || ref.VersionID == "" || len(ref.SHA256) != 64 {
+	if json.Unmarshal([]byte(raw), &ref) != nil || ref.Bucket != v.bucket || !strings.HasPrefix(ref.Key, ".awsportal-evidence/"+job+"/") || ref.VersionID == "" || ref.VersionID == "null" || len(ref.SHA256) != 64 {
 		return nil, invalidEvidence("immutable approved evidence required")
 	}
 	r, err := v.client.GetObject(ctx, &s3.GetObjectInput{Bucket: sdk.String(ref.Bucket), Key: sdk.String(ref.Key), VersionId: sdk.String(ref.VersionID)})
@@ -94,7 +94,7 @@ func (v *ImportVerifier) Verify(ctx context.Context, j store.ImportJob) (store.I
 	}
 	expected := map[string]ImportedFile{}
 	for _, f := range m.Files {
-		if f.Path == "" || path.Clean(f.Path) != f.Path || strings.HasPrefix(f.Path, "/") || strings.Contains(f.Path, "\\") || strings.HasPrefix(f.Path, "../") || f.Size < 0 || len(f.SHA256) != 64 {
+		if f.Path == "" || f.Path == "." || f.Path == ".." || path.Clean(f.Path) != f.Path || strings.HasPrefix(f.Path, "/") || strings.Contains(f.Path, "\\") || strings.HasPrefix(f.Path, "../") || f.Size < 0 || len(f.SHA256) != 64 {
 			return e, invalidEvidence("invalid expected path/hash")
 		}
 		if _, dup := expected[f.Path]; dup {
@@ -106,7 +106,7 @@ func (v *ImportVerifier) Verify(ctx context.Context, j store.ImportJob) (store.I
 	seen := map[string]bool{}
 	for _, f := range r.Files {
 		want, ok := expected[f.Path]
-		if !ok || seen[f.Path] || f.Size != want.Size || f.SHA256 != want.SHA256 || f.VersionID == "" {
+		if !ok || seen[f.Path] || f.Size != want.Size || f.SHA256 != want.SHA256 || f.VersionID == "" || f.VersionID == "null" {
 			return e, invalidEvidence("uploaded manifest mismatch")
 		}
 		seen[f.Path] = true

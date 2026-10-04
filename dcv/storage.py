@@ -10,7 +10,7 @@ import tempfile
 
 def relative_path(raw):
     path = pathlib.PurePosixPath(raw)
-    if not raw or raw != path.as_posix() or path.is_absolute() or '..' in path.parts or '\\' in raw:
+    if not raw or raw in ('.','..') or raw != path.as_posix() or path.is_absolute() or '..' in path.parts or '\\' in raw:
         raise ValueError('unsafe dataset path')
     return path
 
@@ -24,7 +24,7 @@ def validate_manifest(manifest):
         if str(path) in seen or type(f['size']) is not int or f['size'] < 0:
             raise ValueError('duplicate or invalid file')
         seen.add(str(path))
-        if len(f.get('sha256', '')) != 64 or any(c not in '0123456789abcdef' for c in f['sha256']) or not f.get('version_id'):
+        if len(f.get('sha256', '')) != 64 or any(c not in '0123456789abcdef' for c in f['sha256']) or not f.get('version_id') or f['version_id'] == 'null':
             raise ValueError('S3 version and SHA256 required; ETag is not a checksum')
     for path in seen:
         if any(str(p) in seen for p in pathlib.PurePosixPath(path).parents if str(p) != '.'):
