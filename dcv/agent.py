@@ -155,6 +155,9 @@ class Agent:
         self.managed[name] = {"user_id": user_id}
         self.save()
         self.run(["/usr/sbin/usermod", "--lock", "--shell", "/bin/bash", name])
+        # Supplementary groups must precede the user manager: scopes inherit its groups.
+        if self.storage.groups:
+            self.storage.membership(name, user_id)
         self.run(["/usr/bin/loginctl", "enable-linger", name])
         self.run(["/usr/bin/systemctl", "start", "user@" + str(200000 + user_id) + ".service"])
         account = self.check_account(name, user_id)
@@ -382,6 +385,8 @@ class Agent:
         if self.describe(name, allow_legacy=True) is not None:
             self.run(["/usr/bin/dcv", "close-session", name])
         self.run(["/usr/sbin/usermod", "--lock", "--shell", "/usr/sbin/nologin", name])
+        self.run(["/usr/bin/loginctl", "disable-linger", name])
+        self.run(["/usr/bin/systemctl", "stop", "user@" + str(200000 + user_id) + ".service"])
         # Stop desktop and other processes of this managed UID, including detached tasks.
         result = self.run(["/usr/bin/pkill", "-KILL", "-u", str(200000 + user_id)], optional=True)
         if result.returncode not in (0, 1):
@@ -408,8 +413,6 @@ class Agent:
             user_id = account["user_id"]
             try:
                 self.ensure_account(name, user_id, account.get("home"))
-                if self.storage.groups:
-                    self.storage.membership(name, user_id)
                 permissions = self.policy_dir / (name + ".perm")
                 self.write_policy(permissions, permission_text(self.allowed, name))
                 if self.describe(name) is None:

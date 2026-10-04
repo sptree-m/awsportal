@@ -34,7 +34,7 @@ python3 dcv/storage.py /mnt/original/home /mnt/new-home \
   --user-id 123 --offline-proof 'stopped EC2 + retained snapshot evidence'
 ```
 
-rsyncのmetadata/ACL/xattrと全件checksumによるdry-run検証後、JSONを移行完了フォームに記録する。新UID/GIDへ所有権を写す。コピー失敗時はロックと原本を維持する。検証後に一時migration_rolesとNFS許可を削除し、User EFSを登録して新HOMEを有効化する。移行ホスト上の停止証跡とコピー結果は管理者が実機で確認する。
+rsyncのmetadata/ACL/xattrと全件checksumによるdry-run検証後、JSONを移行完了フォームに記録する。新UID/GIDへ所有権を写す。コピー失敗時はロックと原本を維持する。検証後に一時migration_rolesとNFS許可を削除する。元Personal EC2の非空local HOMEは停止中に管理者がroot専用の退避先へrenameして原本を保持し、元HOMEパスを空にする。Agentは非空local HOMEへのmountを拒否するため、この退避を省略しない。User EFSを登録して新HOMEを有効化する。移行ホスト上の停止証跡とコピー結果は管理者が実機で確認する。
 
 Personal/Sharedは同一User HOMEを同時に保持できない。Personal leaseはAgent欠測では解除せず、AWS SDKがstopped/terminatedを確認して解除する。Shared releaseはDCV/job終了とsync/unmountのAgent ACKが必要。
 
