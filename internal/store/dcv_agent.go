@@ -98,7 +98,7 @@ func (s *Store) DCVAccounts(ctx context.Context, awsID string, now time.Time) ([
 	if s.IsSharedInstance(ctx, awsID) {
 		return s.SharedDCVAccounts(ctx, awsID, now)
 	}
-	rs, e := s.DB.QueryContext(ctx, `SELECT u.id,u.username FROM users u JOIN instances i ON i.instance_id=? WHERE i.enabled=1 AND u.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users g WHERE g.instance_id=i.id AND g.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups g JOIN group_members m ON m.group_id=g.group_id WHERE g.instance_id=i.id AND m.user_id=u.id)) AND NOT EXISTS(SELECT 1 FROM environment_assignments ea WHERE ea.user_id=u.id AND ea.state!='RELEASED') ORDER BY u.id`, awsID, now.Unix())
+	rs, e := s.DB.QueryContext(ctx, `SELECT u.id,u.username,COALESCE(us.efs_id,''),COALESCE(us.access_point_id,''),COALESCE(us.revision,0) FROM users u JOIN instances i ON i.instance_id=? LEFT JOIN environment_instances pei ON pei.instance_id=i.id LEFT JOIN environments pe ON pe.id=pei.environment_id AND pe.mode='personal' LEFT JOIN user_storage us ON us.user_id=pe.owner_user_id AND us.user_id=u.id WHERE i.enabled=1 AND u.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users g WHERE g.instance_id=i.id AND g.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups g JOIN group_members m ON m.group_id=g.group_id WHERE g.instance_id=i.id AND m.user_id=u.id)) AND NOT EXISTS(SELECT 1 FROM environment_assignments ea WHERE ea.user_id=u.id AND ea.state!='RELEASED') AND `+personalDCVAccess+` ORDER BY u.id`, awsID, now.Unix())
 	if e != nil {
 		return nil, e
 	}
@@ -106,14 +106,38 @@ func (s *Store) DCVAccounts(ctx context.Context, awsID string, now time.Time) ([
 	out := []DCVAccount{}
 	for rs.Next() {
 		var a DCVAccount
-		if e = rs.Scan(&a.UserID, &a.Username); e != nil {
+		h := HomeStorage{}
+		if e = rs.Scan(&a.UserID, &a.Username, &h.EFSID, &h.AccessPointID, &h.Revision); e != nil {
 			return nil, e
+		}
+		if h.EFSID != "" {
+			h.UID = 200000 + a.UserID
+			h.GID = h.UID
+			a.Home = &h
+			a.StorageRevision = h.Revision
 		}
 		a.OSUser = DCVIdentity(a.UserID)
 		a.SessionID = a.OSUser
 		out = append(out, a)
 	}
-	return out, rs.Err()
+	if e = rs.Err(); e != nil {
+		return nil, e
+	}
+	rs.Close()
+	allowed := out[:0]
+	for _, a := range out {
+		if a.Home != nil {
+			ok, err := s.ClaimPersonalHome(ctx, awsID, a.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		allowed = append(allowed, a)
+	}
+	return allowed, nil
 }
 func (s *Store) DCVHeartbeat(ctx context.Context, awsID string, ready []int64, detail string, now time.Time, appliedRevision ...int64) error {
 	revision := int64(0)
@@ -148,6 +172,12 @@ func (s *Store) DCVHeartbeat(ctx context.Context, awsID string, ready []int64, d
 func (s *Store) DCVConnection(ctx context.Context, awsID string, uid int64, now time.Time) (managed, ready bool, mode string, err error) {
 	if s.IsSharedInstance(ctx, awsID) {
 		return s.SharedDCVConnection(ctx, awsID, uid, now)
+	}
+	var denied bool
+	err = s.DB.QueryRowContext(ctx, `SELECT NOT (`+personalDCVAccess+`) FROM instances i JOIN users u ON u.id=? WHERE i.instance_id=?`, uid, awsID).Scan(&denied)
+	if err != nil || denied {
+		managed = true
+		return
 	}
 	var seen int64
 	var raw string

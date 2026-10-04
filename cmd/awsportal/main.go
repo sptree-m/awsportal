@@ -16,8 +16,11 @@ import (
 	"github.com/skip2/go-qrcode"
 	"github.com/sptree-m/awsportal/internal/auth"
 	awsapi "github.com/sptree-m/awsportal/internal/aws"
+	"github.com/sptree-m/awsportal/internal/importer"
+	"github.com/sptree-m/awsportal/internal/metering"
 	"github.com/sptree-m/awsportal/internal/mirror"
 	forwardproxy "github.com/sptree-m/awsportal/internal/proxy"
+	"github.com/sptree-m/awsportal/internal/settlement"
 	"github.com/sptree-m/awsportal/internal/shared"
 	"github.com/sptree-m/awsportal/internal/store"
 	"html/template"
@@ -74,14 +77,35 @@ func main() {
 		go a.mirrors.Run(ctx)
 	}
 	go a.scheduler(ctx)
-	sharedWorker := &shared.Controller{Store: db}
+	sharedWorker := &shared.Controller{Store: db, Parquet: true, Power: a.ec2}
 	if bucket := env("AWSPORTAL_USAGE_BUCKET", ""); bucket != "" {
 		sharedWorker.Sink, e = awsapi.NewUsageS3(cfg, bucket)
 		if e != nil {
 			log.Fatal(e)
 		}
 	}
+	if provision := env("AWSPORTAL_PROVISION_WORKFLOW", ""); provision != "" {
+		sharedWorker.Workflow, e = awsapi.NewWorkflow(cfg, provision, env("AWSPORTAL_TERMINATE_WORKFLOW", ""))
+		if e != nil {
+			log.Fatal(e)
+		}
+		sharedWorker.ScaleOut = env("AWSPORTAL_SCALE_OUT", "false") == "true"
+		sharedWorker.Terminate = env("AWSPORTAL_TERMINATE", "false") == "true"
+	}
 	go sharedWorker.Run(ctx)
+	go (&metering.Worker{Store: db, Meter: awsapi.NewStorageMeter(cfg)}).Run(ctx)
+	if bucket := env("AWSPORTAL_CUR_BUCKET", ""); bucket != "" {
+		worker := &settlement.Worker{Store: db, Source: awsapi.NewCURReader(cfg, bucket, env("AWSPORTAL_CUR_PREFIX", "cur/"))}
+		go worker.Run(ctx)
+	}
+	if provision := env("AWSPORTAL_IMPORT_PROVISION_WORKFLOW", ""); provision != "" {
+		workflow, err := awsapi.NewWorkflow(cfg, provision, env("AWSPORTAL_IMPORT_CLEANUP_WORKFLOW", ""))
+		if err != nil {
+			log.Fatal(err)
+		}
+		worker := &importer.Controller{Store: db, Workflow: workflow, Verifier: awsapi.NewImportVerifier(cfg, env("AWSPORTAL_IMPORT_BUCKET", "")), Enabled: env("AWSPORTAL_IMPORT_ENABLED", "false") == "true"}
+		go worker.Run(ctx)
+	}
 	if addr := env("AWSPORTAL_PROXY_ADDR", ""); addr != "" {
 		host, _, err := net.SplitHostPort(addr)
 		if err != nil {
@@ -154,6 +178,12 @@ func main() {
 	mux.HandleFunc("POST /environment-requests/{id}/dcv", a.require(a.environmentDCV))
 	mux.HandleFunc("GET /admin/environments", a.require(a.environmentAdminPage))
 	mux.HandleFunc("POST /admin/environments", a.require(a.environmentAdminChange))
+	mux.HandleFunc("GET /admin/two-stage", a.require(a.stageTwoPage))
+	mux.HandleFunc("POST /admin/two-stage", a.require(a.stageTwoChange))
+	mux.HandleFunc("GET /api/import/agent/state", a.importAgentState)
+	mux.HandleFunc("POST /api/import/agent/event", a.importAgentEvent)
+	mux.HandleFunc("GET /settlements", a.require(a.settlements))
+	mux.HandleFunc("GET /settlements.csv", a.require(a.settlements))
 	mux.HandleFunc("GET /costs", a.require(a.costDashboard))
 	mux.HandleFunc("GET /costs.csv", a.require(a.costCSV))
 	mux.HandleFunc("POST /instance/{id}/{action}", a.require(a.instanceAction))

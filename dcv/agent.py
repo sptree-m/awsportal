@@ -4,6 +4,7 @@
 No portal passwords, AWS credentials, arbitrary commands or shell interpolation.
 Only accounts marked as created by this agent may be changed. Homes are retained.
 """
+from storage_runtime import StorageRuntime
 import argparse
 import configparser
 import hashlib
@@ -98,10 +99,12 @@ class Agent:
         self.run = run
         previous_environment = json.loads((self.root / "environment.json").read_text()) if (self.root / "environment.json").exists() else {}
         self.shared = previous_environment.get("shared", False)
+        self.personal = previous_environment.get("personal", False)
         self.generation = previous_environment.get("generation", 0)
         self.sequence = 0
         self.boot_id = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
         self.previous_cpu = None
+        self.storage = StorageRuntime(self)
         self.last_ok = time.monotonic()
         self.lock = threading.Lock()
         self.job_users = set()
@@ -152,6 +155,11 @@ class Agent:
         self.managed[name] = {"user_id": user_id}
         self.save()
         self.run(["/usr/sbin/usermod", "--lock", "--shell", "/bin/bash", name])
+        # Supplementary groups must precede the user manager: scopes inherit its groups.
+        if self.storage.groups:
+            self.storage.membership(name, user_id)
+        self.run(["/usr/bin/loginctl", "enable-linger", name])
+        self.run(["/usr/bin/systemctl", "start", "user@" + str(200000 + user_id) + ".service"])
         account = self.check_account(name, user_id)
         if home is not None and account.pw_gid != 200000 + user_id:
             raise RuntimeError("unexpected Shared OS group identity")
@@ -231,6 +239,37 @@ class Agent:
                 closed.append(account["assignment_id"])
         return closed
 
+    def drain_storage(self, operation):
+        if not operation:
+            return False
+        if self.storage.busy or any(j["state"] not in TERMINAL for j in self.jobs.sample()):
+            return False
+        for marker in self.root.glob("awp-u*.efs.json"):
+            name = marker.name.removesuffix(".efs.json")
+            uid = int(name.removeprefix("awp-u"))
+            jobs, unknown = self.user_work(uid)
+            if jobs or unknown or self.describe(name) is not None:
+                return False
+            mount = "/home/" + name
+            self.run(["/usr/bin/sync", "-f", mount])
+            mounted = self.run(["/usr/bin/findmnt", "--mountpoint", mount], optional=True)
+            if mounted.returncode == 0:
+                self.run(["/usr/bin/umount", mount])
+            if self.run(["/usr/bin/findmnt", "--mountpoint", mount], optional=True).returncode == 0:
+                return False
+        return self.storage.drain()
+
+    def desktop_measurement(self, user_id):
+        root = pathlib.Path("/sys/fs/cgroup/user.slice") / ("user-"+str(200000+user_id)+".slice")
+        scopes = list(root.glob("**/awsportal-desktop-*.scope"))
+        if len(scopes) != 1:
+            return {"quality":"unavailable"}
+        try:
+            counters, _ = self.jobs.counters("/"+scopes[0].relative_to("/sys/fs/cgroup").as_posix())
+            return {"quality":"ok", **counters}
+        except (OSError, ValueError, KeyError):
+            return {"quality":"unavailable"}
+
     def environment_report(self, accounts, releases, closed):
         cpu_values = [int(x) for x in pathlib.Path("/proc/stat").read_text().splitlines()[0].split()[1:9]]
         total, idle = sum(cpu_values), cpu_values[3] + cpu_values[4]
@@ -256,7 +295,7 @@ class Agent:
             mounted = self.run(["/usr/bin/findmnt", "--mountpoint", "/home/" + name, "--noheadings", "--output", "FSTYPE"], optional=True)
             home = json.loads(marker.read_text()) if marker.exists() else {}
             work.append({"user_id": uid, "jobs": jobs, "unclassified": unknown, "session_present": session is not None,
-                         "connected": count > 0, "home_mounted": mounted.returncode == 0 and mounted.stdout.strip() == "nfs4",
+                         "home_measurement": self.storage.home_measurement(uid), "desktop_measurement": self.desktop_measurement(uid), "connected": count > 0, "home_mounted": mounted.returncode == 0 and mounted.stdout.strip() == "nfs4",
                          "storage_revision": home.get("revision", 0)})
         # Sequence is persisted, so an agent restart within the same OS boot never
         # reuses a (boot_id, sequence) sample identity.
@@ -266,7 +305,7 @@ class Agent:
         self.write_policy(sequence_path, json.dumps({"boot_id": self.boot_id, "sequence": sequence}))
         return {"agent_version": 2, "generation": self.generation, "boot_id": self.boot_id, "sequence": sequence,
                 "observed_at": int(time.time()), "cpu": max(0, min(100, cpu)), "memory": 100 * (1 - mem["MemAvailable"] / mem["MemTotal"]),
-                "metrics_valid": valid, "storage_busy": False, "work": work, "closed_assignments": closed,
+                "metrics_valid": valid, "storage_busy": self.storage.busy, "cache_results": self.storage.snapshot(), "work": work, "closed_assignments": closed,
                 "measurement_version": 1, "job_measurements": measurements}
 
     def validate_enforcement(self):
@@ -346,6 +385,8 @@ class Agent:
         if self.describe(name, allow_legacy=True) is not None:
             self.run(["/usr/bin/dcv", "close-session", name])
         self.run(["/usr/sbin/usermod", "--lock", "--shell", "/usr/sbin/nologin", name])
+        self.run(["/usr/bin/loginctl", "disable-linger", name])
+        self.run(["/usr/bin/systemctl", "stop", "user@" + str(200000 + user_id) + ".service"])
         # Stop desktop and other processes of this managed UID, including detached tasks.
         result = self.run(["/usr/bin/pkill", "-KILL", "-u", str(200000 + user_id)], optional=True)
         if result.returncode not in (0, 1):
@@ -399,27 +440,37 @@ class Agent:
                     raise ValueError("manifest belongs to a different instance")
                 environment = manifest.get("environment", {})
                 self.shared = environment.get("shared", False)
+                self.personal = environment.get("personal", False)
                 self.generation = environment.get("generation", 0)
-                self.write_policy(self.root / "environment.json", json.dumps({"shared": self.shared,"generation":self.generation}))
+                self.write_policy(self.root / "environment.json", json.dumps({"shared": self.shared,"personal":self.personal,"generation":self.generation}))
                 releases = environment.get("release", [])
-                self.job_users = {a["user_id"] for a in manifest["accounts"]} if self.shared else set()
+                self.job_users = {a["user_id"] for a in manifest["accounts"] if self.shared or a.get("home") is not None} if self.shared or self.personal else set()
                 self.releasing_names = {identity(a["user_id"]) for a in releases}
                 self.apply_policy(manifest["policy"])
+                if not environment.get("drain_operation"):
+                    self.storage.apply(environment.get("groups", []), environment.get("cache_jobs", []), [])
                 ready, error = self.reconcile(manifest["accounts"])
+                if not environment.get("drain_operation"):
+                    self.storage.measure_homes(manifest["accounts"])
                 report = {"ready_users": ready, "error": error, "applied_revision":self.applied_revision,"browser_blocked":True}
-                if self.shared:
+                if self.shared or self.personal:
                     closed = self.release_assignments(releases)
                     report.update(self.environment_report(manifest["accounts"], releases, closed))
+                    drain = environment.get("drain_operation", "")
+                    if drain:
+                        report["drain_operation"] = drain
+                        report["drain_complete"] = not manifest["accounts"] and not releases and self.drain_storage(drain)
                 self.request("/api/dcv/agent/heartbeat", json.dumps(report).encode())
-                if self.shared:
+                if self.shared or self.personal:
                     self.jobs.acknowledge(report["job_measurements"])
+                    self.storage.acknowledge(report.get("cache_results", []))
                 self.last_ok = time.monotonic()
                 return not bool(error)
             except Exception:
                 # A network outage never creates users or grants local access.
                 # Existing managed sessions are closed after a bounded 90-second grace.
                 logging.error("DCV synchronization failed")
-                if not self.shared and (fetched or time.monotonic() - self.last_ok >= 90):
+                if not (self.shared or self.personal) and (fetched or time.monotonic() - self.last_ok >= 90):
                     for name, account in self.managed.items():
                         try:
                             self.revoke(name, account["user_id"])

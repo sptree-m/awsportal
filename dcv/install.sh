@@ -13,7 +13,7 @@ case "$(dpkg --print-architecture)" in
   *) echo 'Unsupported architecture'; exit 1;;
 esac
 apt-get update
-apt-get install -y curl ca-certificates python3 xfce4 xfce4-terminal dbus-x11 xauth fonts-noto-cjk iptables iptables-persistent
+apt-get install -y curl ca-certificates python3 xfce4 xfce4-terminal dbus-x11 xauth fonts-noto-cjk rsync xfsprogs awscli iptables iptables-persistent
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 curl -fL --retry 5 "https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2404-$ARCH.tgz" -o "$WORK/dcv.tgz"
@@ -44,6 +44,9 @@ install -d /usr/local/libexec
 install -m 0755 "$HERE/awsportal-job" /usr/local/bin/awsportal-job
 install -m 0755 "$HERE/agent.py" /usr/local/libexec/awsportal-dcv-agent
 install -m 0644 "$HERE/job_metrics.py" /usr/local/libexec/job_metrics.py
+install -m 0755 "$HERE/bootstrap.py" /usr/local/libexec/awsportal-dcv-bootstrap
+install -m 0644 "$HERE/storage.py" /usr/local/libexec/storage.py
+install -m 0644 "$HERE/storage_runtime.py" /usr/local/libexec/storage_runtime.py
 install -m 0755 "$HERE/desktop.sh" /usr/local/libexec/awsportal-dcv-desktop
 install -d -o root -g root -m 0755 /etc/dcv/awsportal-policy
 cat > /etc/dcv/awsportal-policy/enforced.perm <<'PERM'

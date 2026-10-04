@@ -94,6 +94,8 @@ func TestBrowserConsole(t *testing.T) {
 		}
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /admin/two-stage", a.require(a.stageTwoPage))
+	mux.HandleFunc("GET /settlements", a.require(a.settlements))
 	mux.HandleFunc("GET /environments", a.require(a.environmentPage))
 	mux.HandleFunc("GET /admin/environments", a.require(a.environmentAdminPage))
 	mux.HandleFunc("GET /", a.require(a.dashboard))

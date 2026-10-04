@@ -44,7 +44,7 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.DB.Close() }
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema+jobMetricsSchema); e != nil {
+	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema+jobMetricsSchema+poolSchema+billingSchema+importSchema+parquetSchema+billingJobSchema+storageSchema+goldenSchema+desktopSchema+storageMetricSchema+operationMetricSchema+inventorySchema); e != nil {
 		return e
 	}
 	for _, q := range []string{"ALTER TABLE dcv_agents ADD COLUMN browser_blocked INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_policy_json TEXT NOT NULL DEFAULT ''", "ALTER TABLE instances ADD COLUMN dcv_policy_revision INTEGER NOT NULL DEFAULT 1", "ALTER TABLE dcv_agents ADD COLUMN applied_revision INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_connect_mode TEXT NOT NULL DEFAULT 'native'", "ALTER TABLE proxy_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'domain'", "ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"} {
@@ -52,7 +52,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return e
 		}
 	}
-	return nil
+	_, err := s.DB.ExecContext(ctx, historySchema)
+	return err
 }
 
 func (s *Store) UserByName(ctx context.Context, n string) (User, error) {
@@ -198,7 +199,7 @@ func (s *Store) consumeDCVToken(ctx context.Context, tokenHash, sessionID, awsID
 	var managed bool
 	var expires int64
 	var used sql.NullInt64
-	e = tx.QueryRowContext(ctx, `SELECT t.id,u.username,t.expires_at,t.used_at,u.id,EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id) FROM dcv_tokens t JOIN users u ON u.id=t.user_id JOIN instances i ON i.id=t.instance_id WHERE t.token_hash=? AND t.session_id=? AND i.instance_id=? AND EXISTS(SELECT 1 FROM dcv_agents a,json_each(a.ready_users) j WHERE a.instance_id=i.id AND a.last_seen>=? AND a.applied_revision=i.dcv_policy_revision AND a.browser_blocked=1 AND j.value=u.id) AND u.enabled=1 AND i.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND ((`+nonSharedInstance+` AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id))) OR `+sharedDCVAccess+`)`, tokenHash, sessionID, awsID, now.Add(-90*time.Second).Unix(), now.Unix(), now.Unix()).Scan(&id, &username, &expires, &used, &uid, &managed)
+	e = tx.QueryRowContext(ctx, `SELECT t.id,u.username,t.expires_at,t.used_at,u.id,EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id) FROM dcv_tokens t JOIN users u ON u.id=t.user_id JOIN instances i ON i.id=t.instance_id WHERE t.token_hash=? AND t.session_id=? AND i.instance_id=? AND EXISTS(SELECT 1 FROM dcv_agents a,json_each(a.ready_users) j WHERE a.instance_id=i.id AND a.last_seen>=? AND a.applied_revision=i.dcv_policy_revision AND a.browser_blocked=1 AND j.value=u.id) AND u.enabled=1 AND i.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND ((`+nonSharedInstance+` AND `+personalDCVAccess+` AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id))) OR `+sharedDCVAccess+`)`, tokenHash, sessionID, awsID, now.Add(-90*time.Second).Unix(), now.Unix(), now.Unix()).Scan(&id, &username, &expires, &used, &uid, &managed)
 	if e != nil || used.Valid || now.Unix() > expires {
 		return "", false
 	}

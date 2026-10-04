@@ -1,5 +1,4 @@
-// Package shared contains the fixed-pilot worker. It intentionally has no AWS
-// provisioning, stopping, or termination capability in stage one.
+// Package shared reconciles leases, metrics exports and opt-in cloud workflows.
 package shared
 
 import (
@@ -12,9 +11,16 @@ import (
 type UsageSink interface {
 	Put(context.Context, string, []byte) error
 }
+type PowerReader interface {
+	States(context.Context, []string) (map[string]string, error)
+}
 type Controller struct {
-	Store *store.Store
-	Sink  UsageSink
+	Power               PowerReader
+	Store               *store.Store
+	Sink                UsageSink
+	Workflow            Workflow
+	ScaleOut, Terminate bool
+	Parquet             bool
 }
 
 func (c *Controller) Run(ctx context.Context) {
@@ -27,6 +33,9 @@ func (c *Controller) Run(ctx context.Context) {
 func (c *Controller) run(ctx context.Context, ticks, exports <-chan time.Time) {
 	if c.Sink != nil {
 		go c.exportLoop(ctx, exports)
+	}
+	if c.Workflow != nil {
+		go c.cloudLoop(ctx)
 	}
 	for {
 		select {
@@ -55,15 +64,55 @@ func (c *Controller) exportLoop(ctx context.Context, ticks <-chan time.Time) {
 	}
 }
 func (c *Controller) Tick(ctx context.Context, now time.Time) error {
+	if c.Power != nil {
+		ids, err := c.Store.PersonalLeaseInstances(ctx)
+		if err != nil {
+			return err
+		}
+		timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+		states, err := c.Power.States(timeout, ids)
+		cancel()
+		if err == nil {
+			for id, state := range states {
+				if state == "stopped" || state == "terminated" {
+					if err = c.Store.ConfirmPersonalStopped(ctx, id, state); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
 	if err := c.Store.ReconcileEnvironments(ctx, now); err != nil {
 		return err
 	}
 	_, err := c.Store.RecordIdleDecisions(ctx, now)
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 func (c *Controller) Export(ctx context.Context) error {
 	if c.Sink == nil {
 		return nil
+	}
+	if c.Parquet {
+		xs, err := c.Store.PrepareParquet(ctx, time.Now())
+		if err != nil {
+			return err
+		}
+		for _, x := range xs {
+			timeout, cancel := context.WithTimeout(ctx, 15*time.Second)
+			err = c.Sink.Put(timeout, x.Key, x.Payload)
+			cancel()
+			if err != nil {
+				continue
+			}
+			if err = c.Store.CompleteParquet(ctx, x.Key); err != nil {
+				return err
+			}
+		}
+		return c.Store.RetainUsage(ctx, time.Now())
 	}
 	batches, err := c.Store.PendingUsageExports(ctx)
 	if err != nil {
@@ -80,5 +129,25 @@ func (c *Controller) Export(ctx context.Context) error {
 			return markErr
 		}
 	}
+
 	return nil
+}
+
+// AWS workflow latency never stalls reservation or heartbeat decisions.
+func (c *Controller) cloudLoop(ctx context.Context) {
+	t := time.NewTicker(20 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			timeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+			err := c.CloudTick(timeout, now)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				c.Store.Audit(ctx, "cloud-worker", "cloud.reconcile", "", "error", "workflow deferred; capacity retained")
+			}
+		}
+	}
 }

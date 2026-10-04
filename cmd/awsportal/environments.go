@@ -188,15 +188,27 @@ func (a *app) environmentAdminChange(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch r.FormValue("operation") {
 	case "create":
-		_, err = a.db.CreateEnvironment(r.Context(), u, store.Environment{Name: r.FormValue("name"), Mode: "shared", ProfileID: "shared-cpu-v1", GroupID: parse("group_id")}, reason)
+		mode, profile := "shared", "shared-cpu-v1"
+		if r.FormValue("mode") == "personal" {
+			mode, profile = "personal", "personal-v1"
+		}
+		_, err = a.db.CreateEnvironment(r.Context(), u, store.Environment{Name: r.FormValue("name"), Mode: mode, ProfileID: profile, GroupID: parse("group_id"), OwnerUserID: parse("owner_user_id")}, reason)
 	case "register":
 		err = a.db.RegisterEnvironmentInstance(r.Context(), u, parse("environment_id"), r.FormValue("instance_id"), reason)
 	case "acl":
 		err = a.db.SetEnvironmentACL(r.Context(), u, parse("environment_id"), r.FormValue("kind"), parse("subject_id"), "environment.connect", r.FormValue("remove") == "1", reason)
+	case "group_storage":
+		err = a.db.SetGroupStorage(r.Context(), u, parse("group_id"), r.FormValue("efs_id"), r.FormValue("access_point_id"), parse("scratch_gib"), reason)
+	case "dataset_cache":
+		err = a.db.RequestDatasetCache(r.Context(), u, parse("environment_id"), r.FormValue("instance_id"), "", r.FormValue("bucket"), r.FormValue("prefix"), r.FormValue("manifest"))
+	case "migration_lock":
+		err = a.db.BeginHomeMigration(r.Context(), u, parse("user_id"), r.FormValue("source"))
+	case "migration_verified":
+		err = a.db.FinishHomeMigration(r.Context(), u, parse("user_id"), r.FormValue("proof"))
 	case "storage":
 		err = a.db.SetUserStorage(r.Context(), u, parse("user_id"), r.FormValue("efs_id"), r.FormValue("access_point_id"), reason)
 	default:
-		http.Error(w, "Stage 1: automatic scale-out, termination and import are unavailable", 400)
+		http.Error(w, "unknown Environment operation", 400)
 		return
 	}
 	if err != nil {

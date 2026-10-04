@@ -52,7 +52,7 @@ func (a *app) dcvAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if a.db.IsSharedInstance(r.Context(), id) {
+	if a.db.IsEnvironmentInstance(r.Context(), id) {
 		var report store.EnvironmentReport
 		r.Body = http.MaxBytesReader(w, r.Body, 128*1024)
 		if e := json.NewDecoder(r.Body).Decode(&report); e != nil {
@@ -60,7 +60,11 @@ func (a *app) dcvAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if e := a.db.EnvironmentHeartbeat(r.Context(), id, report, time.Now()); e != nil {
-			http.Error(w, "invalid Shared report", 400)
+			http.Error(w, "invalid Environment report", 400)
+			return
+		}
+		if e := a.db.CacheResults(r.Context(), id, report.CacheResults); e != nil {
+			http.Error(w, "cache result rejected", 400)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

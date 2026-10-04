@@ -54,3 +54,5 @@ Go race全回帰、ledger重複再送/Owner/Assignment境界/counter reset/欠�
 AWS実機のcgroup・EFS/DCV・通信分離と2ユーザー5営業日pilotは未実施。Personal EFS移行、Group EFS、Dataset cache/manifest、scratch quota、Storage counters、Parquet/保持、CUR保存は後続変更。第2段階の増減・請求照合・Windows Box Importも未実装。S1受入が揃うまでは正式な第1段階完了リリースとして扱わない。
 
 参照：Linux kernel [cgroup v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html)。
+
+第1段階の残りと第2段階のコードは [v1.8.0-rc.1](20-two-stage-completion.md) に追加しています。本候補版の記述はv1.7.0-rc.1時点のものです。

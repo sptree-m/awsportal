@@ -54,6 +54,18 @@ class AgentTest(unittest.TestCase):
     def account(self, uid):
         return {"user_id": uid, "username": "alice", "os_user": agent.identity(uid), "session_id": agent.identity(uid)}
 
+    def test_group_membership_precedes_user_manager_and_desktop(self):
+        self.a.storage.groups = [{'group_id': 1}]
+        with patch.object(self.a.storage, 'membership', side_effect=lambda name, uid: self.commands.append(['membership', name])):
+            ready, error = self.a.reconcile([self.account(1)])
+        self.assertEqual(ready, [1])
+        self.assertFalse(error)
+        membership = next(i for i, c in enumerate(self.commands) if c[0] == 'membership')
+        manager = next(i for i, c in enumerate(self.commands) if c[0].endswith('systemctl') and c[1] == 'start')
+        desktop = next(i for i, c in enumerate(self.commands) if c[0].endswith('dcv') and c[1] == 'create-session')
+        self.assertLess(membership, manager)
+        self.assertLess(manager, desktop)
+
     def test_create_idempotency_revoke_and_restore(self):
         ready, error = self.a.reconcile([self.account(1)])
         self.assertEqual(ready, [1])
