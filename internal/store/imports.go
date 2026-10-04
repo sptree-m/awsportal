@@ -127,9 +127,9 @@ func (s *Store) ImportAgentEvent(ctx context.Context, token, next string, seq in
 		return err
 	}
 	defer tx.Rollback()
-	var id, state string
+	var id, state, frozenManifest string
 	var previous, deadline int64
-	if err = tx.QueryRowContext(ctx, `SELECT id,state,sequence,deadline FROM import_jobs WHERE token_hash=? AND token_hash!=''`, DCVTokenHash(token)).Scan(&id, &state, &previous, &deadline); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT id,state,sequence,deadline,expected_manifest FROM import_jobs WHERE token_hash=? AND token_hash!=''`, DCVTokenHash(token)).Scan(&id, &state, &previous, &deadline, &frozenManifest); err != nil {
 		return err
 	}
 	raw, _ := json.Marshal(e)
@@ -154,6 +154,9 @@ func (s *Store) ImportAgentEvent(ctx context.Context, token, next string, seq in
 	}
 	if next == "UPLOADING" && (e.ExpectedManifest == "" || e.ExpectedFiles <= 0 || e.ExpectedBytes < 0) {
 		return fmt.Errorf("frozen readable source manifest required")
+	}
+	if next == "VALIDATING" && e.ExpectedManifest != frozenManifest {
+		return fmt.Errorf("frozen source manifest cannot change")
 	}
 	if next == "VALIDATING" && (e.Validation == "" || e.Logs == "") {
 		return fmt.Errorf("immutable validation and logs required")

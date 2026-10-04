@@ -262,6 +262,13 @@ func TestImportStateAndCleanupProof(t *testing.T) {
 	if err = s.ImportAgentEvent(ctx, token, "UPLOADING", 2, changed, now); err == nil {
 		t.Fatal("changed retry accepted")
 	}
+	changed = e
+	changed.ExpectedManifest = "changed-after-upload-start"
+	changed.Validation = "validation"
+	changed.Logs = "logs"
+	if err = s.ImportAgentEvent(ctx, token, "VALIDATING", 3, changed, now); err == nil {
+		t.Fatal("frozen source changed")
+	}
 	e.Validation = "immutable-validation"
 	e.Logs = "immutable-logs"
 	if err = s.ImportAgentEvent(ctx, token, "VALIDATING", 3, e, now); err != nil {

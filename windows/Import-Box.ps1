@@ -60,6 +60,7 @@ function EvidenceFile([string]$Name,$Object){
     if(-not $head.VersionId -or $head.VersionId -eq 'null'){throw 'S3 bucket versioning required'}
     return (@{bucket=$job.Bucket;key=$key;version_id=$head.VersionId;sha256=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()}|ConvertTo-Json -Compress)
 }
+try {
 $manifestPath=Join-Path $work 'expected.json'
 if(Test-Path -LiteralPath $manifestPath){$manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json}
 else{
@@ -76,14 +77,17 @@ else{
     $manifest=@{version=1;files=$files}
     Write-AtomicText $manifestPath ($manifest|ConvertTo-Json -Depth 12 -Compress)
 }
-$expectedRef=EvidenceFile 'expected.json' $manifest
+if($job.State -eq 'UPLOADING'){
+    $expectedRef=$job.ExpectedManifest
+    $frozen=$expectedRef|ConvertFrom-Json
+    if((Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $frozen.sha256){throw 'Frozen manifest changed during resume'}
+}else{$expectedRef=EvidenceFile 'expected.json' $manifest}
 $expectedBytes=[long]0;foreach($f in $manifest.files){$expectedBytes+=[long]$f.size}
 if($job.State -eq 'WAITING_OFFLINE_READY'){Event 'UPLOADING' @{expected_manifest=$expectedRef;expected_files=$manifest.files.Count;expected_bytes=$expectedBytes}}
 $uploaded=@()
 $checkpointPath=Join-Path $work 'uploaded-checkpoint.json'
 $checkpoint=@{}
 if(Test-Path -LiteralPath $checkpointPath){$saved=Get-Content -LiteralPath $checkpointPath -Raw|ConvertFrom-Json;foreach($f in $saved){$checkpoint[$f.path]=$f}}
-try{
     foreach($f in $manifest.files){
         $source=Join-Path $root $f.path.Replace('/','\')
         $before=Get-Item -LiteralPath $source
