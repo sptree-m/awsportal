@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-// Stage one has no path to an AWS create/terminate API. A later migration and
-// separately accepted controller will enable stage two; HTTP cannot change this.
-const ImplementationStage = 1
+// Stage two capabilities remain off until operator flags and acceptance evidence
+// authorize the separately scoped AWS workflows.
+const ImplementationStage = 2
 const environmentSchema = `
 CREATE TABLE IF NOT EXISTS environment_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS environments(
@@ -57,6 +57,8 @@ const environmentAccess = `(u.enabled=1 AND u.must_change_password=0 AND (u.role
 // Applied inside instance/DCV queries with aliases i/u. A Shared instance never
 // inherits legacy instance grants or administrator automatic sessions.
 const sharedDCVAccess = `EXISTS(SELECT 1 FROM environment_instances ei JOIN environments e ON e.id=ei.environment_id JOIN environment_assignments ea ON ea.instance_id=ei.instance_id WHERE ei.instance_id=i.id AND e.mode='shared' AND ea.user_id=u.id AND ea.state NOT IN ('RELEASED','RELEASING') AND ea.generation=ei.generation AND ` + environmentAccess + `)`
+const personalDCVAccess = `NOT EXISTS(SELECT 1 FROM environment_instances pe JOIN environments p ON p.id=pe.environment_id WHERE pe.instance_id=i.id AND p.mode='personal' AND p.owner_user_id!=u.id) AND NOT EXISTS(SELECT 1 FROM home_migrations hm WHERE hm.user_id=u.id AND hm.state='LOCKED')`
+
 const nonSharedInstance = `NOT EXISTS(SELECT 1 FROM environment_instances ei JOIN environments e ON e.id=ei.environment_id WHERE ei.instance_id=i.id AND e.mode='shared')`
 
 func (s *Store) CreateEnvironment(ctx context.Context, admin User, x Environment, reason string) (int64, error) {
@@ -162,6 +164,17 @@ func (s *Store) RegisterEnvironmentInstance(ctx context.Context, admin User, eid
 	if _, err = tx.ExecContext(ctx, `INSERT INTO environment_instances(instance_id,environment_id) VALUES(?,?)`, iid, eid); err != nil {
 		return err
 	}
+	if mode == "personal" {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM instance_users WHERE instance_id=?`, iid); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM instance_groups WHERE instance_id=?`, iid); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO instance_users(instance_id,user_id,can_control) VALUES(?,?,1)`, iid, owner); err != nil {
+			return err
+		}
+	}
 	if mode == "shared" {
 		if _, err = tx.ExecContext(ctx, `UPDATE schedules SET enabled=0 WHERE instance_id=?`, iid); err != nil {
 			return err
@@ -198,11 +211,17 @@ func (s *Store) SetUserStorage(ctx context.Context, admin User, uid int64, efs, 
 	}
 	defer tx.Rollback()
 	var held int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM environment_assignments WHERE user_id=? AND state!='RELEASED'`, uid).Scan(&held); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM environment_assignments WHERE user_id=? AND state!='RELEASED')+(SELECT COUNT(*) FROM personal_home_leases WHERE user_id=?)`, uid, uid).Scan(&held); err != nil {
 		return err
 	}
 	if held > 0 {
 		return fmt.Errorf("HOME is leased; release it before migration")
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE resource_registry SET valid_to=? WHERE owner_user_id=? AND valid_to IS NULL AND resource_id=(SELECT efs_id FROM user_storage WHERE user_id=?) AND resource_id!=?`, time.Now().Unix(), uid, uid, efs); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO resource_registry(resource_id,owner_user_id,valid_from) SELECT ?,?,? WHERE NOT EXISTS(SELECT 1 FROM resource_registry WHERE resource_id=? AND valid_to IS NULL)`, efs, uid, time.Now().Unix(), efs); err != nil {
+		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO user_storage(user_id,efs_id,access_point_id) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET efs_id=excluded.efs_id,access_point_id=excluded.access_point_id,revision=revision+1`, uid, efs, ap); err != nil {
 		return err
@@ -274,6 +293,13 @@ func (s *Store) RequestEnvironment(ctx context.Context, u User, eid int64, key s
 		return x, err
 	}
 	if x.State == "WAITING" {
+		if _, err = tx.ExecContext(ctx, `UPDATE cloud_operations SET state='CANCELLED' WHERE environment_id=? AND kind='TERMINATE' AND state IN ('DRAINING','RESERVED')`, eid); err != nil {
+			return x, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE environment_instances SET lifecycle='READY',idle_since=0 WHERE environment_id=? AND lifecycle='DRAINING' AND EXISTS(SELECT 1 FROM cloud_operations o WHERE o.instance_id=environment_instances.instance_id AND o.generation=environment_instances.generation AND o.state='CANCELLED') AND NOT EXISTS(SELECT 1 FROM cloud_operations live WHERE live.instance_id=environment_instances.instance_id AND live.generation=environment_instances.generation AND live.kind='TERMINATE' AND live.state NOT IN ('SUCCEEDED','CANCELLED'))`, eid); err != nil {
+			return x, err
+		}
+
 		if err = assignWaiting(ctx, tx, x, now); err != nil {
 			return x, err
 		}
@@ -286,6 +312,14 @@ func (s *Store) RequestEnvironment(ctx context.Context, u User, eid int64, key s
 }
 func assignWaiting(ctx context.Context, tx *sql.Tx, r ConnectionRequest, now time.Time) error {
 	reason := "fixed instance unavailable"
+	var migrating bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM home_migrations WHERE user_id=? AND state='LOCKED')`, r.UserID).Scan(&migrating); err != nil {
+		return err
+	}
+	if migrating {
+		_, err := tx.ExecContext(ctx, `UPDATE connection_requests SET reason='HOME migration locked' WHERE id=?`, r.ID)
+		return err
+	}
 	var iid, gen, storageRevision int64
 	var storage bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM user_storage WHERE user_id=?)`, r.UserID).Scan(&storage); err != nil {
@@ -295,13 +329,34 @@ func assignWaiting(ctx context.Context, tx *sql.Tx, r ConnectionRequest, now tim
 		reason = "HOME storage not configured"
 	} else {
 		var held bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM environment_assignments WHERE user_id=? AND state!='RELEASED') OR EXISTS(SELECT 1 FROM dcv_agents da,json_each(da.ready_users) j WHERE j.value=? AND da.last_seen>=? AND NOT EXISTS(SELECT 1 FROM environment_instances ei JOIN environments e ON e.id=ei.environment_id WHERE ei.instance_id=da.instance_id AND e.mode='shared'))`, r.UserID, r.UserID, now.Add(-90*time.Second).Unix()).Scan(&held); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM environment_assignments WHERE user_id=? AND state!='RELEASED') OR EXISTS(SELECT 1 FROM personal_home_leases WHERE user_id=?) OR EXISTS(SELECT 1 FROM dcv_agents da,json_each(da.ready_users) j WHERE j.value=? AND da.last_seen>=? AND NOT EXISTS(SELECT 1 FROM environment_instances ei JOIN environments e ON e.id=ei.environment_id WHERE ei.instance_id=da.instance_id AND e.mode='shared'))`, r.UserID, r.UserID, r.UserID, now.Add(-90*time.Second).Unix()).Scan(&held); err != nil {
 			return err
 		}
 		if held {
 			reason = "HOME held by another environment"
 		} else {
-			err := tx.QueryRowContext(ctx, `SELECT ei.instance_id,ei.generation,us.revision FROM environment_instances ei JOIN instances i ON i.id=ei.instance_id JOIN dcv_agents da ON da.instance_id=i.id JOIN instance_observations o ON o.instance_id=i.id JOIN user_storage us ON us.user_id=? WHERE ei.environment_id=? AND ei.lifecycle='READY' AND i.enabled=1 AND da.last_seen>=? AND da.error='' AND da.applied_revision=i.dcv_policy_revision AND da.browser_blocked=1 AND o.received_at>=? AND json_extract(o.payload,'$.generation')=ei.generation AND json_extract(o.payload,'$.agent_version')=2 AND (SELECT COUNT(*) FROM environment_assignments a WHERE a.instance_id=i.id AND a.state!='RELEASED')<2 ORDER BY i.id LIMIT 1`, r.UserID, r.EnvironmentID, now.Add(-90*time.Second).Unix(), now.Add(-90*time.Second).Unix()).Scan(&iid, &gen, &storageRevision)
+			rows, err := tx.QueryContext(ctx, `SELECT ei.instance_id,ei.generation,us.revision FROM environment_instances ei JOIN instances i ON i.id=ei.instance_id JOIN dcv_agents da ON da.instance_id=i.id JOIN instance_observations o ON o.instance_id=i.id JOIN user_storage us ON us.user_id=? WHERE ei.environment_id=? AND ei.lifecycle='READY' AND i.enabled=1 AND da.last_seen>=? AND da.error='' AND da.applied_revision=i.dcv_policy_revision AND da.browser_blocked=1 AND o.received_at>=? AND json_extract(o.payload,'$.generation')=ei.generation AND json_extract(o.payload,'$.agent_version')=2 AND (SELECT COUNT(*) FROM environment_assignments a WHERE a.instance_id=i.id AND a.state!='RELEASED')<2 ORDER BY (SELECT COUNT(*) FROM environment_assignments a WHERE a.instance_id=i.id AND a.state!='RELEASED') DESC,(SELECT AVG(cpu) FROM instance_samples WHERE instance_id=i.id AND boot_id=o.boot_id AND observed_at>=json_extract(o.payload,'$.observed_at')-300),(SELECT AVG(memory) FROM instance_samples WHERE instance_id=i.id AND boot_id=o.boot_id AND observed_at>=json_extract(o.payload,'$.observed_at')-300),i.instance_id`, r.UserID, r.EnvironmentID, now.Add(-90*time.Second).Unix(), now.Add(-90*time.Second).Unix())
+			if err != nil {
+				return err
+			}
+			type candidate struct{ id, generation, revision int64 }
+			var candidates []candidate
+			for rows.Next() {
+				var c candidate
+				if err = rows.Scan(&c.id, &c.generation, &c.revision); err != nil {
+					rows.Close()
+					return err
+				}
+				candidates = append(candidates, c)
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return err
+			}
+			if len(candidates) == 0 {
+				err = sql.ErrNoRows
+			}
 			if err != nil && err != sql.ErrNoRows {
 				return err
 			}
@@ -317,7 +372,8 @@ func assignWaiting(ctx context.Context, tx *sql.Tx, r ConnectionRequest, now tim
 				}
 				iid = 0
 			}
-			if iid > 0 {
+			for _, candidate := range candidates {
+				iid, gen, storageRevision = candidate.id, candidate.generation, candidate.revision
 				var avgCPU, avgMem float64
 				var count int
 				var first, last int64
@@ -472,4 +528,10 @@ func (s *Store) IsSharedInstance(ctx context.Context, awsID string) bool {
 	var shared bool
 	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM instances i JOIN environment_instances ei ON ei.instance_id=i.id JOIN environments e ON e.id=ei.environment_id WHERE i.instance_id=? AND e.mode='shared')`, awsID).Scan(&shared)
 	return err != nil || shared
+}
+
+func (s *Store) IsEnvironmentInstance(ctx context.Context, aws string) bool {
+	var yes bool
+	err := s.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM environment_instances ei JOIN instances i ON i.id=ei.instance_id WHERE i.instance_id=?)`, aws).Scan(&yes)
+	return err != nil || yes
 }

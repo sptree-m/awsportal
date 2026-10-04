@@ -17,16 +17,34 @@ type HomeStorage struct {
 	GID           int64  `json:"gid"`
 	Revision      int64  `json:"revision"`
 }
+type DesktopMeasurement struct {
+	Quality      string `json:"quality"`
+	CounterEpoch string `json:"counter_epoch,omitempty"`
+	CPUUsec      int64  `json:"cpu_usec,omitempty"`
+	MemoryBytes  int64  `json:"memory_bytes,omitempty"`
+	ReadBytes    int64  `json:"read_bytes,omitempty"`
+	WriteBytes   int64  `json:"write_bytes,omitempty"`
+}
+type HomeMeasurement struct {
+	Quality    string `json:"quality"`
+	ObservedAt int64  `json:"observed_at,omitempty"`
+	DuBytes    *int64 `json:"du_bytes,omitempty"`
+}
 type UserWork struct {
-	UserID          int64 `json:"user_id"`
-	Jobs            int   `json:"jobs"`
-	Unclassified    bool  `json:"unclassified"`
-	SessionPresent  bool  `json:"session_present"`
-	HomeMounted     bool  `json:"home_mounted"`
-	StorageRevision int64 `json:"storage_revision"`
-	Connected       bool  `json:"connected"`
+	HomeMeasurement    *HomeMeasurement    `json:"home_measurement,omitempty"`
+	DesktopMeasurement *DesktopMeasurement `json:"desktop_measurement,omitempty"`
+	UserID             int64               `json:"user_id"`
+	Jobs               int                 `json:"jobs"`
+	Unclassified       bool                `json:"unclassified"`
+	SessionPresent     bool                `json:"session_present"`
+	HomeMounted        bool                `json:"home_mounted"`
+	StorageRevision    int64               `json:"storage_revision"`
+	Connected          bool                `json:"connected"`
 }
 type EnvironmentReport struct {
+	CacheResults       []CacheJob       `json:"cache_results,omitempty"`
+	DrainOperation     string           `json:"drain_operation,omitempty"`
+	DrainComplete      bool             `json:"drain_complete,omitempty"`
 	MeasurementVersion int              `json:"measurement_version,omitempty"`
 	JobMeasurements    []JobMeasurement `json:"job_measurements,omitempty"`
 	AgentVersion       int              `json:"agent_version"`
@@ -46,10 +64,14 @@ type EnvironmentReport struct {
 	Error              string           `json:"error"`
 }
 type EnvironmentAgentState struct {
-	Shared       bool         `json:"shared"`
-	Generation   int64        `json:"generation"`
-	AgentVersion int          `json:"agent_version"`
-	Release      []DCVAccount `json:"release"`
+	Groups         []GroupMount `json:"groups,omitempty"`
+	CacheJobs      []CacheJob   `json:"cache_jobs,omitempty"`
+	DrainOperation string       `json:"drain_operation,omitempty"`
+	Personal       bool         `json:"personal,omitempty"`
+	Shared         bool         `json:"shared"`
+	Generation     int64        `json:"generation"`
+	AgentVersion   int          `json:"agent_version"`
+	Release        []DCVAccount `json:"release"`
 }
 
 func (s *Store) SharedDCVAccounts(ctx context.Context, awsID string, now time.Time) ([]DCVAccount, error) {
@@ -77,13 +99,19 @@ func (s *Store) SharedDCVAccounts(ctx context.Context, awsID string, now time.Ti
 }
 func (s *Store) EnvironmentAgentState(ctx context.Context, awsID string) (EnvironmentAgentState, error) {
 	out := EnvironmentAgentState{AgentVersion: 2, Release: []DCVAccount{}}
-	err := s.DB.QueryRowContext(ctx, `SELECT e.mode='shared',ei.generation FROM instances i JOIN environment_instances ei ON ei.instance_id=i.id JOIN environments e ON e.id=ei.environment_id WHERE i.instance_id=?`, awsID).Scan(&out.Shared, &out.Generation)
+	var storageErr error
+	out.Groups, out.CacheJobs, storageErr = s.AgentStorage(ctx, awsID)
+	if storageErr != nil {
+		return out, storageErr
+	}
+	err := s.DB.QueryRowContext(ctx, `SELECT e.mode='shared',e.mode='personal',ei.generation FROM instances i JOIN environment_instances ei ON ei.instance_id=i.id JOIN environments e ON e.id=ei.environment_id WHERE i.instance_id=?`, awsID).Scan(&out.Shared, &out.Personal, &out.Generation)
 	if err == sql.ErrNoRows {
 		return out, nil
 	}
 	if err != nil {
 		return out, err
 	}
+	_ = s.DB.QueryRowContext(ctx, `SELECT o.id FROM cloud_operations o JOIN instances i ON i.id=o.instance_id WHERE i.instance_id=? AND o.kind='TERMINATE' AND o.state IN ('DRAINING','RESERVED','SUBMITTING','RUNNING')`, awsID).Scan(&out.DrainOperation)
 	if !out.Shared {
 		return out, nil
 	}
@@ -162,8 +190,9 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 		return err
 	}
 	defer tx.Rollback()
-	var iid, eid, gen, policy int64
-	if err = tx.QueryRowContext(ctx, `SELECT i.id,ei.environment_id,ei.generation,i.dcv_policy_revision FROM instances i JOIN environment_instances ei ON ei.instance_id=i.id JOIN environments e ON e.id=ei.environment_id WHERE i.instance_id=? AND e.mode='shared'`, awsID).Scan(&iid, &eid, &gen, &policy); err != nil {
+	var iid, eid, gen, policy, owner int64
+	var mode string
+	if err = tx.QueryRowContext(ctx, `SELECT i.id,ei.environment_id,ei.generation,i.dcv_policy_revision,e.mode,COALESCE(e.owner_user_id,0) FROM instances i JOIN environment_instances ei ON ei.instance_id=i.id JOIN environments e ON e.id=ei.environment_id WHERE i.instance_id=?`, awsID).Scan(&iid, &eid, &gen, &policy, &mode, &owner); err != nil {
 		return err
 	}
 	if gen != r.Generation {
@@ -197,7 +226,7 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 	}
 	if boot != "" && boot != r.BootID {
 		var retired int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM instance_samples WHERE instance_id=? AND boot_id=?`, iid, r.BootID).Scan(&retired); err != nil {
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM instance_boots WHERE instance_id=? AND boot_id=?`, iid, r.BootID).Scan(&retired); err != nil {
 			return err
 		}
 		if retired > 0 {
@@ -233,6 +262,22 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 			allowedReady[a.uid] = true
 		}
 	}
+	if mode == "personal" {
+		var storage int64
+		var held bool
+		if err = tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM user_storage WHERE user_id=?),0),EXISTS(SELECT 1 FROM personal_home_leases WHERE user_id=? AND instance_id=?)`, owner, owner, iid).Scan(&storage, &held); err != nil {
+			return err
+		}
+		if w, ok := seen[owner]; ok && held && w.StorageRevision == storage && w.HomeMounted && w.SessionPresent {
+			allowedReady[owner] = true
+		}
+		// Unmigrated Personal environments keep the legacy local-HOME protocol.
+		if storage == 0 {
+			if w, ok := seen[owner]; ok && w.SessionPresent {
+				allowedReady[owner] = true
+			}
+		}
+	}
 	for _, uid := range r.ReadyUsers {
 		if !allowedReady[uid] {
 			return fmt.Errorf("user is not prepared for this assignment")
@@ -257,6 +302,17 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 		if _, err = tx.ExecContext(ctx, `UPDATE environment_instances SET idle_since=0 WHERE instance_id=?`, iid); err != nil {
 			return err
 		}
+	}
+	if r.AgentVersion == 2 && r.Error == "" && r.MetricsValid && r.BrowserBlocked && r.AppliedRevision == policy {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO instance_readiness VALUES(?,?)`, iid, now.Unix()); err != nil {
+			return err
+		}
+	}
+	if err = recordDesktop(ctx, tx, iid, r, previous); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO instance_boots VALUES(?,?,?)`, iid, r.BootID, now.Unix()); err != nil {
+		return err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO instance_samples VALUES(?,?,?,?,?,?,?,?,?)`, iid, r.BootID, r.Sequence, r.ObservedAt, now.Unix(), gen, r.CPU, r.Memory, string(raw)); err != nil {
 		return err
@@ -326,6 +382,21 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 			}
 		}
 	}
+	if json.Unmarshal([]byte(previousPayload), &previous) == nil && previous.BootID == r.BootID && previous.Generation == r.Generation && previous.Sequence+1 == r.Sequence && r.ObservedAt > previous.ObservedAt && r.ObservedAt-previous.ObservedAt <= 90 {
+		for _, before := range previous.Work {
+			if !before.Connected {
+				continue
+			}
+			for _, after := range r.Work {
+				if after.UserID != before.UserID || !after.Connected {
+					continue
+				}
+				if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO connection_intervals(instance_id,user_id,environment_id,group_id,boot_id,sequence,generation,start_at,end_at) SELECT ?,?,e.id,COALESCE(e.group_id,0),?,?,?,?,? FROM environments e WHERE e.id=?`, iid, after.UserID, r.BootID, r.Sequence, r.Generation, previous.ObservedAt, r.ObservedAt, eid); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	key := fmt.Sprintf("usage/v2/%s/%s/%020d.json", awsID, r.BootID, r.Sequence)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO usage_export_queue(object_key,payload) VALUES(?,?)`, key, string(raw)); err != nil {
 		return err
@@ -346,7 +417,7 @@ func (s *Store) RecordIdleDecisions(ctx context.Context, now time.Time) ([]IdleD
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT i.id,i.instance_id,ei.environment_id,ei.idle_since,ei.generation,i.dcv_policy_revision,COALESCE(o.received_at,0),COALESCE(o.payload,''),(SELECT COUNT(*) FROM environment_assignments a WHERE a.instance_id=i.id AND a.state!='RELEASED'),(SELECT COUNT(*) FROM connection_requests r WHERE r.environment_id=ei.environment_id AND r.state='WAITING') FROM environment_instances ei JOIN environments e ON e.id=ei.environment_id JOIN instances i ON i.id=ei.instance_id LEFT JOIN instance_observations o ON o.instance_id=i.id WHERE e.mode='shared'`)
+	rows, err := tx.QueryContext(ctx, `SELECT i.id,i.instance_id,ei.environment_id,ei.idle_since,ei.generation,i.dcv_policy_revision,COALESCE(o.received_at,0),COALESCE(o.payload,''),(SELECT COUNT(*) FROM environment_assignments a WHERE a.instance_id=i.id AND a.state!='RELEASED'),((SELECT COUNT(*) FROM connection_requests r WHERE r.environment_id=ei.environment_id AND r.state='WAITING')+(SELECT COUNT(*) FROM dataset_cache_jobs c WHERE c.instance_id=i.id AND c.state IN ('PENDING','RUNNING'))) FROM environment_instances ei JOIN environments e ON e.id=ei.environment_id JOIN instances i ON i.id=ei.instance_id LEFT JOIN instance_observations o ON o.instance_id=i.id WHERE e.mode='shared'`)
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +474,9 @@ func (s *Store) RecordIdleDecisions(ctx context.Context, now time.Time) ([]IdleD
 			x.Candidate = now.Unix()-x.Since >= 15*60
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE environment_instances SET idle_since=?,idle_reason=? WHERE instance_id=?`, x.Since, x.Reason, x.iid); err != nil {
+			return nil, err
+		}
+		if err = recordOperationObservation(ctx, tx, x.iid, x.Reason, safe, now); err != nil {
 			return nil, err
 		}
 		out = append(out, x.IdleDecision)

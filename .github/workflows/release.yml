@@ -27,6 +27,7 @@ jobs:
           V="$(tr -d '[:space:]' < VERSION)"
           TAG="v$V"
           ASSET="awsportal-$TAG-linux-arm64.tar.gz"
+          mapfile -t FILES < scripts/release-files.txt
           if gh release view "$TAG" >/dev/null 2>&1; then
             git fetch --no-tags origin "refs/tags/$TAG"
             PUBLISHED_SHA="$(git rev-parse 'FETCH_HEAD^{commit}')"
@@ -45,28 +46,34 @@ jobs:
                 if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] \
                   && grep -Fxq "awsportal" <<<"$CONTENTS" \
                   && grep -Fxq "awsportal-admin" <<<"$CONTENTS" \
-                  && [ "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 7 ]; then
-                  echo "$TAG already exists and archive/checksum are valid"
-                  exit 0
+                  && [ "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq "${#FILES[@]}" ]; then
+                  ALL_PRESENT=true
+                  for FILE in "${FILES[@]}"; do
+                    if ! grep -Fxq "$FILE" <<<"$CONTENTS"; then ALL_PRESENT=false; fi
+                  done
+                  if "$ALL_PRESENT"; then
+                    echo "$TAG already exists and archive/checksum are valid"
+                    exit 0
+                  fi
                 fi
               fi
             fi
             echo "$TAG exists but assets are incomplete or invalid; rebuilding/uploading"
           fi
-          mkdir -p dist/pkg/dcv
-          cp dcv/agent.py dcv/install.sh dcv/desktop.sh dcv/awsportal-job dcv/job_metrics.py dist/pkg/dcv/
+          mkdir -p dist/pkg
+          for FILE in "${FILES[@]:2}"; do cp --parents "$FILE" dist/pkg/; done
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal ./cmd/awsportal
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal-admin ./cmd/awsportal-admin
           test -x dist/pkg/awsportal
           test -x dist/pkg/awsportal-admin
-          tar -C dist/pkg -czf "dist/$ASSET" awsportal awsportal-admin dcv/agent.py dcv/install.sh dcv/desktop.sh dcv/awsportal-job dcv/job_metrics.py
+          tar -C dist/pkg -czf "dist/$ASSET" "${FILES[@]}"
           CONTENTS="$(tar -tzf "dist/$ASSET")"
           grep -Fxq "awsportal" <<<"$CONTENTS"
           grep -Fxq "awsportal-admin" <<<"$CONTENTS"
-          for FILE in dcv/agent.py dcv/install.sh dcv/desktop.sh dcv/awsportal-job dcv/job_metrics.py; do
+          for FILE in "${FILES[@]}"; do
             grep -Fxq "$FILE" <<<"$CONTENTS"
           done
-          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 7
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq "${#FILES[@]}"
           sha256sum "dist/$ASSET" > "dist/$ASSET.sha256"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
@@ -84,6 +91,7 @@ jobs:
           V="$(tr -d '[:space:]' < VERSION)"
           TAG="v$V"
           ASSET="awsportal-$TAG-linux-arm64.tar.gz"
+          mapfile -t FILES < scripts/release-files.txt
           gh release view "$TAG" >/dev/null
           git fetch --no-tags origin "refs/tags/$TAG"
           test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$GITHUB_SHA"
@@ -100,8 +108,8 @@ jobs:
           CONTENTS="$(tar -tzf "dist/verify/$ASSET")"
           grep -Fxq "awsportal" <<<"$CONTENTS"
           grep -Fxq "awsportal-admin" <<<"$CONTENTS"
-          for FILE in dcv/agent.py dcv/install.sh dcv/desktop.sh dcv/awsportal-job dcv/job_metrics.py; do
+          for FILE in "${FILES[@]}"; do
             grep -Fxq "$FILE" <<<"$CONTENTS"
           done
-          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq 7
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq "${#FILES[@]}"
           echo "RESULT: PASS - $TAG ARM64 release archive and checksum verified"

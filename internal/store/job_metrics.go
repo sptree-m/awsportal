@@ -153,7 +153,7 @@ func recordJobMeasurements(ctx context.Context, tx *sql.Tx, iid, eid int64, r En
 			// Even a sub-minute completed job needs a valid assignment. Recovered
 			// terminal jobs retain their original owner after an agent/OS restart.
 			var count int
-			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM environment_assignments WHERE instance_id=? AND user_id=? AND generation=? AND state!='RELEASED'`, iid, j.UserID, r.Generation).Scan(&count); err != nil {
+			if err = tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM environment_assignments WHERE instance_id=? AND user_id=? AND generation=? AND state!='RELEASED')+(SELECT COUNT(*) FROM personal_home_leases l JOIN environment_instances ei ON ei.instance_id=l.instance_id JOIN environments e ON e.id=ei.environment_id WHERE l.instance_id=? AND l.user_id=? AND ei.generation=? AND e.mode='personal' AND e.owner_user_id=l.user_id)`, iid, j.UserID, r.Generation, iid, j.UserID, r.Generation).Scan(&count); err != nil {
 				return err
 			}
 			if count != 1 {

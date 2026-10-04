@@ -20,9 +20,14 @@ terraform -chdir=terraform init -backend=false -input=false >/dev/null
 terraform -chdir=terraform validate
 terraform -chdir=terraform/modules/shared-pilot init -backend=false -input=false >/dev/null
 terraform -chdir=terraform/modules/shared-pilot validate
+for module in two-stage managed-profile cur; do
+ terraform -chdir="terraform/modules/$module" init -backend=false -input=false >/dev/null
+ terraform -chdir="terraform/modules/$module" validate
+done
 echo 'DCV agent reconciliation, isolation and revocation'
 python3 -m unittest discover -s dcv -p 'test_*.py'
 python3 -m unittest discover -s tests -p 'test_lab_*.py'
+python3 -m unittest discover -s tests -p 'test_cloud_*.py'
 bash -n dcv/install.sh dcv/desktop.sh lab/create.sh lab/test-dcv.sh
 python3 tests/lab-template.py
 cfn-lint lab/cloudformation.yaml

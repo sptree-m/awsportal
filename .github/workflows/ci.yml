@@ -59,3 +59,12 @@ jobs:
         with:
           name: htmx-console-screenshots
           path: ${{ runner.temp }}/ui-screenshots
+
+  windows-import:
+    name: windows-import-syntax
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse Windows scripts and verify CLI argument boundaries
+        shell: pwsh
+        run: ./tests/parse-windows.ps1
