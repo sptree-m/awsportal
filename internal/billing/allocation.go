@@ -41,7 +41,12 @@ func Micros(decimal string) (*big.Int, error) {
 	if !ok {
 		return nil, fmt.Errorf("invalid decimal")
 	}
-	r.Mul(r, big.NewRat(1000000, 1))
+	return RatMicros(r), nil
+}
+
+// Round the exact run total without converting a rational to a decimal string.
+func RatMicros(value *big.Rat) *big.Int {
+	r := new(big.Rat).Mul(value, big.NewRat(1000000, 1))
 	n := new(big.Int).Set(r.Num())
 	sign := n.Sign()
 	n.Abs(n)
@@ -53,7 +58,7 @@ func Micros(decimal string) (*big.Int, error) {
 	if sign < 0 {
 		q.Neg(q)
 	}
-	return q, nil
+	return q
 }
 
 // Signed largest remainder: credits and refunds are symmetric with costs.

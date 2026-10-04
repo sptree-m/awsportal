@@ -31,3 +31,12 @@ func TestDecimalNoFloat(t *testing.T) {
 		}
 	}
 }
+
+func TestExactTotalDoesNotRoundThroughDecimalText(t *testing.T) {
+	for _, value := range []string{"0.0000004999999999999999999999999999999999999", "-0.0000004999999999999999999999999999999999999"} {
+		r, ok := new(big.Rat).SetString(value)
+		if !ok { t.Fatal(value) }
+		if result := RatMicros(r); result.Sign() != 0 { t.Fatal("precision changed the total", value, result) }
+		if r.RatString() == "0" { t.Fatal("rounding mutated the source") }
+	}
+}

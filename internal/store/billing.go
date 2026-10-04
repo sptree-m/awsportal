@@ -152,7 +152,7 @@ func (s *Store) ImportBilling(ctx context.Context, admin User, source string, sc
 	if x := totals[0]; x != nil {
 		residual = x.String()
 	}
-	total, _ := billing.Micros(actual.FloatString(30))
+	total := billing.RatMicros(actual)
 	for uid, m := range totals {
 		if uid == 0 {
 			continue
@@ -196,7 +196,7 @@ func settleRationals(amounts map[int64]*big.Rat, actual *big.Rat) map[int64]*big
 		}
 		return c > 0
 	})
-	total, _ := billing.Micros(actual.FloatString(30))
+	total := billing.RatMicros(actual)
 	left := new(big.Int).Sub(total, sum).Int64()
 	for i := int64(0); i < left && i < int64(len(fs)); i++ {
 		out[fs[i].uid].Add(out[fs[i].uid], big.NewInt(1))
