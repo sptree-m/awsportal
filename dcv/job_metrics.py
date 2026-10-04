@@ -77,7 +77,8 @@ class JobLedger:
                 if job["exit_code"] is not None and job["exit_code"] != code:
                     raise ValueError("changed job completion")
                 counters, _ = self.counters(group)
-                job.update(counters, exit_code=code, quality="ok")
+                reset = counters["counter_epoch"] != job["counter_epoch"] or any(counters[k] < job[k] for k in ("cpu_usec", "read_bytes", "write_bytes"))
+                job.update(counters, exit_code=code, quality="counter_reset" if reset or job["quality"] == "counter_reset" else "ok")
                 # Wrapper is still in the scope; detached children must finish too.
             else:
                 raise ValueError("invalid job event")
@@ -91,7 +92,7 @@ class JobLedger:
                 try:
                     counters, populated = self.counters(job["group"])
                     reset = counters["counter_epoch"] != job["counter_epoch"] or any(counters[k] < job[k] for k in ("cpu_usec", "read_bytes", "write_bytes"))
-                    job.update(counters, quality="counter_reset" if reset else "ok")
+                    job.update(counters, quality="counter_reset" if reset or job["quality"] == "counter_reset" else "ok")
                     if populated:
                         job["state"] = "RUNNING"
                     else:
@@ -118,8 +119,11 @@ class JobLedger:
         with self.lock:
             for sample in samples:
                 job = self.jobs.get(sample["job_id"])
-                if job and job == {**sample, "group": job["group"]} and job["state"] in TERMINAL:
-                    del self.jobs[sample["job_id"]]
+                if job and job == {**sample, "group": job["group"]}:
+                    if job["state"] in TERMINAL:
+                        del self.jobs[sample["job_id"]]
+                    elif job["quality"] == "counter_reset":
+                        job["quality"] = "ok"  # Only a successfully sent reset is acknowledged.
             self.save()
 
 

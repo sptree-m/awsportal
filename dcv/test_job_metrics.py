@@ -78,6 +78,11 @@ class JobMetricsTest(unittest.TestCase):
         sample = self.ledger.sample()[0]
         self.assertEqual(sample["state"], "RUNNING")
         self.assertEqual(sample["quality"], "counter_reset")
+        self.write_counters(1000, 1)
+        again = self.ledger.sample()
+        self.assertEqual(again[0]["quality"], "counter_reset")
+        self.ledger.acknowledge(again)
+        self.assertEqual(self.ledger.sample()[0]["quality"], "ok")
 
     def test_os_reboot_marks_interruption_without_claiming_success(self):
         self.start()
