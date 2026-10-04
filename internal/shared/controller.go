@@ -22,19 +22,34 @@ func (c *Controller) Run(ctx context.Context) {
 	defer ticker.Stop()
 	exportTicker := time.NewTicker(time.Minute)
 	defer exportTicker.Stop()
+	c.run(ctx, ticker.C, exportTicker.C)
+}
+func (c *Controller) run(ctx context.Context, ticks, exports <-chan time.Time) {
+	if c.Sink != nil {
+		go c.exportLoop(ctx, exports)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
+		case now := <-ticks:
 			if err := c.Tick(ctx, now); err != nil {
 				c.Store.Audit(ctx, "controller", "environment.reconcile", "", "error", "reconciliation failed; existing work retained")
 			}
-		case <-exportTicker.C:
-			if c.Sink != nil {
-				if err := c.Export(ctx); err != nil {
-					c.Store.Audit(ctx, "collector", "usage.export", "", "error", "export deferred")
-				}
+		}
+	}
+}
+
+// Slow S3 requests must not delay seat reconciliation or continuous idle
+// observations. One exporter consumes the durable queue independently.
+func (c *Controller) exportLoop(ctx context.Context, ticks <-chan time.Time) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			if err := c.Export(ctx); err != nil && ctx.Err() == nil {
+				c.Store.Audit(ctx, "collector", "usage.export", "", "error", "export deferred")
 			}
 		}
 	}
