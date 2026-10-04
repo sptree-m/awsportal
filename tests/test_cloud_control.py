@@ -30,7 +30,7 @@ class CloudWorkerTests(unittest.TestCase):
         self.ec2.describe_launch_template_versions.return_value = {'LaunchTemplateVersions':[{'LaunchTemplateData':self.template}]}
         self.ec2.describe_images.return_value = {'Images':[{'State':'available','Tags':[{'Key':'awsportal:golden-sha256','Value':'a'*64}]}]}
         self.instance = {'InstanceId':'i-aaaaaaaa','PrivateIpAddress':'10.0.0.1','State':{'Name':'running'},'Tags':[{'Key':'awsportal:'+k,'Value':v} for k,v in {'managed':'shared','pool':'1','generation':'1','operation':'b'*32}.items()],'BlockDeviceMappings':[{'Ebs':{'VolumeId':'vol-aaaaaaaa','DeleteOnTermination':True}}]}
-        self.ec2.describe_instances.return_value = {'Reservations':[{'Instances':[self.instance]}]}
+        self.ec2.describe_instances.side_effect = lambda **kwargs: {'Reservations':[]} if 'Filters' in kwargs else {'Reservations':[{'Instances':[self.instance]}]}
         self.ec2.run_instances.return_value = {'Instances':[self.instance]}
         self.ssm.get_parameter.return_value = {'Parameter':{'Value':'c'*64}}
         self.event = {'operation_id':'b'*32,'environment_id':1,'generation':1,'kind':'PROVISION',**{'expected_'+k:v for k,v in {'image_id':'ami-aaaaaaaa','template_id':'lt-aaaaaaaa','template_version':'1','checksum':'a'*64}.items()}}
@@ -43,6 +43,18 @@ class CloudWorkerTests(unittest.TestCase):
             self.assertEqual(call.kwargs['LaunchTemplate'],{'LaunchTemplateId':'lt-aaaaaaaa','Version':'1'})
         self.assertNotIn('credential',first)
         self.assertEqual(len(first['token_hash']),64)
+    def test_tagged_original_is_adopted_without_launching(self):
+        self.ec2.describe_instances.side_effect = lambda **kwargs: {'Reservations':[{'Instances':[self.instance]}]}
+        result=worker.handler({**self.event,'retry_attempt':2},None)
+        self.assertEqual(result['instance_id'],'i-aaaaaaaa')
+        self.ec2.run_instances.assert_not_called()
+        self.instance['State']['Name']='terminated'
+        with self.assertRaises(RuntimeError):worker.handler(self.event,None)
+        self.ec2.run_instances.assert_not_called()
+    def test_duplicate_tagged_resources_are_quarantined(self):
+        self.ec2.describe_instances.side_effect = lambda **kwargs: {'Reservations':[{'Instances':[self.instance,self.instance]}]}
+        with self.assertRaises(RuntimeError):worker.handler(self.event,None)
+        self.ec2.run_instances.assert_not_called()
     def test_changed_profile_never_launches(self):
         self.event['expected_image_id']='ami-bbbbbbbb'
         with self.assertRaises(ValueError):worker.handler(self.event,None)

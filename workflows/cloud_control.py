@@ -38,15 +38,29 @@ def handler(event, context):
         image_tags = {t['Key']:t['Value'] for t in image.get('Tags', [])}
         if image['State'] != 'available' or image_tags.get('awsportal:golden-sha256') != profile['ami_checksum']:
             raise ValueError('Golden image checksum attestation mismatch')
-        response = ec2.run_instances(MinCount=1, MaxCount=1, ClientToken=operation,
-            LaunchTemplate={'LaunchTemplateId': profile['launch_template_id'], 'Version': profile['launch_template_version']},
-            TagSpecifications=[{'ResourceType': typ, 'Tags': [
-                {'Key': 'awsportal:managed', 'Value': os.environ['RESOURCE_CLASS']},
-                {'Key': 'awsportal:pool', 'Value': pool},
-                {'Key': 'awsportal:generation', 'Value': generation},
-                {'Key': 'awsportal:operation', 'Value': operation}]} for typ in ('instance', 'volume')])
-        iid = response['Instances'][0]['InstanceId']
-        instance = ec2.describe_instances(InstanceIds=[iid])['Reservations'][0]['Instances'][0]
+        # Reconcile tagged resources before any launch, including after a long outage.
+        # ClientToken retry alone must not invent another resource for the same slot.
+        known = ec2.describe_instances(Filters=[
+            {'Name':'tag:awsportal:operation','Values':[operation]},
+            {'Name':'tag:awsportal:managed','Values':[os.environ['RESOURCE_CLASS']]},
+            {'Name':'tag:awsportal:pool','Values':[pool]},
+            {'Name':'tag:awsportal:generation','Values':[generation]}])
+        candidates = [i for r in known['Reservations'] for i in r['Instances']]
+        if len(candidates) > 1:
+            raise RuntimeError('multiple resources for one reservation; quarantine and investigate')
+        if candidates:
+            instance = candidates[0]
+            iid = instance['InstanceId']
+        else:
+            response = ec2.run_instances(MinCount=1, MaxCount=1, ClientToken=operation,
+                LaunchTemplate={'LaunchTemplateId': profile['launch_template_id'], 'Version': profile['launch_template_version']},
+                TagSpecifications=[{'ResourceType': typ, 'Tags': [
+                    {'Key': 'awsportal:managed', 'Value': os.environ['RESOURCE_CLASS']},
+                    {'Key': 'awsportal:pool', 'Value': pool},
+                    {'Key': 'awsportal:generation', 'Value': generation},
+                    {'Key': 'awsportal:operation', 'Value': operation}]} for typ in ('instance', 'volume')])
+            iid = response['Instances'][0]['InstanceId']
+            instance = ec2.describe_instances(InstanceIds=[iid])['Reservations'][0]['Instances'][0]
         if instance['State']['Name'] in ('terminated', 'shutting-down'):
             raise RuntimeError('provisioned resource terminated; reconciliation required')
         if instance['State']['Name'] != 'running':
