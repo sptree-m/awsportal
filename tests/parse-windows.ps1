@@ -23,4 +23,5 @@ function aws.exe {$global:LASTEXITCODE=2;return 'failure'}
 $rejected=$false
 try{$null=Invoke-AwsCli @('s3','cp','source','destination')}catch{$rejected=$true}
 if(-not $rejected){throw 'CLI nonzero exit accepted'}
+$global:LASTEXITCODE=0
 Write-Output 'Windows PowerShell syntax and CLI argument handling: PASS'

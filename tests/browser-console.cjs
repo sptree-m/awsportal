@@ -95,6 +95,14 @@ const assert=require('node:assert/strict');
    if(process.env.AWSPORTAL_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/jobs-${path.includes('admin')?'admin':'user'}-${width}x${height}.png`,fullPage:true});
   }
  }
+ for(const path of ['/admin/two-stage','/settlements']){
+  await page.goto(base+path);assert.equal(await page.locator('h1').count(),1);
+  for(const [width,height] of [[1366,768],[1920,1080],[2560,1440],[3840,2160],[390,844]]){
+   await page.setViewportSize({width,height});
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`two-stage overflow at ${width} (${path})`);
+   if(process.env.AWSPORTAL_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/two-stage-${path.includes('admin')?'admin':'settlement'}-${width}x${height}.png`,fullPage:true});
+  }
+ }
  await userContext.close();
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
  console.log('PASS: boosted navigation, repeated search, partial refresh, detail action/poll termination, idle traffic, errors, cost month/history URL, four desktop resolutions plus mobile logout, administrator-only instance disable/reactivate, user/group grants and effective user access, no external requests');

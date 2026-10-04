@@ -157,5 +157,5 @@ output "bucket" {
   value = aws_s3_bucket.cur.bucket
 }
 output "export_arn" {
-  value = aws_bcmdataexports_export.cur.export_arn
+  value = aws_bcmdataexports_export.cur.export[0].export_arn
 }

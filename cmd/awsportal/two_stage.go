@@ -65,6 +65,8 @@ func (a *app) stageTwoChange(w http.ResponseWriter, r *http.Request) {
 		err = a.db.SetImportEnabled(r.Context(), u, r.FormValue("enabled") == "true")
 	case "import":
 		_, err = a.db.RequestImport(r.Context(), u, r.FormValue("idempotency_key"), r.FormValue("source_root"), r.FormValue("bucket"), r.FormValue("prefix"), time.Now())
+	case "import_reconcile":
+		err = a.db.ReconcileImportProvision(r.Context(), u, r.FormValue("id"), r.FormValue("reason"))
 	case "import_cleanup":
 		err = a.db.RequestImportCleanup(r.Context(), u, r.FormValue("id"), r.FormValue("reason"))
 	case "golden_register":

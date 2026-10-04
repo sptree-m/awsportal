@@ -8,7 +8,7 @@ import (
 )
 
 const operationMetricSchema = `
-CREATE TABLE IF NOT EXISTS operational_samples(instance_id INTEGER NOT NULL,observed_at INTEGER NOT NULL,reason TEXT NOT NULL,idle INTEGER NOT NULL,seconds INTEGER NOT NULL,PRIMARY KEY(instance_id,observed_at));
+CREATE TABLE IF NOT EXISTS operational_samples(instance_id INTEGER NOT NULL,observed_at INTEGER NOT NULL,reason TEXT NOT NULL,idle INTEGER NOT NULL,seconds INTEGER NOT NULL,idle_seconds INTEGER NOT NULL,PRIMARY KEY(instance_id,observed_at));
 CREATE TABLE IF NOT EXISTS instance_readiness(instance_id INTEGER PRIMARY KEY,ready_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS interval_group_time ON connection_intervals(group_id,start_at,end_at);
 CREATE INDEX IF NOT EXISTS interval_instance_time ON connection_intervals(instance_id,start_at,end_at);
@@ -32,14 +32,18 @@ func recordOperationObservation(ctx context.Context, tx *sql.Tx, iid int64, reas
 	if previous == 0 || seconds > 90 || seconds < 0 || previousReason == "metrics unavailable or stale" || reason == "metrics unavailable or stale" {
 		seconds = 0
 	}
-	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO operational_samples VALUES(?,?,?,?,?)`, iid, slot, reason, idle && previousIdle, seconds)
+	idleSeconds := int64(0)
+	if idle && previousIdle {
+		idleSeconds = seconds
+	}
+	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO operational_samples VALUES(?,?,?,?,?,?)`, iid, slot, reason, idle, seconds, idleSeconds)
 	return err
 }
 func (s *Store) OperationalMetrics(ctx context.Context, now time.Time) (OperationalMetrics, error) {
 	var m OperationalMetrics
 	m.Reasons = map[string]int64{}
 	cutoff := now.AddDate(0, 0, -30).Unix()
-	rows, err := s.DB.QueryContext(ctx, `SELECT reason,COUNT(*),COALESCE(SUM(seconds),0),COALESCE(SUM(CASE WHEN idle=1 THEN seconds ELSE 0 END),0) FROM operational_samples WHERE observed_at>=? GROUP BY reason`, cutoff)
+	rows, err := s.DB.QueryContext(ctx, `SELECT reason,COUNT(*),COALESCE(SUM(seconds),0),COALESCE(SUM(idle_seconds),0) FROM operational_samples WHERE observed_at>=? GROUP BY reason`, cutoff)
 	if err != nil {
 		return m, err
 	}

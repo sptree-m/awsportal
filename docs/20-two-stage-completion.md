@@ -102,7 +102,7 @@ Workflowが作る専用WindowsパスワードはSSM SecureStringだけに保存�
 
 Portalの独立workerがmanifestとログのimmutable version/hash、正確なS3 path set、size、全オブジェクトのSHA256をstream検証する（multipart ETagをchecksum扱いしない）。大規模転送ではこの再読取の時間/通信費も計上する。検証前にAVAILABLEにはしない。検証済みDatasetを公開後、Windows EC2/EBS削除とmachine/admin資格情報失効を確認してSUCCEEDED。
 
-失敗/取消/48時間timeoutはresourcesを保持する。管理画面で理由を入力して保留リソースを削除できるが、FAILED/CANCELLED/TIMED_OUTを成功へ書き換えない。Cleanup failureはCLEANUP_FAILEDで保持し、理由付き再試行は別execution。応答不明のPROVISIONINGを勝手に取消/削除しない。AWSのoperation tagから実体を調査して整合を回復する。
+失敗/取消/48時間timeoutはresourcesを保持する。管理画面で理由を入力して保留リソースを削除できるが、FAILED/CANCELLED/TIMED_OUTを成功へ書き換えない。Cleanup failureはCLEANUP_FAILEDで保持し、理由付き再試行は別execution。応答不明のPROVISIONINGを勝手に取消/削除しない。AWSのoperation tagから実体を調査し、FAILEDかつ実体未登録の起動は管理画面から理由付きで同じClientTokenを再照合する。active Importは最大10件。
 
 ## 検証とリリース
 

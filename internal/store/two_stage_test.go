@@ -351,3 +351,24 @@ func TestFailedImportManualCleanupNeverPublishesDataset(t *testing.T) {
 		t.Fatal("cancelled import published dataset")
 	}
 }
+
+func TestOperationalMetricsIdleIntervalsExcludeGaps(t *testing.T) {
+ s,_,_,_,now:=sharedFixture(t);ctx:=context.Background()
+ record:=func(at time.Time,reason string,idle bool){tx,err:=s.DB.BeginTx(ctx,nil);if err!=nil{t.Fatal(err)};if err=recordOperationObservation(ctx,tx,1,reason,idle,at);err!=nil{t.Fatal(err)};if err=tx.Commit();err!=nil{t.Fatal(err)}}
+ start:=now.Add(-10*time.Minute).Truncate(time.Minute)
+ record(start,"idle observation only; automatic termination disabled",true)
+ record(start.Add(time.Minute),"idle observation only; automatic termination disabled",true)
+ record(start.Add(2*time.Minute),"metrics unavailable or stale",false)
+ record(start.Add(3*time.Minute),"idle observation only; automatic termination disabled",true)
+ record(start.Add(4*time.Minute),"idle observation only; automatic termination disabled",true)
+ record(start.Add(7*time.Minute),"idle observation only; automatic termination disabled",true)
+ m,err:=s.OperationalMetrics(ctx,now);if err!=nil{t.Fatal(err)}
+ if m.IdleSeconds!=120||m.MeasuredSeconds!=120{t.Fatal(m)}
+}
+func TestCancelledImportCannotBeSubmittedByStaleWorker(t *testing.T) {
+ s,a,_,_,now:=sharedFixture(t);ctx:=context.Background()
+ approveGolden(t,s,a,"windows-box-v1");s.SetImportEnabled(ctx,a,true)
+ id,err:=s.RequestImport(ctx,a,"cancel-before-submit",`C:\Users\AwsImportAdmin\Box\dataset`,"approved-bucket","datasets/cancel-submit/",now);if err!=nil{t.Fatal(err)}
+ if err=s.CancelImport(ctx,a,id);err!=nil{t.Fatal(err)}
+ if err=s.MarkImportProvision(ctx,id,"");err==nil{t.Fatal("cancelled import submitted")}
+}
