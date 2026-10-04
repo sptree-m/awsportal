@@ -48,7 +48,12 @@ func (a *app) environmentPage(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, card)
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	a.renderView(w, r, "environments.html", "environments-live", "environments-live", map[string]any{"User": u, "Environments": cards})
+	jobs, err := a.db.VisibleManagedJobs(r.Context(), u, time.Now())
+	if err != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	a.renderView(w, r, "environments.html", "environments-live", "environments-live", map[string]any{"User": u, "Environments": cards, "Jobs": jobs})
 }
 func pathID(r *http.Request) (int64, error) { return strconv.ParseInt(r.PathValue("id"), 10, 64) }
 func (a *app) environmentConnect(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +166,12 @@ func (a *app) environmentAdminPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB error", 500)
 		return
 	}
-	a.renderView(w, r, "environment-admin.html", "environment-admin-live", "environment-admin-live", map[string]any{"User": u, "Environments": xs, "Users": users, "Groups": groups, "Instances": instances})
+	jobs, err := a.db.VisibleManagedJobs(r.Context(), u, time.Now())
+	if err != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	a.renderView(w, r, "environment-admin.html", "environment-admin-live", "environment-admin-live", map[string]any{"User": u, "Environments": xs, "Users": users, "Groups": groups, "Instances": instances, "Jobs": jobs})
 }
 func (a *app) environmentAdminChange(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value("user").(store.User)

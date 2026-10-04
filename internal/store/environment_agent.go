@@ -27,21 +27,23 @@ type UserWork struct {
 	Connected       bool  `json:"connected"`
 }
 type EnvironmentReport struct {
-	AgentVersion      int        `json:"agent_version"`
-	Generation        int64      `json:"generation"`
-	BootID            string     `json:"boot_id"`
-	Sequence          int64      `json:"sequence"`
-	ObservedAt        int64      `json:"observed_at"`
-	CPU               float64    `json:"cpu"`
-	Memory            float64    `json:"memory"`
-	MetricsValid      bool       `json:"metrics_valid"`
-	StorageBusy       bool       `json:"storage_busy"`
-	Work              []UserWork `json:"work"`
-	ClosedAssignments []int64    `json:"closed_assignments"`
-	ReadyUsers        []int64    `json:"ready_users"`
-	AppliedRevision   int64      `json:"applied_revision"`
-	BrowserBlocked    bool       `json:"browser_blocked"`
-	Error             string     `json:"error"`
+	MeasurementVersion int              `json:"measurement_version,omitempty"`
+	JobMeasurements    []JobMeasurement `json:"job_measurements,omitempty"`
+	AgentVersion       int              `json:"agent_version"`
+	Generation         int64            `json:"generation"`
+	BootID             string           `json:"boot_id"`
+	Sequence           int64            `json:"sequence"`
+	ObservedAt         int64            `json:"observed_at"`
+	CPU                float64          `json:"cpu"`
+	Memory             float64          `json:"memory"`
+	MetricsValid       bool             `json:"metrics_valid"`
+	StorageBusy        bool             `json:"storage_busy"`
+	Work               []UserWork       `json:"work"`
+	ClosedAssignments  []int64          `json:"closed_assignments"`
+	ReadyUsers         []int64          `json:"ready_users"`
+	AppliedRevision    int64            `json:"applied_revision"`
+	BrowserBlocked     bool             `json:"browser_blocked"`
+	Error              string           `json:"error"`
 }
 type EnvironmentAgentState struct {
 	Shared       bool         `json:"shared"`
@@ -152,6 +154,9 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 			return fmt.Errorf("HOME and session proof required")
 		}
 	}
+	if err := validateJobMeasurements(r); err != nil {
+		return err
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -232,6 +237,9 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 		if !allowedReady[uid] {
 			return fmt.Errorf("user is not prepared for this assignment")
 		}
+	}
+	if err = recordJobMeasurements(ctx, tx, iid, eid, r, now); err != nil {
+		return err
 	}
 	// Reset the continuous idle interval at the instant any unsafe sample is
 	// received, including events occurring between controller ticks.
