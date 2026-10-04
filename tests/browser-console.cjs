@@ -91,7 +91,7 @@ const assert=require('node:assert/strict');
   assert.match(await page.locator('main').textContent(),/計測が古い/);
   for(const [width,height] of [[1366,768],[1920,1080],[2560,1440],[3840,2160],[390,844]]){
    await page.setViewportSize({width,height});
-   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`job history overflow at ${width} (${path})`);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`job history overflow at ${width} (${path}): ${await page.evaluate(()=>Array.from(document.querySelectorAll("main,main *")).filter(e=>e.getBoundingClientRect().right>innerWidth+1).slice(0,8).map(e=>e.tagName+"."+e.className+":"+Math.round(e.getBoundingClientRect().width)).join(","))}`);
    if(process.env.AWSPORTAL_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/jobs-${path.includes('admin')?'admin':'user'}-${width}x${height}.png`,fullPage:true});
   }
  }
