@@ -41,7 +41,12 @@ func (a *app) stageTwoPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "DB error", 500)
 		return
 	}
-	a.renderPage(w, r, "two-stage.html", map[string]any{"User": u, "Runs": runs, "Imports": jobs, "Operations": ops, "Images": images, "Metrics": metrics})
+	volumes, err := a.db.VolumeOperations(r.Context())
+	if err != nil {
+		http.Error(w, "DB error", 500)
+		return
+	}
+	a.renderPage(w, r, "two-stage.html", map[string]any{"User": u, "Runs": runs, "Imports": jobs, "Operations": ops, "Images": images, "Metrics": metrics, "Volumes": volumes})
 }
 func (a *app) stageTwoChange(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value("user").(store.User)
@@ -57,6 +62,10 @@ func (a *app) stageTwoChange(w http.ResponseWriter, r *http.Request) {
 	integer := func(name string) int64 { x, _ := strconv.ParseInt(r.FormValue(name), 10, 64); return x }
 	var err error
 	switch r.FormValue("operation") {
+	case "volume_performance":
+		err = a.db.RequestVolumePerformance(r.Context(), u, integer("instance_id"), r.FormValue("volume_id"), integer("iops"), integer("throughput"), r.FormValue("reason"))
+	case "volume_reconcile":
+		err = a.db.RetryVolumeOperation(r.Context(), u, r.FormValue("id"), r.FormValue("reason"))
 	case "cloud_reconcile":
 		err = a.db.RetryCloudOperation(r.Context(), u, r.FormValue("id"), r.FormValue("reason"))
 	case "pool":

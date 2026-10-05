@@ -92,6 +92,13 @@ func main() {
 		sharedWorker.ScaleOut = env("AWSPORTAL_SCALE_OUT", "false") == "true"
 		sharedWorker.Terminate = env("AWSPORTAL_TERMINATE", "false") == "true"
 	}
+	if arn := env("AWSPORTAL_PERFORMANCE_WORKFLOW", ""); arn != "" {
+		sharedWorker.PerformanceWorkflow, e = awsapi.NewWorkflow(cfg, arn, arn)
+		if e != nil {
+			log.Fatal(e)
+		}
+	}
+
 	go sharedWorker.Run(ctx)
 	go (&metering.Worker{Store: db, Meter: awsapi.NewStorageMeter(cfg)}).Run(ctx)
 	if bucket := env("AWSPORTAL_CUR_BUCKET", ""); bucket != "" {

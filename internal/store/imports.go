@@ -70,8 +70,12 @@ func (s *Store) RequestImport(ctx context.Context, u User, key, root, bucket, pr
 		return "", err
 	}
 	var active int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM import_jobs WHERE state IN ('REQUESTED','PROVISIONING','WAITING_BOX_LOGIN','WAITING_OFFLINE_READY','UPLOADING','VALIDATING','VERIFIED','CLEANUP_REQUESTED','CLEANING_UP')`).Scan(&active); err != nil { return "", err }
-	if active >= 10 { return "", fmt.Errorf("active import limit reached") }
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM import_jobs WHERE state IN ('REQUESTED','PROVISIONING','WAITING_BOX_LOGIN','WAITING_OFFLINE_READY','UPLOADING','VALIDATING','VERIFIED','CLEANUP_REQUESTED','CLEANING_UP')`).Scan(&active); err != nil {
+		return "", err
+	}
+	if active >= 10 {
+		return "", fmt.Errorf("active import limit reached")
+	}
 	id, err = operationID()
 	if err != nil {
 		return "", err
@@ -271,15 +275,31 @@ func (s *Store) FailImportVerification(ctx context.Context, id string) error {
 }
 
 func (s *Store) ReconcileImportProvision(ctx context.Context, u User, id, reason string) error {
- if err := adminOnly(u); err != nil { return err }
- if strings.TrimSpace(reason)=="" { return fmt.Errorf("AWS reconciliation reason required") }
- tx,err:=s.DB.BeginTx(ctx,nil);if err!=nil{return err};defer tx.Rollback()
- var input string
- if err=tx.QueryRowContext(ctx,`SELECT provision_input FROM import_jobs WHERE id=? AND state='FAILED' AND instance_id='' AND execution_arn!='' AND (SELECT enabled FROM import_controls WHERE id=1)=1`,id).Scan(&input);err!=nil{return err}
- var fields map[string]any
- if err=json.Unmarshal([]byte(input),&fields);err!=nil{return err}
- attempt,_:=fields["retry_attempt"].(float64);fields["retry_attempt"]=int(attempt)+1
- raw,_:=json.Marshal(fields)
- _,err=tx.ExecContext(ctx,`UPDATE import_jobs SET state='PROVISIONING',provision_input=?,execution_arn='',error=? WHERE id=?`,string(raw),"administrator provisioning reconciliation: "+reason,id)
- if err!=nil{return err};return tx.Commit()
+	if err := adminOnly(u); err != nil {
+		return err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("AWS reconciliation reason required")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var input string
+	if err = tx.QueryRowContext(ctx, `SELECT provision_input FROM import_jobs WHERE id=? AND state='FAILED' AND instance_id='' AND execution_arn!='' AND (SELECT enabled FROM import_controls WHERE id=1)=1`, id).Scan(&input); err != nil {
+		return err
+	}
+	var fields map[string]any
+	if err = json.Unmarshal([]byte(input), &fields); err != nil {
+		return err
+	}
+	attempt, _ := fields["retry_attempt"].(float64)
+	fields["retry_attempt"] = int(attempt) + 1
+	raw, _ := json.Marshal(fields)
+	_, err = tx.ExecContext(ctx, `UPDATE import_jobs SET state='PROVISIONING',provision_input=?,execution_arn='',error=? WHERE id=?`, string(raw), "administrator provisioning reconciliation: "+reason, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }

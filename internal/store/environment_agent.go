@@ -417,7 +417,7 @@ func (s *Store) RecordIdleDecisions(ctx context.Context, now time.Time) ([]IdleD
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT i.id,i.instance_id,ei.environment_id,ei.idle_since,ei.generation,i.dcv_policy_revision,COALESCE(o.received_at,0),COALESCE(o.payload,''),(SELECT COUNT(*) FROM environment_assignments a WHERE a.instance_id=i.id AND a.state!='RELEASED'),((SELECT COUNT(*) FROM connection_requests r WHERE r.environment_id=ei.environment_id AND r.state='WAITING')+(SELECT COUNT(*) FROM dataset_cache_jobs c WHERE c.instance_id=i.id AND c.state IN ('PENDING','RUNNING'))) FROM environment_instances ei JOIN environments e ON e.id=ei.environment_id JOIN instances i ON i.id=ei.instance_id LEFT JOIN instance_observations o ON o.instance_id=i.id WHERE e.mode='shared'`)
+	rows, err := tx.QueryContext(ctx, `SELECT i.id,i.instance_id,ei.environment_id,ei.idle_since,ei.generation,i.dcv_policy_revision,COALESCE(o.received_at,0),COALESCE(o.payload,''),(SELECT COUNT(*) FROM environment_assignments a WHERE a.instance_id=i.id AND a.state!='RELEASED'),((SELECT COUNT(*) FROM connection_requests r WHERE r.environment_id=ei.environment_id AND r.state='WAITING')+(SELECT COUNT(*) FROM dataset_cache_jobs c WHERE c.instance_id=i.id AND c.state IN ('PENDING','RUNNING'))+(SELECT COUNT(*) FROM volume_operations v WHERE v.instance_id=i.id AND v.state!='SUCCEEDED')) FROM environment_instances ei JOIN environments e ON e.id=ei.environment_id JOIN instances i ON i.id=ei.instance_id LEFT JOIN instance_observations o ON o.instance_id=i.id WHERE e.mode='shared'`)
 	if err != nil {
 		return nil, err
 	}
@@ -475,6 +475,11 @@ func (s *Store) RecordIdleDecisions(ctx context.Context, now time.Time) ([]IdleD
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE environment_instances SET idle_since=?,idle_reason=? WHERE instance_id=?`, x.Since, x.Reason, x.iid); err != nil {
 			return nil, err
+		}
+		if valid && x.received >= now.Add(-90*time.Second).Unix() {
+			if err = recordLoadMinute(ctx, tx, x.iid, r, now); err != nil {
+				return nil, err
+			}
 		}
 		if err = recordOperationObservation(ctx, tx, x.iid, x.Reason, safe, now); err != nil {
 			return nil, err

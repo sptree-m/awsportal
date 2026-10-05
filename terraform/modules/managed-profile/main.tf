@@ -81,7 +81,9 @@ resource "aws_launch_template" "compute" {
 
     device_name = data.aws_ami.golden.root_device_name
     ebs {
-      volume_size           = var.resource_class == "windows-import" ? 1024 : 100
+      volume_size           = var.resource_class == "windows-import" ? var.windows_root_gib : var.shared_root_gib
+      iops                  = var.root_iops
+      throughput            = var.root_throughput
       volume_type           = "gp3"
       encrypted             = true
       delete_on_termination = true
@@ -94,7 +96,9 @@ resource "aws_launch_template" "compute" {
     content {
       device_name = "/dev/sdf"
       ebs {
-        volume_size           = 1024
+        volume_size           = var.scratch_gib
+        iops                  = var.scratch_iops
+        throughput            = var.scratch_throughput
         volume_type           = "gp3"
         encrypted             = true
         delete_on_termination = true
@@ -110,6 +114,18 @@ resource "aws_launch_template" "compute" {
   lifecycle {
     create_before_destroy = true
     precondition {
+      condition     = var.windows_root_gib >= 1024 && var.windows_root_gib <= 16384 && var.shared_root_gib >= 16 && var.scratch_gib >= 1 && var.scratch_gib <= 16384 && var.root_iops >= 3000 && var.root_iops <= 16000 && var.scratch_iops >= 3000 && var.scratch_iops <= 16000 && var.root_throughput >= 125 && var.root_throughput <= 1000 && var.scratch_throughput >= 125 && var.scratch_throughput <= 1000 && var.root_throughput * 4 <= var.root_iops && var.scratch_throughput * 4 <= var.scratch_iops
+      error_message = "Approved gp3 size, IOPS and throughput limits required."
+    }
+    precondition {
+      condition     = length(var.security_group_ids) > 0 && alltrue([for sg in data.aws_security_group.approved : sg.vpc_id == data.aws_subnet.approved.vpc_id]) && data.aws_route_table.approved.vpc_id == data.aws_subnet.approved.vpc_id
+      error_message = "Subnet, SGs and route table must belong to the approved VPC."
+    }
+    precondition {
+      condition     = alltrue([for c in local.allowed_ipv4_cidrs : cidrhost("${cidrhost(c, 0)}/${split("/", data.aws_subnet.approved.cidr_block)[1]}", 0) == cidrhost(data.aws_subnet.approved.cidr_block, 0) && tonumber(split("/", c)[1]) >= tonumber(split("/", data.aws_subnet.approved.cidr_block)[1])])
+      error_message = "IP allocations must fit inside the approved subnet."
+    }
+    precondition {
       condition     = var.resource_class != "windows-import" || (var.instance_type == "m7i.2xlarge" && data.aws_ami.golden.platform == "windows")
       error_message = "Windows import requires a Windows Golden AMI and m7i.2xlarge."
     }
@@ -118,6 +134,67 @@ resource "aws_launch_template" "compute" {
 }
 output "approved_profile" {
   value = {
-    launch_template_id = aws_launch_template.compute.id, launch_template_version = tostring(aws_launch_template.compute.latest_version), ami_id = var.ami_id, ami_checksum = var.ami_checksum
+    launch_template_id = aws_launch_template.compute.id, launch_template_version = tostring(aws_launch_template.compute.latest_version), ami_id = var.ami_id, ami_checksum = var.ami_checksum, network = { vpc_id = data.aws_subnet.approved.vpc_id, subnet_id = var.subnet_id, security_group_ids = var.security_group_ids, allowed_ipv4_cidrs = local.allowed_ipv4_cidrs, route_table_id = var.route_table_id, transit_gateway_id = var.transit_gateway_id }
   }
+}
+
+variable "allowed_ipv4_cidrs" {
+  description = "Approved primary IPv4 allocation ranges within the subnet. Empty uses the full subnet CIDR."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for c in var.allowed_ipv4_cidrs : can(cidrnetmask(c))])
+    error_message = "IPv4 CIDRs required."
+  }
+}
+variable "route_table_id" {
+  type = string
+}
+variable "transit_gateway_id" {
+  type    = string
+  default = ""
+}
+data "aws_subnet" "approved" { id = var.subnet_id }
+data "aws_route_table" "approved" { route_table_id = var.route_table_id }
+data "aws_security_group" "approved" {
+  for_each = toset(var.security_group_ids)
+  id       = each.value
+}
+locals {
+  allowed_ipv4_cidrs = length(var.allowed_ipv4_cidrs) == 0 ? [data.aws_subnet.approved.cidr_block] : var.allowed_ipv4_cidrs
+}
+
+variable "windows_root_gib" {
+  type    = number
+  default = 1024
+}
+
+variable "shared_root_gib" {
+  type    = number
+  default = 100
+}
+
+variable "scratch_gib" {
+  type    = number
+  default = 1024
+}
+
+variable "root_iops" {
+  type    = number
+  default = 3000
+}
+
+variable "root_throughput" {
+  type    = number
+  default = 125
+}
+
+variable "scratch_iops" {
+  type    = number
+  default = 3000
+}
+
+variable "scratch_throughput" {
+  type    = number
+  default = 125
 }

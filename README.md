@@ -44,3 +44,5 @@ DCV接続・アカウント同期・v1.6.0ラボ試験は [DCV試験手順](docs
 Shared固定pilotとJob/cgroup計測の候補版 `v1.7.0-rc.1` は [候補版の変更・導入・既知制限](docs/19-release-1.7.0-rc.1.md) を参照してください。第1段階のAWS受入は未完了です。
 
 二段階実装の候補版 `v1.8.0-rc.1` は [導入・復旧・費用配賦・Windows取り込み](docs/20-two-stage-completion.md) を参照してください。自動増減・取り込みは初期OFF、実機受入記録を確認してから有効化します。
+
+組織管理のVPC・指定IP範囲・TGW経路を使う新規／既存／混在構成は [導入手順](docs/21-organization-deployment.md) を参照してください。

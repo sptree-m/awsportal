@@ -19,6 +19,7 @@ type Controller struct {
 	Store               *store.Store
 	Sink                UsageSink
 	Workflow            Workflow
+	PerformanceWorkflow Workflow
 	ScaleOut, Terminate bool
 	Parquet             bool
 }
@@ -34,7 +35,7 @@ func (c *Controller) run(ctx context.Context, ticks, exports <-chan time.Time) {
 	if c.Sink != nil {
 		go c.exportLoop(ctx, exports)
 	}
-	if c.Workflow != nil {
+	if c.Workflow != nil || c.PerformanceWorkflow != nil {
 		go c.cloudLoop(ctx)
 	}
 	for {
@@ -144,6 +145,9 @@ func (c *Controller) cloudLoop(ctx context.Context) {
 		case now := <-t.C:
 			timeout, cancel := context.WithTimeout(ctx, 30*time.Second)
 			err := c.CloudTick(timeout, now)
+			if err == nil {
+				err = c.VolumeTick(timeout)
+			}
 			cancel()
 			if err != nil && ctx.Err() == nil {
 				c.Store.Audit(ctx, "cloud-worker", "cloud.reconcile", "", "error", "workflow deferred; capacity retained")
