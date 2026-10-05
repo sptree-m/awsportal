@@ -296,7 +296,7 @@ locals {
       {
         Effect = "Allow", Action = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"], Resource = var.kms_key_arn
       }
-      ], flatten([for p in values(var.approved_pools) : p.network == null ? [] : [
+      ], flatten([for p in values(var.approved_pools) : [
         {
           Effect    = "Allow", Action = ["ec2:RunInstances"],
           Resource  = concat([coalesce(p.network.subnet_arn, "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:subnet/${p.network.subnet_id}")], p.network.security_group_arns != null ? p.network.security_group_arns : [for sg in p.network.security_group_ids : "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:security-group/${sg}"]),
@@ -307,7 +307,7 @@ locals {
           Resource  = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:network-interface/*",
           Condition = { ArnEquals = { "ec2:LaunchTemplate" = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:launch-template/${p.launch_template_id}", "ec2:Subnet" = coalesce(p.network.subnet_arn, "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:subnet/${p.network.subnet_id}") }, Bool = { "ec2:AssociatePublicIpAddress" = "false" } }
         }
-    ]]))
+    ] if p.network != null]))
   })
 
 }
