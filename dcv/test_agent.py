@@ -34,7 +34,7 @@ class AgentTest(unittest.TestCase):
 
     def run_command(self, args, optional=False):
         self.commands.append(args)
-        status, output = 0, ""
+        status, output = (1 if args[0].endswith("findmnt") else 0), ""
         if args[0].endswith("useradd"):
             name = args[-1]
             uid = int(args[args.index("--uid") + 1])
@@ -265,6 +265,29 @@ class SharedSafetyTest(AgentTest):
         self.assertFalse(self.a.sync())
         self.assertIn("awp-u1", self.sessions)
         self.assertFalse(any(c[0].endswith("pkill") for c in self.commands))
+
+    def test_expired_reservation_never_closes_a_live_or_unknown_connection(self):
+        account=self.account(1);account.update(assignment_id=123,reservation_expired=True)
+        self.a.reconcile([account]);self.a.shared=True
+        with patch.object(self.a,'user_work',return_value=(0,False)):
+            # Legacy DCV lacks a connection counter; retain it.
+            self.assertEqual(self.a.release_assignments([account]),[])
+            self.sessions['awp-u1']['num-of-connections']=1
+            self.assertEqual(self.a.release_assignments([account]),[])
+            self.assertIn('awp-u1',self.sessions)
+            self.sessions['awp-u1']['num-of-connections']=0
+            self.assertEqual(self.a.release_assignments([account]),[123])
+    def test_release_does_not_acknowledge_a_still_mounted_home(self):
+        account=self.account(1);account['assignment_id']=123
+        self.a.reconcile([account]);self.a.shared=True
+        original=self.a.run
+        def mounted(args,optional=False):
+            if args[0].endswith('findmnt'):
+                return subprocess.CompletedProcess(args,0,'nfs4','')
+            return original(args,optional)
+        with patch.object(self.a,'user_work',return_value=(0,False)),patch.object(self.a,'run',side_effect=mounted):
+            self.assertEqual(self.a.release_assignments([account]),[])
+        self.assertTrue(any(c[0].endswith('umount') for c in self.commands))
 
     def test_shared_release_requires_no_work_and_session_cleanup(self):
         self.a.reconcile([self.account(1)])

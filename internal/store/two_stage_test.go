@@ -360,37 +360,74 @@ func TestFailedImportManualCleanupNeverPublishesDataset(t *testing.T) {
 }
 
 func TestOperationalMetricsIdleIntervalsExcludeGaps(t *testing.T) {
- s,_,_,_,now:=sharedFixture(t);ctx:=context.Background()
- record:=func(at time.Time,reason string,idle bool){tx,err:=s.DB.BeginTx(ctx,nil);if err!=nil{t.Fatal(err)};if err=recordOperationObservation(ctx,tx,1,reason,idle,at);err!=nil{t.Fatal(err)};if err=tx.Commit();err!=nil{t.Fatal(err)}}
- start:=now.Add(-10*time.Minute).Truncate(time.Minute)
- record(start,"idle observation only; automatic termination disabled",true)
- record(start.Add(time.Minute),"idle observation only; automatic termination disabled",true)
- record(start.Add(2*time.Minute),"metrics unavailable or stale",false)
- record(start.Add(3*time.Minute),"idle observation only; automatic termination disabled",true)
- record(start.Add(4*time.Minute),"idle observation only; automatic termination disabled",true)
- record(start.Add(7*time.Minute),"idle observation only; automatic termination disabled",true)
- m,err:=s.OperationalMetrics(ctx,now);if err!=nil{t.Fatal(err)}
- if m.IdleSeconds!=120||m.MeasuredSeconds!=120{t.Fatal(m)}
+	s, _, _, _, now := sharedFixture(t)
+	ctx := context.Background()
+	record := func(at time.Time, reason string, idle bool) {
+		tx, err := s.DB.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = recordOperationObservation(ctx, tx, 1, reason, idle, at); err != nil {
+			t.Fatal(err)
+		}
+		if err = tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := now.Add(-10 * time.Minute).Truncate(time.Minute)
+	record(start, "idle observation only; automatic termination disabled", true)
+	record(start.Add(time.Minute), "idle observation only; automatic termination disabled", true)
+	record(start.Add(2*time.Minute), "metrics unavailable or stale", false)
+	record(start.Add(3*time.Minute), "idle observation only; automatic termination disabled", true)
+	record(start.Add(4*time.Minute), "idle observation only; automatic termination disabled", true)
+	record(start.Add(7*time.Minute), "idle observation only; automatic termination disabled", true)
+	m, err := s.OperationalMetrics(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.IdleSeconds != 120 || m.MeasuredSeconds != 120 {
+		t.Fatal(m)
+	}
 }
 func TestCancelledImportCannotBeSubmittedByStaleWorker(t *testing.T) {
- s,a,_,_,now:=sharedFixture(t);ctx:=context.Background()
- approveGolden(t,s,a,"windows-box-v1");s.SetImportEnabled(ctx,a,true)
- id,err:=s.RequestImport(ctx,a,"cancel-before-submit",`C:\Users\AwsImportAdmin\Box\dataset`,"approved-bucket","datasets/cancel-submit/",now);if err!=nil{t.Fatal(err)}
- if err=s.CancelImport(ctx,a,id);err!=nil{t.Fatal(err)}
- if err=s.MarkImportProvision(ctx,id,"");err==nil{t.Fatal("cancelled import submitted")}
+	s, a, _, _, now := sharedFixture(t)
+	ctx := context.Background()
+	approveGolden(t, s, a, "windows-box-v1")
+	s.SetImportEnabled(ctx, a, true)
+	id, err := s.RequestImport(ctx, a, "cancel-before-submit", `C:\Users\AwsImportAdmin\Box\dataset`, "approved-bucket", "datasets/cancel-submit/", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.CancelImport(ctx, a, id); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.MarkImportProvision(ctx, id, ""); err == nil {
+		t.Fatal("cancelled import submitted")
+	}
 }
 
 func TestDesktopMeasurementGapNeverInventsCounterDelta(t *testing.T) {
 	s, _, us, _, now := sharedFixture(t)
 	ctx := context.Background()
 	before := EnvironmentReport{BootID: "boot", Generation: 1, Sequence: 1, ObservedAt: now.Unix(), Work: []UserWork{{UserID: us[0].ID, DesktopMeasurement: &DesktopMeasurement{Quality: "ok", CounterEpoch: "scope", CPUUsec: 10, ReadBytes: 10, WriteBytes: 10}}}}
-	after := EnvironmentReport{BootID: "boot", Generation: 1, Sequence: 3, ObservedAt: now.Add(30*time.Second).Unix(), Work: []UserWork{{UserID: us[0].ID, DesktopMeasurement: &DesktopMeasurement{Quality: "ok", CounterEpoch: "scope", CPUUsec: 20, ReadBytes: 20, WriteBytes: 20}}}}
+	after := EnvironmentReport{BootID: "boot", Generation: 1, Sequence: 3, ObservedAt: now.Add(30 * time.Second).Unix(), Work: []UserWork{{UserID: us[0].ID, DesktopMeasurement: &DesktopMeasurement{Quality: "ok", CounterEpoch: "scope", CPUUsec: 20, ReadBytes: 20, WriteBytes: 20}}}}
 	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil { t.Fatal(err) }
-	if err = recordDesktop(ctx, tx, 1, after, before); err != nil { tx.Rollback(); t.Fatal(err) }
-	if err = tx.Commit(); err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = recordDesktop(ctx, tx, 1, after, before); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 	var quality string
 	var delta any
-	if err = s.DB.QueryRow(`SELECT quality,cpu_delta FROM desktop_samples WHERE sequence=3`).Scan(&quality, &delta); err != nil { t.Fatal(err) }
-	if quality != "gap" || delta != nil { t.Fatal(quality, delta) }
+	if err = s.DB.QueryRow(`SELECT quality,cpu_delta FROM desktop_samples WHERE sequence=3`).Scan(&quality, &delta); err != nil {
+		t.Fatal(err)
+	}
+	if quality != "gap" || delta != nil {
+		t.Fatal(quality, delta)
+	}
 }

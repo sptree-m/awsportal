@@ -222,7 +222,17 @@ func TestSharedReadinessReleaseAndTokenRevocation(t *testing.T) {
 	report.Sequence++
 	report.ReadyUsers = []int64{}
 	report.Work[0].SessionPresent = false
+	report.Work[0].HomeMounted = true
 	report.ClosedAssignments = []int64{r.AssignmentID}
+	if err = s.EnvironmentHeartbeat(ctx, "i-shared", report, now); err != nil {
+		t.Fatal(err)
+	}
+	heldRequest, err := s.EnvironmentRequest(ctx, u, r.ID)
+	if err != nil || heldRequest.State != "RELEASING" {
+		t.Fatal("mounted HOME was released", heldRequest, err)
+	}
+	report.Sequence++
+	report.Work[0].HomeMounted = false
 	if err = s.EnvironmentHeartbeat(ctx, "i-shared", report, now); err != nil {
 		t.Fatal(err)
 	}

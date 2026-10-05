@@ -15,16 +15,20 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/awsportal-arm64
 echo '[5/9] ARM64 admin build'
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/awsportal-admin-arm64 ./cmd/awsportal-admin
 echo '[6/9] Terraform'
+export TF_PLUGIN_CACHE_DIR="$(mktemp -d)"
 terraform -chdir=terraform fmt -recursive
 terraform -chdir=terraform init -backend=false -input=false >/dev/null
 terraform -chdir=terraform validate
 terraform -chdir=terraform/modules/shared-pilot init -backend=false -input=false >/dev/null
 terraform -chdir=terraform/modules/shared-pilot validate
-for module in two-stage managed-profile cur; do
+for module in two-stage managed-profile cur org-network; do
  terraform -chdir="terraform/modules/$module" init -backend=false -input=false >/dev/null
  terraform -chdir="terraform/modules/$module" validate
 done
-echo 'DCV agent reconciliation, isolation and revocation'
+for module in org-network shared-pilot managed-profile cur two-stage; do
+ terraform -chdir="terraform/modules/$module" test
+ done
+ echo 'DCV agent reconciliation, isolation and revocation'
 python3 -m unittest discover -s dcv -p 'test_*.py'
 python3 -m unittest discover -s tests -p 'test_lab_*.py'
 python3 -m unittest discover -s tests -p 'test_cloud_*.py'

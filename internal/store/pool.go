@@ -101,15 +101,18 @@ func (s *Store) ReservePoolOperations(ctx context.Context, now time.Time, scale,
 	}
 	defer tx.Rollback()
 	if scale {
-		rows, err := tx.QueryContext(ctx, `SELECT e.id,COUNT(r.id) FROM environments e JOIN pool_controls p ON p.environment_id=e.id JOIN connection_requests r ON r.environment_id=e.id WHERE e.enabled=1 AND e.mode='shared' AND p.scale_out=1 AND p.acceptance_ref!='' AND r.state='WAITING' AND r.reason NOT IN ('HOME storage not configured','HOME held by another environment','HOME migration locked') GROUP BY e.id`)
+		rows, err := tx.QueryContext(ctx, `SELECT e.id,COUNT(r.id),MIN(r.reason) FROM environments e JOIN pool_controls p ON p.environment_id=e.id JOIN connection_requests r ON r.environment_id=e.id WHERE e.enabled=1 AND e.mode='shared' AND p.scale_out=1 AND p.acceptance_ref!='' AND r.state='WAITING' AND r.reason NOT IN ('HOME storage not configured','HOME held by another environment','HOME migration locked') GROUP BY e.id`)
 		if err != nil {
 			return err
 		}
-		type demand struct{ id, n int64 }
+		type demand struct {
+			id, n  int64
+			reason string
+		}
 		var ds []demand
 		for rows.Next() {
 			var d demand
-			if err = rows.Scan(&d.id, &d.n); err != nil {
+			if err = rows.Scan(&d.id, &d.n, &d.reason); err != nil {
 				rows.Close()
 				return err
 			}
@@ -147,7 +150,7 @@ func (s *Store) ReservePoolOperations(ctx context.Context, now time.Time, scale,
 				if err != nil {
 					return err
 				}
-				input, _ := json.Marshal(map[string]any{"operation_id": id, "environment_id": d.id, "generation": 1, "kind": "PROVISION", "expected_image_id": image, "expected_template_id": template, "expected_template_version": version, "expected_checksum": checksum})
+				input, _ := json.Marshal(map[string]any{"operation_id": id, "environment_id": d.id, "generation": 1, "kind": "PROVISION", "expected_image_id": image, "expected_template_id": template, "expected_template_version": version, "expected_checksum": checksum, "scale_reason": d.reason})
 				if _, err = tx.ExecContext(ctx, `INSERT INTO cloud_operations(id,environment_id,generation,kind,input,created_at,updated_at) VALUES(?,?,1,'PROVISION',?,?,?)`, id, d.id, string(input), now.Unix(), now.Unix()); err != nil {
 					return err
 				}
@@ -158,7 +161,7 @@ func (s *Store) ReservePoolOperations(ctx context.Context, now time.Time, scale,
 		}
 	}
 	if terminate {
-		rows, err := tx.QueryContext(ctx, `SELECT ei.instance_id,ei.environment_id,ei.generation,i.instance_id FROM environment_instances ei JOIN instances i ON i.id=ei.instance_id JOIN dynamic_instances di ON di.instance_id=i.id JOIN pool_controls p ON p.environment_id=ei.environment_id WHERE p.terminate=1 AND p.acceptance_ref!='' AND ei.lifecycle='READY' AND ei.idle_since>0 AND ei.idle_since<=? AND NOT EXISTS(SELECT 1 FROM cloud_operations o WHERE o.instance_id=i.id AND o.kind='TERMINATE' AND o.state NOT IN ('SUCCEEDED','CANCELLED'))`, now.Add(-15*time.Minute).Unix())
+		rows, err := tx.QueryContext(ctx, `SELECT ei.instance_id,ei.environment_id,ei.generation,i.instance_id FROM environment_instances ei JOIN instances i ON i.id=ei.instance_id JOIN dynamic_instances di ON di.instance_id=i.id JOIN pool_controls p ON p.environment_id=ei.environment_id WHERE p.terminate=1 AND p.acceptance_ref!='' AND ei.lifecycle='READY' AND ei.idle_since>0 AND ei.idle_since<=? AND NOT EXISTS(SELECT 1 FROM volume_operations v WHERE v.instance_id=i.id AND v.state!='SUCCEEDED') AND NOT EXISTS(SELECT 1 FROM cloud_operations o WHERE o.instance_id=i.id AND o.kind='TERMINATE' AND o.state NOT IN ('SUCCEEDED','CANCELLED'))`, now.Add(-15*time.Minute).Unix())
 		if err != nil {
 			return err
 		}
@@ -318,7 +321,7 @@ func (s *Store) ReconcileDrain(ctx context.Context, o CloudOperation, now time.T
 	defer tx.Rollback()
 	var raw string
 	var received, idle, pending, seats int64
-	err = tx.QueryRowContext(ctx, `SELECT ob.payload,ob.received_at,ei.idle_since,((SELECT COUNT(*) FROM connection_requests WHERE environment_id=ei.environment_id AND state='WAITING')+(SELECT COUNT(*) FROM dataset_cache_jobs c WHERE c.instance_id=ei.instance_id AND c.state IN ('PENDING','RUNNING'))),(SELECT COUNT(*) FROM environment_assignments WHERE instance_id=ei.instance_id AND state!='RELEASED') FROM environment_instances ei JOIN instance_observations ob ON ob.instance_id=ei.instance_id WHERE ei.instance_id=? AND ei.lifecycle='DRAINING' AND ei.generation=?`, o.InstanceID, o.Generation).Scan(&raw, &received, &idle, &pending, &seats)
+	err = tx.QueryRowContext(ctx, `SELECT ob.payload,ob.received_at,ei.idle_since,((SELECT COUNT(*) FROM connection_requests WHERE environment_id=ei.environment_id AND state='WAITING')+(SELECT COUNT(*) FROM dataset_cache_jobs c WHERE c.instance_id=ei.instance_id AND c.state IN ('PENDING','RUNNING'))+(SELECT COUNT(*) FROM volume_operations v WHERE v.instance_id=ei.instance_id AND v.state!='SUCCEEDED')),(SELECT COUNT(*) FROM environment_assignments WHERE instance_id=ei.instance_id AND state!='RELEASED') FROM environment_instances ei JOIN instance_observations ob ON ob.instance_id=ei.instance_id WHERE ei.instance_id=? AND ei.lifecycle='DRAINING' AND ei.generation=?`, o.InstanceID, o.Generation).Scan(&raw, &received, &idle, &pending, &seats)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
