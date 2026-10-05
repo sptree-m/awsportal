@@ -46,3 +46,7 @@ Shared固定pilotとJob/cgroup計測の候補版 `v1.7.0-rc.1` は [候補版の
 二段階実装の候補版 `v1.8.0-rc.1` は [導入・復旧・費用配賦・Windows取り込み](docs/20-two-stage-completion.md) を参照してください。自動増減・取り込みは初期OFF、実機受入記録を確認してから有効化します。
 
 組織管理のVPC・指定IP範囲・TGW経路を使う新規／既存／混在構成は [導入手順](docs/21-organization-deployment.md) を参照してください。
+
+## 組織AWS環境・権限の調査
+
+CloudShellで `bash tools/aws-audit/run.sh --regions ap-northeast-1` を実行すると、提供済みネットワーク、IAM/組織ポリシーの可視範囲、権限の証拠をZIPに保存できます。Policy Simulator権限は不要です。明示指定したEC2要求のDryRunと、作成・削除権限の非対称性を確認する方法は [調査ツールの手順](tools/aws-audit/README.md) を参照してください。判定できない操作はUNKNOWNとして残します。

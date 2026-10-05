@@ -32,6 +32,8 @@ for module in org-network shared-pilot managed-profile cur two-stage; do
 python3 -m unittest discover -s dcv -p 'test_*.py'
 python3 -m unittest discover -s tests -p 'test_lab_*.py'
 python3 -m unittest discover -s tests -p 'test_cloud_*.py'
+python3 -m unittest discover -s tests -p 'test_aws_audit.py'
+bash -n tools/aws-audit/run.sh
 bash -n dcv/install.sh dcv/desktop.sh lab/create.sh lab/test-dcv.sh
 python3 tests/lab-template.py
 cfn-lint lab/cloudformation.yaml
