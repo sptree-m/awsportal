@@ -123,7 +123,7 @@ resource "aws_bcmdataexports_export" "cur" {
 
         s3_bucket = var.bucket_name
         s3_prefix = var.prefix
-        s3_region = data.aws_region.current.name
+        s3_region = var.use_existing_bucket && var.existing_bucket_region != null ? var.existing_bucket_region : data.aws_region.current.name
         s3_output_configurations {
           overwrite   = "OVERWRITE_REPORT"
           format      = "TEXT_OR_CSV"
@@ -216,4 +216,10 @@ moved {
 moved {
   from = aws_iam_role_policy.portal
   to   = aws_iam_role_policy.portal[0]
+}
+
+variable "existing_bucket_region" {
+  description = "Region of the provided CUR bucket; defaults to the provider region."
+  type        = string
+  default     = null
 }

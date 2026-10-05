@@ -102,7 +102,9 @@ func main() {
 	go sharedWorker.Run(ctx)
 	go (&metering.Worker{Store: db, Meter: awsapi.NewStorageMeter(cfg)}).Run(ctx)
 	if bucket := env("AWSPORTAL_CUR_BUCKET", ""); bucket != "" {
-		worker := &settlement.Worker{Store: db, Source: awsapi.NewCURReader(cfg, bucket, env("AWSPORTAL_CUR_PREFIX", "cur/"))}
+		curConfig := cfg
+		curConfig.Region = env("AWSPORTAL_CUR_REGION", cfg.Region)
+		worker := &settlement.Worker{Store: db, Source: awsapi.NewCURReader(curConfig, bucket, env("AWSPORTAL_CUR_PREFIX", "cur/"))}
 		go worker.Run(ctx)
 	}
 	if provision := env("AWSPORTAL_IMPORT_PROVISION_WORKFLOW", ""); provision != "" {

@@ -66,6 +66,8 @@ Go/Agent/AWS fake/所有権plan/Windows構文/実サーバーUIを必須CIに含
 
 既存の公開Internet型 `lab/create.sh` は単独検証専用。組織ネットワークでは使用せず、上記Terraform構成例を独立stateで利用する。破棄時には新規所有分だけをplanし、組織所有のVPC/TGW/Route Table/SG/Role/EFS/S3を削除しない。
 
+CURバケットがPortalと別リージョンの場合、Portalに `AWSPORTAL_CUR_REGION` を設定する。既存バケットへExportを新設する場合は `existing_bucket_region` も指定する。既存Bucket/Exportを利用する場合はVersioning、有効なmanifest、承認prefix、読取権限と対象リージョンへの承認通信をIT側で用意する。
+
 ## 未接続予約とHOME解放
 
 更新Agentが期限処理対応を報告した場合、初回READYから120秒経過した未接続予約を安全な解放へ進める。過去に実接続したUser、Job、不明作業、期限内DCV tokenと認証直後の猶予は自動解放しない。期限処理中に実接続/Jobが判明した場合は取り消して保持する。古いAgentに期限処理を指示しない。
