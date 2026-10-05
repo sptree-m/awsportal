@@ -15,6 +15,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/awsportal-arm64
 echo '[5/9] ARM64 admin build'
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/awsportal-admin-arm64 ./cmd/awsportal-admin
 echo '[6/9] Terraform'
+export TF_PLUGIN_CACHE_DIR="$(mktemp -d)"
 terraform -chdir=terraform fmt -recursive
 terraform -chdir=terraform init -backend=false -input=false >/dev/null
 terraform -chdir=terraform validate

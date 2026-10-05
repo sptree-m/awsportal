@@ -68,3 +68,18 @@ jobs:
       - name: Parse Windows scripts and verify CLI argument boundaries
         shell: pwsh
         run: ./tests/parse-windows.ps1
+
+  terraform-contracts:
+    name: terraform-ownership-contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Validate owned versus provided resource plans
+        run: |
+          export TF_PLUGIN_CACHE_DIR="$(mktemp -d)"
+          for module in org-network shared-pilot managed-profile cur two-stage; do
+            terraform -chdir="terraform/modules/$module" init -backend=false -input=false
+            terraform -chdir="terraform/modules/$module" validate
+            terraform -chdir="terraform/modules/$module" test
+          done
