@@ -14,13 +14,14 @@ import (
 const dcvAgentSchema = `CREATE TABLE IF NOT EXISTS dcv_agents(instance_id INTEGER PRIMARY KEY REFERENCES instances(id),token_hash TEXT NOT NULL UNIQUE,last_seen INTEGER NOT NULL DEFAULT 0,ready_users TEXT NOT NULL DEFAULT '[]',error TEXT NOT NULL DEFAULT '');`
 
 type DCVAccount struct {
-	UserID          int64        `json:"user_id"`
-	Username        string       `json:"username"`
-	OSUser          string       `json:"os_user"`
-	SessionID       string       `json:"session_id"`
-	Home            *HomeStorage `json:"home,omitempty"`
-	AssignmentID    int64        `json:"assignment_id,omitempty"`
-	StorageRevision int64        `json:"storage_revision,omitempty"`
+	ReservationExpired bool         `json:"reservation_expired,omitempty"`
+	UserID             int64        `json:"user_id"`
+	Username           string       `json:"username"`
+	OSUser             string       `json:"os_user"`
+	SessionID          string       `json:"session_id"`
+	Home               *HomeStorage `json:"home,omitempty"`
+	AssignmentID       int64        `json:"assignment_id,omitempty"`
+	StorageRevision    int64        `json:"storage_revision,omitempty"`
 }
 
 func DCVIdentity(id int64) string { return fmt.Sprintf("awp-u%d", id) }

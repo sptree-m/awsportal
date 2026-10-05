@@ -232,10 +232,28 @@ class Agent:
             jobs, unknown = self.user_work(account["user_id"])
             if jobs or unknown:
                 continue
-            if self.describe(name) is not None:
+            session = self.describe(name)
+            if account.get("reservation_expired") and session is not None:
+                # A missing connection counter is unsafe, not an idle desktop.
+                if type(session.get("num-of-connections")) is not int or session["num-of-connections"] != 0:
+                    continue
+            if session is not None:
                 self.run(["/usr/bin/dcv", "close-session", name])
             jobs, unknown = self.user_work(account["user_id"])
             if self.describe(name) is None and not jobs and not unknown:
+                self.run(["/usr/bin/loginctl", "disable-linger", name])
+                self.run(["/usr/bin/systemctl", "stop", "user@"+str(200000+account["user_id"])+".service"])
+                mount = "/home/"+name
+                self.run(["/usr/bin/sync", "-f", mount])
+                mounted = self.run(["/usr/bin/findmnt", "--mountpoint", mount, "--noheadings", "--output", "FSTYPE"], optional=True)
+                if mounted.returncode == 0:
+                    if mounted.stdout.strip() != "nfs4":
+                        raise RuntimeError("unexpected HOME filesystem; lease retained")
+                    self.run(["/usr/bin/umount", mount])
+                if self.run(["/usr/bin/findmnt", "--mountpoint", mount], optional=True).returncode == 0:
+                    continue
+                marker = self.root / (name+".efs.json")
+                marker.unlink(missing_ok=True)
                 closed.append(account["assignment_id"])
         return closed
 
@@ -303,7 +321,7 @@ class Agent:
         previous = json.loads(sequence_path.read_text()) if sequence_path.exists() else {}
         sequence = previous.get("sequence", 0) + 1 if previous.get("boot_id") == self.boot_id else 1
         self.write_policy(sequence_path, json.dumps({"boot_id": self.boot_id, "sequence": sequence}))
-        return {"agent_version": 2, "generation": self.generation, "boot_id": self.boot_id, "sequence": sequence,
+        return {"supports_reservation_expiry": True, "agent_version": 2, "generation": self.generation, "boot_id": self.boot_id, "sequence": sequence,
                 "observed_at": int(time.time()), "cpu": max(0, min(100, cpu)), "memory": 100 * (1 - mem["MemAvailable"] / mem["MemTotal"]),
                 "metrics_valid": valid, "storage_busy": self.storage.busy, "cache_results": self.storage.snapshot(), "work": work, "closed_assignments": closed,
                 "measurement_version": 1, "job_measurements": measurements}

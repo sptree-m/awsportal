@@ -65,3 +65,9 @@ root/scratchサイズ・IOPS・throughputはmanaged-profileで指定する。初
 Go/Agent/AWS fake/所有権plan/Windows構文/実サーバーUIを必須CIに含める。組織IAMのSCP、permission boundary、共有VPC/RAM、TGW accept/return、DNS/Falcon/Boxの実到達性、EFSの実隔離、10人・500 GB・確定CURの受入は対象AWS/Box環境で実施する。資格情報や実機証跡なしに完了したとは扱わず、自動増減・Importは既定OFFを維持する。
 
 既存の公開Internet型 `lab/create.sh` は単独検証専用。組織ネットワークでは使用せず、上記Terraform構成例を独立stateで利用する。破棄時には新規所有分だけをplanし、組織所有のVPC/TGW/Route Table/SG/Role/EFS/S3を削除しない。
+
+## 未接続予約とHOME解放
+
+更新Agentが期限処理対応を報告した場合、初回READYから120秒経過した未接続予約を安全な解放へ進める。過去に実接続したUser、Job、不明作業、期限内DCV tokenと認証直後の猶予は自動解放しない。期限処理中に実接続/Jobが判明した場合は取り消して保持する。古いAgentに期限処理を指示しない。
+
+Root Agentも実接続数とJobを再確認し、session終了、user manager停止、HOME sync/unmountを確認してACKする。PortalはHOMEがまだmountedという報告を受けたら席/HOME leaseを解放しない。期限切れはcleanup確認後TIMED_OUT。準備失敗やAgent欠測を理由にHOMEを解放しない。PortalとGolden AMIのAgentを同時に更新し、旧Agentの解放が保留された場合は更新してから再照合する。

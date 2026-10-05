@@ -1,5 +1,8 @@
 # 機能実装・検証マトリクス
 
+> この表は作成時の旧版の調査記録です。現行の二段階機能と組織ネットワーク構成は [二段階実装](20-two-stage-completion.md) と [新規・既存・混在構成](21-organization-deployment.md) を参照してください。
+
+
 更新基準: main相当コード、必須CI、Disposable Lab、本番向けTerraform/DCV設定を分けて評価する。
 
 ## ステータス

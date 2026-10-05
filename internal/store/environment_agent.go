@@ -42,26 +42,27 @@ type UserWork struct {
 	Connected          bool                `json:"connected"`
 }
 type EnvironmentReport struct {
-	CacheResults       []CacheJob       `json:"cache_results,omitempty"`
-	DrainOperation     string           `json:"drain_operation,omitempty"`
-	DrainComplete      bool             `json:"drain_complete,omitempty"`
-	MeasurementVersion int              `json:"measurement_version,omitempty"`
-	JobMeasurements    []JobMeasurement `json:"job_measurements,omitempty"`
-	AgentVersion       int              `json:"agent_version"`
-	Generation         int64            `json:"generation"`
-	BootID             string           `json:"boot_id"`
-	Sequence           int64            `json:"sequence"`
-	ObservedAt         int64            `json:"observed_at"`
-	CPU                float64          `json:"cpu"`
-	Memory             float64          `json:"memory"`
-	MetricsValid       bool             `json:"metrics_valid"`
-	StorageBusy        bool             `json:"storage_busy"`
-	Work               []UserWork       `json:"work"`
-	ClosedAssignments  []int64          `json:"closed_assignments"`
-	ReadyUsers         []int64          `json:"ready_users"`
-	AppliedRevision    int64            `json:"applied_revision"`
-	BrowserBlocked     bool             `json:"browser_blocked"`
-	Error              string           `json:"error"`
+	SupportsReservationExpiry bool             `json:"supports_reservation_expiry"`
+	CacheResults              []CacheJob       `json:"cache_results,omitempty"`
+	DrainOperation            string           `json:"drain_operation,omitempty"`
+	DrainComplete             bool             `json:"drain_complete,omitempty"`
+	MeasurementVersion        int              `json:"measurement_version,omitempty"`
+	JobMeasurements           []JobMeasurement `json:"job_measurements,omitempty"`
+	AgentVersion              int              `json:"agent_version"`
+	Generation                int64            `json:"generation"`
+	BootID                    string           `json:"boot_id"`
+	Sequence                  int64            `json:"sequence"`
+	ObservedAt                int64            `json:"observed_at"`
+	CPU                       float64          `json:"cpu"`
+	Memory                    float64          `json:"memory"`
+	MetricsValid              bool             `json:"metrics_valid"`
+	StorageBusy               bool             `json:"storage_busy"`
+	Work                      []UserWork       `json:"work"`
+	ClosedAssignments         []int64          `json:"closed_assignments"`
+	ReadyUsers                []int64          `json:"ready_users"`
+	AppliedRevision           int64            `json:"applied_revision"`
+	BrowserBlocked            bool             `json:"browser_blocked"`
+	Error                     string           `json:"error"`
 }
 type EnvironmentAgentState struct {
 	Groups         []GroupMount `json:"groups,omitempty"`
@@ -115,14 +116,14 @@ func (s *Store) EnvironmentAgentState(ctx context.Context, awsID string) (Enviro
 	if !out.Shared {
 		return out, nil
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT ea.id,ea.user_id FROM environment_assignments ea JOIN instances i ON i.id=ea.instance_id WHERE i.instance_id=? AND ea.state='RELEASING'`, awsID)
+	rows, err := s.DB.QueryContext(ctx, `SELECT ea.id,ea.user_id,COALESCE(t.expired,0) FROM environment_assignments ea JOIN instances i ON i.id=ea.instance_id LEFT JOIN assignment_timing t ON t.assignment_id=ea.id WHERE i.instance_id=? AND ea.state='RELEASING'`, awsID)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var x DCVAccount
-		if err = rows.Scan(&x.AssignmentID, &x.UserID); err != nil {
+		if err = rows.Scan(&x.AssignmentID, &x.UserID, &x.ReservationExpired); err != nil {
 			return out, err
 		}
 		x.OSUser = DCVIdentity(x.UserID)
@@ -338,17 +339,30 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 		next := "PREPARING"
 		requestState := "PREPARING_USER"
 		if a.state == "RELEASING" {
-			closed := false
-			for _, id := range r.ClosedAssignments {
-				if id == a.id {
-					closed = true
+			var automatic bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM assignment_timing WHERE assignment_id=? AND expired=1)`, a.id).Scan(&automatic); err != nil {
+				return err
+			}
+			if automatic && (w.Connected || w.Jobs > 0 || w.Unclassified) {
+				next = "JOB_HELD"
+				requestState = "READY"
+				if w.Connected {
+					next = "CONNECTED"
+					requestState = "CONNECTED"
 				}
+			} else {
+				closed := false
+				for _, id := range r.ClosedAssignments {
+					if id == a.id {
+						closed = true
+					}
+				}
+				if !closed || w.SessionPresent || w.Connected || w.Jobs > 0 || w.Unclassified || w.HomeMounted {
+					continue
+				}
+				next = "RELEASED"
+				requestState = "RELEASED"
 			}
-			if !closed || w.SessionPresent || w.Connected || w.Jobs > 0 || w.Unclassified {
-				continue
-			}
-			next = "RELEASED"
-			requestState = "RELEASED"
 		} else {
 			ready := false
 			for _, uid := range r.ReadyUsers {
@@ -369,6 +383,10 @@ func (s *Store) EnvironmentHeartbeat(ctx context.Context, awsID string, r Enviro
 					}
 				}
 			}
+		}
+		next, requestState, err = reconcileReservationExpiry(ctx, tx, a.id, next, requestState, w, r.SupportsReservationExpiry, now)
+		if err != nil {
+			return err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE environment_assignments SET state=? WHERE id=?`, next, a.id); err != nil {
 			return err
