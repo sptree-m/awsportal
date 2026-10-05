@@ -36,7 +36,7 @@ class CloudWorkerTests(unittest.TestCase):
         self.ec2.describe_route_tables.return_value = {'RouteTables':[{'RouteTableId':'rtb-test','VpcId':'vpc-test','Routes':self.routes}]}
         self.ec2.describe_launch_template_versions.return_value = {'LaunchTemplateVersions':[{'LaunchTemplateData':self.template}]}
         self.ec2.describe_images.return_value = {'Images':[{'State':'available','Tags':[{'Key':'awsportal:golden-sha256','Value':'a'*64}]}]}
-        self.instance = {'InstanceId':'i-aaaaaaaa','PrivateIpAddress':'10.0.0.1','State':{'Name':'running'},'VpcId':'vpc-test','SubnetId':'subnet-test','SecurityGroups':[{'GroupId':'sg-test'}],'Tags':[{'Key':'awsportal:'+k,'Value':v} for k,v in {'managed':'shared','pool':'1','generation':'1','operation':'b'*32}.items()],'BlockDeviceMappings':[{'Ebs':{'VolumeId':'vol-aaaaaaaa','DeleteOnTermination':True}}]}
+        self.instance = {'InstanceId':'i-aaaaaaaa','PrivateIpAddress':'10.0.0.1','State':{'Name':'running'},'VpcId':'vpc-test','SubnetId':'subnet-test','SecurityGroups':[{'GroupId':'sg-test'}],'NetworkInterfaces':[{'NetworkInterfaceId':'eni-test'}],'Tags':[{'Key':'awsportal:'+k,'Value':v} for k,v in {'managed':'shared','pool':'1','generation':'1','operation':'b'*32}.items()],'BlockDeviceMappings':[{'Ebs':{'VolumeId':'vol-aaaaaaaa','DeleteOnTermination':True}}]}
         self.ec2.describe_instances.side_effect = lambda **kwargs: {'Reservations':[]} if 'Filters' in kwargs else {'Reservations':[{'Instances':[self.instance]}]}
         self.ec2.run_instances.return_value = {'Instances':[self.instance]}
         self.ssm.get_parameter.return_value = {'Parameter':{'Value':'c'*64}}

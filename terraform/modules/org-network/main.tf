@@ -33,7 +33,7 @@ variable "subnets" {
     tgw_routes        = optional(set(string), [])
   }))
   validation {
-    condition     = length(var.subnets) > 0 && alltrue([for s in values(var.subnets) : (s.id != "" && s.cidr == null && length(s.tgw_routes) == 0) || (s.id == "" && s.cidr != null && (s.route_table_id == "" || length(s.tgw_routes) == 0))])
+    condition     = length(var.subnets) > 0 && alltrue([for s in values(var.subnets) : (s.id != "" && s.route_table_id != "" && s.cidr == null && length(s.tgw_routes) == 0) || (s.id == "" && s.cidr != null && (s.route_table_id == "" || length(s.tgw_routes) == 0))])
     error_message = "Choose an existing subnet or a new CIDR; TGW routes may only be installed in new route tables."
   }
 }
@@ -79,6 +79,7 @@ data "aws_subnet" "provided" {
   id       = each.value.id
 }
 resource "aws_subnet" "private" {
+  depends_on                      = [terraform_data.contract]
   for_each                        = local.new_subnets
   vpc_id                          = local.vpc_id
   availability_zone               = each.value.availability_zone
@@ -202,3 +203,12 @@ resource "aws_vpc_endpoint" "s3" {
 }
 output "endpoint_security_group_id" { value = var.existing_endpoint_security_group_id != "" ? var.existing_endpoint_security_group_id : try(aws_security_group.endpoint[0].id, null) }
 output "s3_prefix_list_id" { value = try(aws_vpc_endpoint.s3[0].prefix_list_id, null) }
+
+resource "terraform_data" "contract" {
+  lifecycle {
+    precondition {
+      condition     = alltrue([for k, sub in data.aws_subnet.provided : sub.vpc_id == local.vpc_id && sub.availability_zone == var.subnets[k].availability_zone])
+      error_message = "Provided subnets must match the approved VPC/AZ before creating resources."
+    }
+  }
+}

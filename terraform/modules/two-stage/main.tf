@@ -19,7 +19,7 @@ variable "approved_pools" {
   description = "Pool ID to immutable approved launch template ID/version; use separate module for Windows."
   type = map(object({
     launch_template_id = string, launch_template_version = string, ami_id = string, ami_checksum = string,
-    network            = optional(object({ vpc_id = string, subnet_id = string, security_group_ids = list(string), allowed_ipv4_cidrs = list(string), route_table_id = string, transit_gateway_id = optional(string, "") }))
+    network            = optional(object({ vpc_id = string, subnet_id = string, subnet_arn = optional(string), security_group_ids = list(string), security_group_arns = optional(list(string)), allowed_ipv4_cidrs = list(string), route_table_id = string, transit_gateway_id = optional(string, "") }))
   }))
   validation {
 
@@ -299,13 +299,13 @@ locals {
       ], flatten([for p in values(var.approved_pools) : p.network == null ? [] : [
         {
           Effect    = "Allow", Action = ["ec2:RunInstances"],
-          Resource  = concat(["arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:subnet/${p.network.subnet_id}"], [for sg in p.network.security_group_ids : "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:security-group/${sg}"]),
+          Resource  = concat([coalesce(p.network.subnet_arn, "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:subnet/${p.network.subnet_id}")], p.network.security_group_arns != null ? p.network.security_group_arns : [for sg in p.network.security_group_ids : "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:security-group/${sg}"]),
           Condition = { ArnEquals = { "ec2:LaunchTemplate" = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:launch-template/${p.launch_template_id}" } }
         },
         {
           Effect    = "Allow", Action = ["ec2:RunInstances"],
           Resource  = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:network-interface/*",
-          Condition = { ArnEquals = { "ec2:LaunchTemplate" = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:launch-template/${p.launch_template_id}", "ec2:Subnet" = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:subnet/${p.network.subnet_id}" }, Bool = { "ec2:AssociatePublicIpAddress" = "false" } }
+          Condition = { ArnEquals = { "ec2:LaunchTemplate" = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:launch-template/${p.launch_template_id}", "ec2:Subnet" = coalesce(p.network.subnet_arn, "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:subnet/${p.network.subnet_id}") }, Bool = { "ec2:AssociatePublicIpAddress" = "false" } }
         }
     ]]))
   })

@@ -27,10 +27,10 @@ def network_contract(ec2, profile, template):
         interface.get('AssociatePublicIpAddress') is not False or
         interface.get('NetworkInterfaceId') or interface.get('PrivateIpAddress') or
         interface.get('PrivateIpAddresses') or interface.get('Ipv6Addresses') or
-        interface.get('Ipv6AddressCount', 0) or template.get('SecurityGroupIds')):
+        interface.get('Ipv6AddressCount', 0) or interface.get('Ipv6Prefixes') or interface.get('Ipv6PrefixCount', 0) or template.get('SecurityGroupIds')):
         raise ValueError('launch template differs from approved private network')
     subnet = ec2.describe_subnets(SubnetIds=[network['subnet_id']])['Subnets'][0]
-    if subnet['VpcId'] != network['vpc_id'] or subnet['State'] != 'available':
+    if subnet['VpcId'] != network['vpc_id'] or subnet['State'] != 'available' or subnet.get('AssignIpv6AddressOnCreation'):
         raise ValueError('subnet/VPC unavailable or mismatched')
     subnet_cidr = ipaddress.IPv4Network(subnet['CidrBlock'])
     ranges = [ipaddress.IPv4Network(c) for c in network['allowed_ipv4_cidrs']]
@@ -94,7 +94,7 @@ def verify_instance_network(instance, network):
     if (instance.get('VpcId') != network['vpc_id'] or instance.get('SubnetId') != network['subnet_id'] or
         instance.get('PublicIpAddress') or set(g['GroupId'] for g in instance.get('SecurityGroups', [])) != set(network['security_group_ids']) or
         not any(address in ipaddress.IPv4Network(c) for c in network['allowed_ipv4_cidrs']) or
-        any(n.get('Ipv6Addresses') for n in instance.get('NetworkInterfaces', []))):
+        len(instance.get('NetworkInterfaces', [])) != 1 or any(n.get('Ipv6Addresses') or n.get('Ipv6Prefixes') or n.get('Association',{}).get('PublicIp') for n in instance.get('NetworkInterfaces', []))):
         raise ValueError('actual instance violates approved network; retain and investigate')
 
 def modify_volume(ec2, event, pool, generation):

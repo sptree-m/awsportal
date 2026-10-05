@@ -30,7 +30,7 @@ Portalの固定IPは `portal_private_ip`、固定pilotは `fixed_private_ip`。�
 
 全Subnet範囲ではAWSの自動割当。部分範囲ではworkerが使用中ENIを調べ、選択IPを操作IDに紐付くSSM SecureStringへ先に保存してからRunInstancesする。再試行は同じIP/ClientTokenで行い、競合や枯渇時は範囲を広げず失敗として保持する。全workerはreserved concurrency=1。別の組織システムが同じIPを取得する競合はAWSが拒否し、Portalの再照合で調査する。独立したShared/Windowsには重ならないIP範囲を割り当てる。
 
-`managed-profile.approved_profile` を `two-stage.approved_pools` に渡す。承認情報にはVPC/Subnet/SG、allowed IPv4 CIDR、実効Route Table/TGW、AMIと数値LT versionを含める。Portal UIから任意VPC・Roleへ変更しない。ITが承認profileを更新し、そのAMI/LTをNEXT→STABLEへ登録する。
+`managed-profile.approved_profile` を `two-stage.approved_pools` に渡す。承認情報には実所有者のSubnet/SG ARN（共有VPC/RAMでも現在accountを推測しない）、VPC/Subnet/SG、allowed IPv4 CIDR、実効Route Table/TGW、AMIと数値LT versionを含める。Portal UIから任意VPC・Roleへ変更しない。組織提供AMIは `approved_ami_owners` に承認accountを指定できる。ITが承認profileを更新し、そのAMI/LTをNEXT→STABLEへ登録する。
 
 起動前に承認VPC・Subnet・SG、LTの非公開primary interface、実効table/TGW route、blackhole、直接IGW/NAT/egress-only IGWを確認する。既存リソースの採用・起動後も実IP、SG、Public IPなし、IPv6なしを確認する。不一致なら追加起動せず調査用に保持する。旧rc.1のnetwork契約なしprofileは新規起動を拒否するため、先にIaCのapproved_poolsを更新する。終了処理と既存sessionは継続する。
 

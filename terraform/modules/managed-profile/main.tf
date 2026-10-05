@@ -51,7 +51,7 @@ variable "config_parameter" {
   }
 }
 data "aws_ami" "golden" {
-  owners = ["self"]
+  owners = var.approved_ami_owners
   filter {
     name   = "image-id"
     values = [var.ami_id]
@@ -134,7 +134,7 @@ resource "aws_launch_template" "compute" {
 }
 output "approved_profile" {
   value = {
-    launch_template_id = aws_launch_template.compute.id, launch_template_version = tostring(aws_launch_template.compute.latest_version), ami_id = var.ami_id, ami_checksum = var.ami_checksum, network = { vpc_id = data.aws_subnet.approved.vpc_id, subnet_id = var.subnet_id, security_group_ids = var.security_group_ids, allowed_ipv4_cidrs = local.allowed_ipv4_cidrs, route_table_id = var.route_table_id, transit_gateway_id = var.transit_gateway_id }
+    launch_template_id = aws_launch_template.compute.id, launch_template_version = tostring(aws_launch_template.compute.latest_version), ami_id = var.ami_id, ami_checksum = var.ami_checksum, network = { vpc_id = data.aws_subnet.approved.vpc_id, subnet_id = var.subnet_id, subnet_arn = data.aws_subnet.approved.arn, security_group_ids = var.security_group_ids, security_group_arns = [for id in var.security_group_ids : data.aws_security_group.approved[id].arn], allowed_ipv4_cidrs = local.allowed_ipv4_cidrs, route_table_id = var.route_table_id, transit_gateway_id = var.transit_gateway_id }
   }
 }
 
@@ -197,4 +197,9 @@ variable "scratch_iops" {
 variable "scratch_throughput" {
   type    = number
   default = 125
+}
+
+variable "approved_ami_owners" {
+  type    = list(string)
+  default = ["self"]
 }
