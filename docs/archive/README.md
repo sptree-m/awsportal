@@ -1,11 +1,10 @@
-# 旧版の調査・実装記録
+# 過去の記録
 
-このフォルダーは過去の判断根拠を保存するための履歴です。現在の実装・導入手順としては使用せず、[現行の機能一覧](../features.md)と[ドキュメント目次](../README.md)を参照してください。
+旧版の詳細はGitHubの固定tagで参照し、現行手順へ複製しません。現在の状況は[機能一覧](../features.md)、使い方は[文書目次](../README.md)を参照してください。
 
-| 記録 | 内容 |
+| 記録 | 保存先 |
 |---|---|
-| [旧機能ステータス](feature-status.md) | 当時の簡易分類。現在は実装されている機能を未実装と記載した箇所もある |
-| [旧機能マトリクス](feature-matrix.md) | 旧版の自動試験・実機未確認・不足項目の詳細記録 |
-| [固定Shared pilot](shared-pilot.md) | 第1段階の固定pilot時点の仕様・受入計画 |
-
-現行の機能表をここへ追記しません。現行の環境手順は[Personal／Shared環境](../operations/environments.md)、組織ネットワークは[導入手順](../deployment/organization-network.md)に集約します。
+| 旧機能ステータス・検証表 | [簡易表](https://github.com/sptree-m/awsportal/blob/v1.8.0-rc.2/docs/09-feature-status.md)、[詳細表](https://github.com/sptree-m/awsportal/blob/v1.8.0-rc.2/docs/09-feature-matrix.md) |
+| 固定Shared pilot | [当時の実装・受入計画](https://github.com/sptree-m/awsportal/blob/v1.8.0-rc.2/docs/18-shared-pilot-implementation.md) |
+| v1.3.0 | [更新記録](https://github.com/sptree-m/awsportal/blob/v1.8.0-rc.2/docs/16-release-1.3.0.md) |
+| v1.7.0-rc.1 | [候補版の変更・制限](https://github.com/sptree-m/awsportal/blob/v1.8.0-rc.2/docs/19-release-1.7.0-rc.1.md) |
