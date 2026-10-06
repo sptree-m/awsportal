@@ -1,13 +1,13 @@
 # 現行の機能一覧
 
-公開版の対象はv1.9.0。mainで追加した未リリース機能は個別に注記します。詳細設定は各運用手順を参照してください。「実装あり」はコードが存在することを示し、AWS／DCV／Box実環境での本番受入完了を示すものではありません。過去の①〜④による調査表は[履歴](archive/README.md)に保存しています。
+対象はv1.9.1。詳細設定は各運用手順を参照してください。「実装あり」はコードが存在することを示し、AWS／DCV／Box実環境での本番受入完了を示すものではありません。過去の①〜④による調査表は[履歴](archive/README.md)に保存しています。
 
 | 領域 | 実装されている機能 | 設定・制約 |
 |---|---|---|
 | 認証・アカウント | bcrypt、管理者TOTP、MFA端末最大3台、パスワード変更、一時パスワード、無操作無効化・再有効化、管理者復旧CLI | [初期設定](deployment/setup.md)、[復旧](operations/password-recovery.md) |
 | ユーザー・権限 | Portal Adminによるユーザー・グループ所属・EC2割り当て管理、本人／グループの参照・操作制限 | [インスタンス管理](operations/instances.md)。Group Adminへの管理委譲は未実装 |
 | EC2・スケジュール | 状態表示、起動／停止、遷移中の更新、曜日・時刻による操作、ポータル上の無効化 | [運用概要](operations/instances.md)。無効化はAWS停止・削除ではない |
-| DCV | ワンタイム認証、ネイティブ接続、OSアカウント・session同期、接続権限・DLP設定、接続ポート指定（main追加・未リリース） | [DCV](operations/dcv.md)。利用DCV版と実OSで検証が必要 |
+| DCV | ワンタイム認証、ネイティブ接続、OSアカウント・session同期、接続権限・DLP設定、接続ポート指定 | [DCV](operations/dcv.md)。利用DCV版と実OSで検証が必要 |
 | Personal／Shared | 専用・共用環境、席の予約、切断後保持、明示解放、未接続予約の期限処理、HOME lease | [環境運用](operations/environments.md) |
 | ストレージ・Dataset | User／Group EFS、停止中HOME移行、Scratch quota、S3 manifestによる検証付きcache | [環境運用](operations/environments.md)。HOME隔離・mountは実機受入が必要 |
 | Job・使用量 | job broker、CPU／memory／IO計測、子プロセス・再起動・欠測追跡、履歴、ParquetのS3出力 | [環境運用](operations/environments.md) |

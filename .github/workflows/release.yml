@@ -80,7 +80,12 @@ jobs:
           else
             RELEASE_FLAGS=()
             if [[ "$V" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi
-            gh release create "$TAG" "${RELEASE_FLAGS[@]}" "dist/$ASSET" "dist/$ASSET.sha256" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+            if [[ -f "docs/releases/$TAG.md" ]]; then
+              RELEASE_FLAGS+=(--notes-file "docs/releases/$TAG.md")
+            else
+              RELEASE_FLAGS+=(--generate-notes)
+            fi
+            gh release create "$TAG" "${RELEASE_FLAGS[@]}" "dist/$ASSET" "dist/$ASSET.sha256" --target "$GITHUB_SHA" --title "$TAG"
           fi
 
       - name: Verify published release assets

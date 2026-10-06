@@ -4,11 +4,7 @@ STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 umask 077
 HERE="$(cd "$(dirname "$0")" && pwd)"
-if [[ "${AWSPORTAL_DCV_PORT:-8443}" != 8443 && -z "${BINARY_URL:-}" ]]; then
-  echo 'Custom DCV ports require BINARY_URL pointing to a release that supports AWSPORTAL_DCV_PORT' >&2
-  exit 1
-fi
-BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.6.0/awsportal-v1.6.0-linux-arm64.tar.gz}"
+BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.9.1/awsportal-v1.9.1-linux-arm64.tar.gz}"
 fail(){ rc=$?; echo; echo "RESULT: FAIL - create/verification failed (exit=$rc)"; exit "$rc"; }
 trap fail ERR
 
