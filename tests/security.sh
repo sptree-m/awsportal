@@ -44,3 +44,27 @@ test -s cmd/awsportal/web/fonts/rounded-mplus-1mn-regular.ttf
 echo 'UI network-weight checks: PASS'
 # The downloadable automation client and repository CLI must stay identical.
 cmp scripts/awsportal-mirror cmd/awsportal/web/awsportal-mirror.py
+
+# Keep the product principles in current documentation, including after doc cleanup.
+echo 'Product principle documentation checks'
+python3 - <<'PYDOC'
+from pathlib import Path
+readme = Path("README.md").read_text()
+heading = "## 最優先のコンセプト"
+if heading not in readme:
+    raise SystemExit("README must retain the product principles section")
+section = readme.split(heading, 1)[1].split("\n## ", 1)[0]
+for principle in ("超軽量", "高速", "高いメンテナンス性", "プロ仕様UI"):
+    if f"| {principle} |" not in section:
+        raise SystemExit(f"product principle missing: {principle}")
+if "削除・弱体化は禁止" not in section:
+    raise SystemExit("README must retain the principle preservation rule")
+for filename, target in (
+    ("docs/README.md", "../README.md#最優先のコンセプト"),
+    ("docs/architecture/overview.md", "../../README.md#最優先のコンセプト"),
+    ("docs/development/ui.md", "../../README.md#最優先のコンセプト"),
+):
+    if f"({target})" not in Path(filename).read_text():
+        raise SystemExit(f"product principle reference missing: {filename}")
+PYDOC
+echo 'Product principle documentation checks: PASS'
