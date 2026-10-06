@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/skip2/go-qrcode"
+	"github.com/sptree-m/awsportal/internal/auditexport"
 	"github.com/sptree-m/awsportal/internal/auth"
 	awsapi "github.com/sptree-m/awsportal/internal/aws"
 	"github.com/sptree-m/awsportal/internal/importer"
@@ -69,6 +70,23 @@ func main() {
 		log.Fatal(e)
 	}
 	a := &app{db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), egress: awsapi.NewEgress(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
+	if bucket := env("AWSPORTAL_AUDIT_BUCKET", ""); bucket != "" {
+		prefix, err := auditexport.NormalizePrefix(env("AWSPORTAL_AUDIT_PREFIX", "audit/"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		interval, err := time.ParseDuration(env("AWSPORTAL_AUDIT_INTERVAL", "5m"))
+		if err != nil || interval < time.Second {
+			log.Fatal("AWSPORTAL_AUDIT_INTERVAL must be a duration of at least 1s")
+		}
+		auditConfig := cfg
+		auditConfig.Region = env("AWSPORTAL_AUDIT_REGION", cfg.Region)
+		sink, err := awsapi.NewUsageS3(auditConfig, bucket)
+		if err != nil {
+			log.Fatal(err)
+		}
+		go (&auditexport.Worker{Store: db, Sink: sink, Destination: bucket + "/" + prefix, Prefix: prefix, Interval: interval}).Run(ctx)
+	}
 	if root := env("AWSPORTAL_MIRROR_ROOT", ""); root != "" {
 		a.mirrors, e = mirror.New(db, root, env("AWSPORTAL_MIRROR_CREDENTIAL_DIR", ""), env("AWSPORTAL_MIRROR_CA_FILE", ""))
 		if e != nil {
@@ -362,8 +380,12 @@ func (a *app) mfaDelete(w http.ResponseWriter, r *http.Request) {
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	if c, e := r.Cookie("awsportal_session"); e == nil {
 		a.mu.Lock()
+		s, ok := a.sessions[c.Value]
 		delete(a.sessions, c.Value)
 		a.mu.Unlock()
+		if ok && time.Now().Before(s.Expires) {
+			a.db.Audit(r.Context(), s.User.Username, "logout", "", "ok", "")
+		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: "awsportal_session", Path: "/", MaxAge: -1})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)

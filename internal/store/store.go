@@ -52,7 +52,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return e
 		}
 	}
-	_, err := s.DB.ExecContext(ctx, historySchema)
+	_, err := s.DB.ExecContext(ctx, historySchema+auditExportSchema)
 	return err
 }
 

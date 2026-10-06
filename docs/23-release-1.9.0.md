@@ -1,0 +1,24 @@
+# v1.9.0
+
+## 変更
+
+- ログイン成功・失敗、ログアウト、管理操作等の監査ログをS3へ定期出力する。UTF-8 JSONLをgzip圧縮し、最大1000件単位の`.jsonl.gz`として保存する。
+- 出力周期・保存先bucket・prefix・regionを環境変数で指定できる。既定OFF、設定時の周期は5分。初回は既存履歴、その後は差分出力する。
+- 送信前に圧縮データをSQLiteへ保存し、送信失敗や再起動後も同じkey・bytesで再試行する。元の監査ログは保持する。更新前の非圧縮保留ファイルはそのまま送信を完了する。
+- 有効なセッションのログアウトを監査ログに記録する。
+- 管理者指定ネットワークのTerraform例を変数化した。`terraform/examples/org-existing/terraform.tfvars.example`をコピーして、VPC・Subnet・AZ・Route Table・TGWを差し替えられる。任意の起動プロファイルには承認IP範囲・SG・IAM Profile・AMIを指定できる。
+- CloudShell向けAWS環境・権限調査ツールを含む。ネットワークや権限の可視情報、明示指定したEC2要求のDryRun等を証拠ZIPへ保存する。
+
+## 更新と設定
+
+Portal停止中にSQLiteと既存HOMEのバックアップを取得し、同じtagのソース・Terraform・文書とARM64配布物を使用する。起動時に監査出力状態テーブルを追加する。既存の認証・権限設定は継続する。
+
+監査出力は[設定・IAM権限](22-audit-s3-export.md)を参照。管理者が既存S3 bucketと指定prefixへの`PutObject`権限を準備し、必要ならKMS・承認ネットワーク経路も設定する。bucketを指定しなければ出力しない。保存済みS3ファイルの変換・削除は行わない。
+
+管理者指定ネットワークは[設定例](../terraform/examples/org-existing/README.md)、全体の導入は[組織ネットワーク構成](21-organization-deployment.md)、AWS調査は[調査ツール](../tools/aws-audit/README.md)を参照。
+
+## 運用上の範囲
+
+監査ファイルはgzipと件数で縮小・分割するが、バイト数の上限は設定していない。SQLiteの監査ログを自動削除する機能はない。保持期間・S3 Lifecycle・Object Lock・閲覧権限は管理者が設定する。
+
+Shared自動増減とWindows Box取り込みの既定OFFを維持する。リリース番号の更新は実AWS／DCV／Boxの本番受入完了を意味しない。実S3送信、組織ネットワークの疎通、既存候補版の実機受入項目は対象環境で確認する。
