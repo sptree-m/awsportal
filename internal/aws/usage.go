@@ -28,6 +28,10 @@ func (s *UsageS3) Put(ctx context.Context, key string, payload []byte) error {
 	contentType := "application/json"
 	if strings.HasSuffix(key, ".parquet") {
 		contentType = "application/vnd.apache.parquet"
+	} else if strings.HasSuffix(key, ".jsonl") {
+		contentType = "application/x-ndjson"
+	} else if strings.HasSuffix(key, ".jsonl.gz") {
+		contentType = "application/gzip"
 	}
 	digest := sha256.Sum256(payload)
 	_, err := s.Client.PutObject(ctx, &s3.PutObjectInput{Bucket: awsSDK.String(s.Bucket), Key: awsSDK.String(key), Body: bytes.NewReader(payload), ContentType: awsSDK.String(contentType), ChecksumSHA256: awsSDK.String(base64.StdEncoding.EncodeToString(digest[:]))})

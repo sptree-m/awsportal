@@ -1,52 +1,22 @@
 # awsportal
 
-AWS上のEC2/DCV環境を管理する、イントラネット向け超軽量ポータルです。
+AWS上のEC2／Amazon DCV環境を管理する、イントラネット向け軽量ポータルです。v1.9.0の変更は[リリースノート](docs/releases/v1.9.0.md)を参照してください。
 
 ## 基本方針
-- 一般ユーザーにはAWSアカウント、IAMユーザー、AWS Console、Access Keyを付与しません。
-- AWS APIはポータルEC2のInstance Profileから最小権限で実行します。
-- 管理対象デスクトップへの接続経路はAmazon DCV（TCP/8443）のみに限定します。
-- SSH、RDP、SCP、一般ユーザー向けSSM対話セッションは禁止します。
-- 一般ユーザーは本人または所属グループに割り当てられたEC2だけを表示・操作できます。
-- ポータル管理者は全管理対象EC2を表示でき、TOTPによる2要素認証を必須とします。
-- 一般ユーザーのDCVではファイル転送、クリップボード、印刷、USB等を制限します。
-- 管理者によるデータ持ち出しは別権限とし、監査ログを残します。
 
-## UI設計原則
-- 超軽量・高速を最優先し、Go SSR + HTML + 自前CSSを基本とします。
-- Bootstrap、Tailwind、React、Vue、jQuery、Google Fonts、CDNなどの外部UIリソースを使用しません。
-- 1366x768のPC、小さいブラウザウィンドウ、狭幅画面でも主要操作が画面外へ消えないことを必須とします。
-- 横長の一覧はページ全体ではなく一覧領域だけを横スクロール可能にします。
-- 見栄えのためだけのJavaScriptや外部ダウンロード依存を追加しません。
-- CIでHTML/CSSの外部URL、外部script、CSS importを検出して拒否します。
+- 一般UserにAWSアカウント・IAM User・Console・Access Keyを付与せず、PortalのInstance Profileで最小権限のAWS APIを実行します。
+- 本人または所属groupへ割り当てられたEC2だけを表示・操作します。Portal Adminは全体を参照でき、TOTP認証が必須です。
+- 接続はDCV（TCP/8443）に限定し、SSH／RDP／SCP・一般UserのSSM対話アクセスを許可しません。
+- DCVの転送・clipboard・印刷・USB等を制限し、許可された管理者の持ち出しは監査します。
 
-## 開発時の必須テスト
-`./scripts/setup-dev.sh` を一度実行すると、Gitのpre-commit hookを有効化します。
-以後は `./scripts/test-all.sh` が成功しない限りコミットできません。
-`--no-verify` による回避は禁止です。GitHub側でもCIを必須チェックとして設定してください。
+UIはGo SSR・同梱htmx・自前CSS・ローカルfontで構成し、外部CDNを使いません。1366×768から狭幅まで主要操作を表示し、一覧だけを横scrollさせます。
 
-t4g.micro相当テストはARM64、2 vCPU、1 GiB RAMを前提とし、4 GiB swapを補助的に使用します。
+## 導入・運用
 
-詳細は `docs/` を参照してください。
+[文書目次](docs/README.md)を入口とし、[現行機能](docs/features.md)、[構築・初期設定](docs/deployment/setup.md)、[管理者指定ネットワーク](docs/deployment/organization-network.md)を参照してください。監査S3出力、Shared自動増減、Windows取り込みは既定OFFです。
 
-## GitLab取得専用ミラー
+## 開発
 
-Portalで同期対象・間隔・読み取り/同期権限を設定し、利用者EC2から `awsportal-mirror sync ID --wait` で同期完了を待てます。GitLab資格情報はPortalだけに保持し、ミラーはclone/fetchとGit LFSの読み取りだけを提供します。利用者EC2はGit LFSをインストールし、LFS配布用に管理画面のポータルHTTPS URLを設定してください。初期設定と自動化例は [Gitミラー運用](docs/14-git-mirror.md) を参照してください。
+`./scripts/setup-dev.sh`でpre-commit hookを有効化します。コミット前の`./scripts/test-all.sh`成功が必須で、`--no-verify`は禁止です。GitHub側でもPR・必須CI成功を要求します。[テスト方針](docs/development/testing.md)を参照してください。
 
-## 利用者マニュアル・サイト表示設定
-
-ログイン後の「利用者マニュアル」でプロキシ設定とGitミラーの利用・自動化手順を確認できます。Portal Adminの「表示設定」から、左上のサイト名・説明、ホームの見出し・お知らせ、ログイン案内、問い合わせ案内、マニュアルの接続先を変更できます。設定はDBに保存します。[表示設定の運用](docs/15-site-customization.md) を参照してください。
-
-DCV接続・アカウント同期・v1.6.0ラボ試験は [DCV試験手順](docs/17-dcv-release-test.md) を参照してください。
-
-1.3.0への更新とLFS準備は [リリース手順](docs/16-release-1.3.0.md) を参照してください。
-
-Shared固定pilotとJob/cgroup計測の候補版 `v1.7.0-rc.1` は [候補版の変更・導入・既知制限](docs/19-release-1.7.0-rc.1.md) を参照してください。第1段階のAWS受入は未完了です。
-
-二段階実装の候補版 `v1.8.0-rc.1` は [導入・復旧・費用配賦・Windows取り込み](docs/20-two-stage-completion.md) を参照してください。自動増減・取り込みは初期OFF、実機受入記録を確認してから有効化します。
-
-組織管理のVPC・指定IP範囲・TGW経路を使う新規／既存／混在構成は [導入手順](docs/21-organization-deployment.md) を参照してください。
-
-## 組織AWS環境・権限の調査
-
-CloudShellで `bash tools/aws-audit/run.sh --regions ap-northeast-1` を実行すると、提供済みネットワーク、IAM/組織ポリシーの可視範囲、権限の証拠をZIPに保存できます。Policy Simulator権限は不要です。明示指定したEC2要求のDryRunと、作成・削除権限の非対称性を確認する方法は [調査ツールの手順](tools/aws-audit/README.md) を参照してください。判定できない操作はUNKNOWNとして残します。
+t4g.micro相当試験はARM64・2 vCPU・1 GiB RAMを前提とし、実機では4 GiB swapを補助的に使用します。

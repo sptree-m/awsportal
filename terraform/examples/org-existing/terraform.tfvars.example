@@ -1,0 +1,27 @@
+aws_region         = "ap-northeast-1"
+name               = "awsportal"
+existing_vpc_id    = "vpc-0123456789abcdef0"
+transit_gateway_id = "tgw-0123456789abcdef0"
+
+subnets = {
+  a = {
+    id                = "subnet-0123456789abcdef0"
+    availability_zone = "ap-northeast-1a"
+    route_table_id    = "rtb-0123456789abcdef0"
+  }
+}
+
+# Uncomment after replacing every value to create an approved Launch Template.
+# The IP ranges must fit inside the selected subnet; use /32 for a single IP.
+# compute_profile = {
+#   subnet_key            = "a"
+#   allowed_ipv4_cidrs    = ["10.42.1.16/28"]
+#   security_group_ids    = ["sg-0123456789abcdef0"]
+#   instance_profile_name = "REPLACE_APPROVED_INSTANCE_PROFILE"
+#   ami_id                = "ami-0123456789abcdef0"
+#   ami_checksum          = "REPLACE_VERIFIED_GOLDEN_SHA256"
+#   config_parameter      = "/awsportal/shared/config"
+#   resource_class        = "shared"
+#   instance_type         = "m7i.2xlarge"
+#   approved_ami_owners   = ["self"]
+# }

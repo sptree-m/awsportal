@@ -1,6 +1,6 @@
 # インスタンス管理とアクセス割り当て
 
-## 今回の実装
+## 管理画面の機能
 
 `/admin/instances` はPortal Admin専用。一般ユーザーとGroup Adminは
 GET/POSTとも403。管理操作は監査ログに記録する。
@@ -22,6 +22,8 @@ GET/POSTとも403。管理操作は監査ログに記録する。
 発行済み未使用DCVトークンを破棄する。管理対象Linuxでは次回Agent同期で既存sessionとOS accountへ失効を適用する。Sharedの席/HOME leaseは失効操作だけでは解放せず、安全なcleanup確認を待つ。
 再有効化は既存割り当てを維持し、既存の有効スケジュールも再び対象になる。
 
+スケジュールは起動／停止・曜日・時刻・タイムゾーンを指定し、30秒周期で評価する。同じ分の予定は重複実行しない。Sharedの電源スケジュールは許可しない。
+
 スケジューラーは実行候補を取得するたびにインスタンスの有効状態、所有ユーザーの
 有効状態/期限と現在の電源操作権限を検査する。ユーザー/グループの割り当て解除後は、
 新しいDCVトークンの認証時と次回スケジュール選択時に最新権限で拒否する。
@@ -31,9 +33,9 @@ GET/POSTとも403。管理操作は監査ログに記録する。
 
 管理対象Linux Agentが固定UID/GID=200000+User IDのOS accountと本人DCV Virtual Sessionを準備し、policy revision、native-only制限、準備結果をPortalへ報告する。Sharedでは有効AssignmentのUserだけを準備し、EFS HOME mount失敗ではReadyにしない。一般UserはEC2電源/旧接続APIでSharedを迂回できない。
 
-Personal EFSの停止移行、Group共有領域、HOME lease、Shared作成/安全な終了、Windows専用Box accountは [二段階導入](20-two-stage-completion.md) と [組織構成](21-organization-deployment.md) を参照する。HOME leaseはAgentのsession/jobなし、sync/unmount済み報告後に解放する。一般Windows UserのAD/SSO連携は別仕様であり、Linux UID方式を流用しない。
+Personal EFSの停止移行、Group共有領域、HOME lease、Shared作成/安全な終了、Windows専用Box accountは [二段階導入](environments.md) と [組織構成](../deployment/organization-network.md) を参照する。HOME leaseはAgentのsession/jobなし、sync/unmount済み報告後に解放する。一般Windows UserのAD/SSO連携は別仕様であり、Linux UID方式を流用しない。
 
-## 将来拡張（今回の実装に含めない）
+## 将来拡張（未実装）
 
 | 機能 | 設計要件 |
 |---|---|
@@ -54,7 +56,7 @@ APIとバックグラウンドジョブで検査する。現状のcan_controlを
 EFSホームは許可された各Linuxインスタンスで同じユーザーID/パスを使い、他ユーザーの
 ホームを読めない権限を設ける。複数ログイン時の設定ファイル競合も受入試験に含める。
 Windowsホームの共有は別途SMB/FSx/ディレクトリ連携の設計対象とし、Linux EFS設計を
-そのまま適用しない。今回はEFS/AMI/Snapshot等の有料リソースを新規作成しない。
+そのまま適用しない。このインスタンス管理画面はEFS/AMI/Snapshot等を新規作成しない。Shared用IaCでのEFS等の作成は[環境運用](environments.md)の別工程として扱う。
 
 AWS公式:
 - https://docs.aws.amazon.com/efs/latest/ug/mounting-fs.html
