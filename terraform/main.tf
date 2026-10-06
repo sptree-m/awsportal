@@ -62,8 +62,8 @@ resource "aws_security_group" "dcv_only" {
 
   ingress {
     description = "Amazon DCV only"
-    from_port   = 8443
-    to_port     = 8443
+    from_port   = var.dcv_port
+    to_port     = var.dcv_port
     protocol    = "tcp"
     cidr_blocks = var.corporate_cidrs
   }
@@ -155,8 +155,8 @@ resource "aws_security_group" "managed_egress" {
   vpc_id      = var.vpc_id
   ingress {
     description = "DCV from corporate network"
-    from_port   = 8443
-    to_port     = 8443
+    from_port   = var.dcv_port
+    to_port     = var.dcv_port
     protocol    = "tcp"
     cidr_blocks = var.corporate_cidrs
   }

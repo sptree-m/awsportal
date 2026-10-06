@@ -9,13 +9,30 @@ flowchart TD
   U[利用者] -->|ログイン・接続| P[awsportal]
   P -->|権限・準備状態確認| D[ユーザー・グループ割り当て]
   P -->|60秒・1回限りのトークン| U
-  U -->|HTTPS 8443・本人のセッション| C[EC2 DCV Server]
+  U -->|HTTPS 指定ポート・本人のセッション| C[EC2 DCV Server]
   C -->|外部認証| A[EC2同期エージェント]
   A -->|検証済みHTTPS・EC2専用認証キー| P
   A -->|ユーザー作成・セッション開始／終了| C
 ```
 
 エージェントはrootで動作し、30秒周期でそのEC2のアカウントだけを取得します。DCVの外部認証先は同じEC2の `http://127.0.0.1:8444`。この仲介サービスが専用キーでポータルへHTTPS照会します。証明書検証は常に有効で、HTTPとリダイレクトへの認証情報転送は拒否します。
+
+## 接続ポートの指定（main追加・未リリース）
+
+既定はTCP/8443。443・10443などへ変更できます。ポータル全体で共通の接続ポートを使うため、管理対象の全DCV EC2を同じ値に揃えます。
+
+| 設定先 | 443の指定方法 |
+|---|---|
+| Portal | systemdの`[Service]`に`Environment=AWSPORTAL_DCV_PORT=443`を追加し、daemon-reload後にPortalを再起動 |
+| DCV EC2 | 更新版の配布ファイルで`sudo env AWSPORTAL_DCV_PORT=443 bash dcv/install.sh`を実行 |
+| Terraform | root moduleと利用する`shared-pilot` moduleに`dcv_port = 443`を指定 |
+| 提供済みSG・社内Firewall・NACL | 管理者に指定TCPポートの許可を依頼。Terraformは提供済みSGを変更しない |
+
+受け付ける値は1〜65535の整数で、22・3389・内部認証仲介用8444は除外します。内部認証の8444やPortalのHTTPSポートは変更せず、DCVのQUICは引き続き無効です。
+
+既存環境は保守時間に新ポートの通信許可、DCV設定・再起動、Portal設定・再起動を揃え、実クライアント接続を確認してから旧ポートの許可を削除します。443が他サービスに使われていないことも確認してください。インストーラー再実行時も選んだポートを指定します。認証・権限・持ち出し制御は既存の設定を維持します。
+
+公開済みv1.9.0以前はポート固定のため、新しい設定を使用するにはこの変更を含むPortalバイナリ・DCVインストーラー・Terraformを使用してください。
 
 ## アカウントと権限
 
@@ -63,7 +80,7 @@ sudo systemctl status awsportal-dcv-agent --no-pager
 sudo dcv list-sessions
 ```
 
-5. SGに利用端末からのTCP8443を許可します。ポータルAPIはDCV EC2からだけ到達できるHTTPS経路で公開し、信頼できるリバースプロキシでTLSを終端し、Authorizationを引き継いでください。22/3389の開放・利用者へのSSM権限付与は不要です。
+5. SGに利用端末からの指定TCPポート（既定8443）を許可します。ポータルAPIはDCV EC2からだけ到達できるHTTPS経路で公開し、信頼できるリバースプロキシでTLSを終端し、Authorizationを引き継いでください。22/3389の開放・利用者へのSSM権限付与は不要です。
 6. ユーザー／グループを割り当て、準備済みユーザーIDを確認して接続します。ネイティブ方式では利用端末へのDCVクライアント導入が必要です。
 
 EC2のIAMロールには、当該リージョンの `arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*` に対する `s3:GetObject` を許可してください。DCVからS3へのHTTPS到達性も必要です。ラボではこの読み取り権限を設定済みで、S3バケットは新規作成しません。

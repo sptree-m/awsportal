@@ -15,8 +15,10 @@ bash lab/destroy.sh
 
 専用VPC / public subnet / IGW / route table / Portal SG / Test SG / Portal・Test IAM role + profile / t4g.micro x2 / encrypted gp3 8GiB + 16GiBを作成します。NAT Gateway・ALB・EIPは作成しません。SSMは管理者の導入・試験用で、利用者にAWS権限を付与しません。
 
-一時ラボでは8080/TCP（Portal）と8443/TCP（DCV）をALLOWED_CIDR（既定0.0.0.0/0）に許可します。CloudShellのヘルス確認とブラウザ接続元の両方を許可する必要があります。Portal内部認証用8444/TCPはTest SGからだけ許可します。認証通信は専用証明書を検証するHTTPSです。ブラウザ画面用PortalはHTTP、DCVは自己署名HTTPSで、一時試験専用です。
+一時ラボでは8080/TCP（Portal）と指定TCPポート（DCV、既定8443）をALLOWED_CIDR（既定0.0.0.0/0）に許可します。CloudShellのヘルス確認とブラウザ接続元の両方を許可する必要があります。Portal内部認証用8444/TCPはTest SGからだけ許可します。認証通信は専用証明書を検証するHTTPSです。ブラウザ画面用PortalはHTTP、DCVは自己署名HTTPSで、一時試験専用です。
 
 create.shはARM64・EC2 running・Portal healthを検証します。test-dcv.shは実DCVサービス・OSユーザー／仮想セッション・ポータルトークンによる外部認証と再利用拒否を検証します。画面描画と入力はDCVネイティブクライアントで確認してください。
 
 作成時にEC2とEBSのIDを ~/.awsportal-lab/region/stack/ に記録します。destroy.shはAPIの権限不足や取得失敗を成功扱いせず、CloudFormation削除完了、EC2終了、保存済みEBSとネットワーク・IAM資源の消滅を検査します。terminated EC2は履歴として扱います。ホーム上の検査記録は有料AWS資源ではありません。
+
+DCVポートを変更する場合は`AWSPORTAL_DCV_PORT=443 BINARY_URL=<この変更を含む配布物URL> bash lab/create.sh`を使用します。CloudFormationの`DCVPort`をPortal・DCVインストーラー・SG・接続先出力へ共通で渡します。旧リリースの配布物はポート指定に未対応です。

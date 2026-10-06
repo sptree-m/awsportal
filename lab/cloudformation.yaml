@@ -7,6 +7,11 @@ Parameters:
   LabTOTPSecret: {Type: String, NoEcho: true, MinLength: 16}
   InstanceType: {Type: String, Default: t4g.micro}
   BinaryURL: {Type: String}
+  DCVPort:
+    Type: String
+    Default: '8443'
+    AllowedPattern: '^(?!(22|3389|8444)$)([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$'
+    ConstraintDescription: 'Integer TCP port except 22, 3389 and authentication broker port 8444'
   DCVAgentToken: {Type: String, NoEcho: true, MinLength: 64, MaxLength: 64}
   LabTLSCert: {Type: String, NoEcho: true}
   LabTLSKey: {Type: String, NoEcho: true}
@@ -52,7 +57,7 @@ Resources:
     Properties:
       GroupDescription: awsportal lab DCV only
       VpcId: {Ref: Vpc}
-      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: 8443, ToPort: 8443, CidrIp: {Ref: AllowedCidr}}]
+      SecurityGroupIngress: [{IpProtocol: tcp, FromPort: {Ref: DCVPort}, ToPort: {Ref: DCVPort}, CidrIp: {Ref: AllowedCidr}}]
       SecurityGroupEgress: [{IpProtocol: -1, CidrIp: 0.0.0.0/0}]
       Tags: [{Key: Project, Value: {Ref: ProjectTag}}]
   PortalRole:
@@ -111,7 +116,7 @@ Resources:
             mkswap /swapfile
             swapon /swapfile
             echo '/swapfile none swap sw 0 0' >> /etc/fstab
-            bash /tmp/awsportal-bin/dcv/install.sh
+            AWSPORTAL_DCV_PORT='${DCVPort}' bash /tmp/awsportal-bin/dcv/install.sh
       Tags: [{Key: Name, Value: awsportal-lab-test}, {Key: Project, Value: {Ref: ProjectTag}}, {Key: awsportal-user, Value: test-user01}]
   PortalInstance:
     Type: AWS::EC2::Instance
@@ -181,6 +186,7 @@ Resources:
               WorkingDirectory=/var/lib/awsportal
               Environment=AWSPORTAL_DB=/var/lib/awsportal/awsportal.db
               Environment=AWSPORTAL_ADDR=:8080
+              Environment=AWSPORTAL_DCV_PORT=${DCVPort}
               Environment=AWSPORTAL_COOKIE_SECURE=0
               Environment=AWSPORTAL_LAB_DEBUG_AUTH=1
               Environment=AWS_REGION=${AWS::Region}
@@ -220,4 +226,5 @@ Outputs:
   PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
   PortalInstanceId: {Value: {Ref: PortalInstance}}
   TestInstanceId: {Value: {Ref: TestInstance}}
-  DCVURL: {Value: {Fn::Sub: 'https://${TestInstance.PublicIp}:8443'}}
+  DCVPort: {Value: {Ref: DCVPort}}
+  DCVURL: {Value: {Fn::Sub: 'https://${TestInstance.PublicIp}:${DCVPort}'}}

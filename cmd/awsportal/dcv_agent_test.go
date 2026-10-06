@@ -56,78 +56,106 @@ func TestDCVResolvesAddressAgainAfterEC2Restart(t *testing.T) {
 }
 
 func TestDCVManagedNativeConnectionAndMachineAuthentication(t *testing.T) {
-	a, _ := newHandlerTestApp(t)
-	ctx := context.Background()
-	if e := a.db.CreateUser(ctx, "alice", "x", "portal_admin", ""); e != nil {
-		t.Fatal(e)
+	for _, port := range []int{8443, 443, 10443} {
+		t.Run(fmt.Sprint(port), func(t *testing.T) {
+			a, _ := newHandlerTestApp(t)
+			a.dcvPort = port
+			ctx := context.Background()
+			if e := a.db.CreateUser(ctx, "alice", "x", "portal_admin", ""); e != nil {
+				t.Fatal(e)
+			}
+			alice, _ := a.db.UserByName(ctx, "alice")
+			_, _ = a.db.DB.Exec(`INSERT INTO instances(instance_id,name,dcv_host) VALUES('i-a','A','dcv.example')`)
+			token := strings.Repeat("a", 64)
+			if e := a.db.ConfigureDCV(ctx, alice, "i-a", "dcv.example", "native", token); e != nil {
+				t.Fatal(e)
+			}
+			for _, credential := range []string{"", "Bearer wrong", "Bearer " + token} {
+				r := httptest.NewRequest("GET", "/api/dcv/agent/state", nil)
+				r.Header.Set("Authorization", credential)
+				w := httptest.NewRecorder()
+				a.dcvAgentState(w, r)
+				want := 401
+				if credential == "Bearer "+token {
+					want = 200
+				}
+				if w.Code != want {
+					t.Fatal(w.Code, want)
+				}
+			}
+			body := `{"ready_users":[1],"error":"","applied_revision":1,"browser_blocked":true}`
+			r := httptest.NewRequest("POST", "/api/dcv/agent/heartbeat", strings.NewReader(body))
+			r.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			a.dcvAgentHeartbeat(w, r)
+			if w.Code != 204 {
+				t.Fatal(w.Code)
+			}
+			r = requestAs(a, alice, "GET", "/dcv/i-a", nil)
+			r.SetPathValue("id", "i-a")
+			w = httptest.NewRecorder()
+			a.require(a.dcv)(w, r)
+			if w.Code != 302 || !strings.HasPrefix(w.Header().Get("Location"), fmt.Sprintf("dcv://dcv.example:%d/", port)) {
+				t.Fatal(w.Code, w.Header())
+			}
+			destination, e := url.Parse(w.Header().Get("Location"))
+			if e != nil {
+				t.Fatal(e)
+			}
+			form := url.Values{"sessionId": {destination.Fragment}, "authenticationToken": {destination.Query().Get("authToken")}}.Encode()
+			r = httptest.NewRequest("POST", "/api/dcv/agent/auth", strings.NewReader(form))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Authorization", "Bearer "+token)
+			w = httptest.NewRecorder()
+			a.dcvAgentAuth(w, r)
+			if w.Code != 200 || !strings.Contains(w.Body.String(), "<username>awp-u1</username>") {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			r = httptest.NewRequest("POST", "/api/dcv/agent/auth", strings.NewReader(form))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Authorization", "Bearer "+token)
+			w = httptest.NewRecorder()
+			a.dcvAgentAuth(w, r)
+			if w.Code != 401 {
+				t.Fatal("replay allowed")
+			}
+			_ = a.db.DCVHeartbeat(ctx, "i-a", []int64{alice.ID}, "", time.Now().Add(-time.Hour), 1, 1)
+			r = requestAs(a, alice, "GET", "/dcv/i-a", nil)
+			r.SetPathValue("id", "i-a")
+			w = httptest.NewRecorder()
+			a.require(a.dcv)(w, r)
+			if w.Code != 503 {
+				t.Fatal("unready desktop did not report 503")
+			}
+			// State response never contains the machine secret or password hash.
+			accounts, _ := a.db.DCVAccounts(ctx, "i-a", time.Now())
+			raw, _ := json.Marshal(accounts)
+			if strings.Contains(string(raw), token) || strings.Contains(string(raw), "password") {
+				t.Fatal("secret leaked")
+			}
+		})
 	}
-	alice, _ := a.db.UserByName(ctx, "alice")
-	_, _ = a.db.DB.Exec(`INSERT INTO instances(instance_id,name,dcv_host) VALUES('i-a','A','dcv.example')`)
-	token := strings.Repeat("a", 64)
-	if e := a.db.ConfigureDCV(ctx, alice, "i-a", "dcv.example", "native", token); e != nil {
-		t.Fatal(e)
+}
+
+func TestDCVPortConfiguration(t *testing.T) {
+	for _, value := range []string{"", "8443", "443", "10443", "1", "65535"} {
+		t.Run("valid_"+value, func(t *testing.T) {
+			t.Setenv("AWSPORTAL_DCV_PORT", value)
+			port, err := parseDCVPort(env("AWSPORTAL_DCV_PORT", "8443"))
+			expected := value
+			if expected == "" {
+				expected = "8443"
+			}
+			if err != nil || fmt.Sprint(port) != expected {
+				t.Fatal(port, err)
+			}
+		})
 	}
-	for _, credential := range []string{"", "Bearer wrong", "Bearer " + token} {
-		r := httptest.NewRequest("GET", "/api/dcv/agent/state", nil)
-		r.Header.Set("Authorization", credential)
-		w := httptest.NewRecorder()
-		a.dcvAgentState(w, r)
-		want := 401
-		if credential == "Bearer "+token {
-			want = 200
-		}
-		if w.Code != want {
-			t.Fatal(w.Code, want)
-		}
-	}
-	body := `{"ready_users":[1],"error":"","applied_revision":1,"browser_blocked":true}`
-	r := httptest.NewRequest("POST", "/api/dcv/agent/heartbeat", strings.NewReader(body))
-	r.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	a.dcvAgentHeartbeat(w, r)
-	if w.Code != 204 {
-		t.Fatal(w.Code)
-	}
-	r = requestAs(a, alice, "GET", "/dcv/i-a", nil)
-	r.SetPathValue("id", "i-a")
-	w = httptest.NewRecorder()
-	a.require(a.dcv)(w, r)
-	if w.Code != 302 || !strings.HasPrefix(w.Header().Get("Location"), "dcv://dcv.example:8443/") {
-		t.Fatal(w.Code, w.Header())
-	}
-	destination, e := url.Parse(w.Header().Get("Location"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	form := url.Values{"sessionId": {destination.Fragment}, "authenticationToken": {destination.Query().Get("authToken")}}.Encode()
-	r = httptest.NewRequest("POST", "/api/dcv/agent/auth", strings.NewReader(form))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Authorization", "Bearer "+token)
-	w = httptest.NewRecorder()
-	a.dcvAgentAuth(w, r)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "<username>awp-u1</username>") {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	r = httptest.NewRequest("POST", "/api/dcv/agent/auth", strings.NewReader(form))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Authorization", "Bearer "+token)
-	w = httptest.NewRecorder()
-	a.dcvAgentAuth(w, r)
-	if w.Code != 401 {
-		t.Fatal("replay allowed")
-	}
-	_ = a.db.DCVHeartbeat(ctx, "i-a", []int64{alice.ID}, "", time.Now().Add(-time.Hour), 1, 1)
-	r = requestAs(a, alice, "GET", "/dcv/i-a", nil)
-	r.SetPathValue("id", "i-a")
-	w = httptest.NewRecorder()
-	a.require(a.dcv)(w, r)
-	if w.Code != 503 {
-		t.Fatal("unready desktop did not report 503")
-	}
-	// State response never contains the machine secret or password hash.
-	accounts, _ := a.db.DCVAccounts(ctx, "i-a", time.Now())
-	raw, _ := json.Marshal(accounts)
-	if strings.Contains(string(raw), token) || strings.Contains(string(raw), "password") {
-		t.Fatal("secret leaked")
+	for _, value := range []string{"0", "65536", "-1", "443.5", "+443", "0443", " 443", "443/", "abc", "22", "3389", "8444"} {
+		t.Run("invalid_"+value, func(t *testing.T) {
+			if _, err := parseDCVPort(value); err == nil {
+				t.Fatal("invalid port accepted", value)
+			}
+		})
 	}
 }

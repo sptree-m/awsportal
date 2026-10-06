@@ -25,6 +25,7 @@ for module in two-stage managed-profile cur org-network; do
  terraform -chdir="terraform/modules/$module" init -backend=false -input=false >/dev/null
  terraform -chdir="terraform/modules/$module" validate
 done
+terraform -chdir=terraform test
 for module in org-network shared-pilot managed-profile cur two-stage; do
  terraform -chdir="terraform/modules/$module" test
  done

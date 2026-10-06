@@ -69,7 +69,7 @@ IPv4/IPv6の単一IP（/32、/128へ正規化）とCIDR、TCP/UDP、1〜65535の
 
 EC2のSGは複数を併用すると許可が合成される。ポータルは、単一ENI・専用SG1個だけが付いた登録済みEC2に限定する。SGに `awsportal:egress-instance=<EC2 ID>` のタグが必要。他ENIとの共有・別VPC・別SGの併用・複数ENIはAWS変更前に拒否。受信ルール、ENIへのSG割り当て、ルートはポータルから変更しない。
 
-Terraformの `managed_egress_instance_ids` に対象EC2 IDを追加して適用すると、専用SGと限定IAM権限が作られる。SGは最初は外向き許可なし、受信はcorporate_cidrsからDCV8443のみ。ポータルSGには対象SGから3128への受信を追加。SG自体に新たな常時課金リソースはない。
+Terraformの `managed_egress_instance_ids` に対象EC2 IDを追加して適用すると、専用SGと限定IAM権限が作られる。SGは最初は外向き許可なし、受信はcorporate_cidrsからDCVの`dcv_port`（既定8443）のみ。ポータルSGには対象SGから3128への受信を追加。SG自体に新たな常時課金リソースはない。
 
 初回は運用者が、必要な受信ルールを確認したうえで、その専用SGだけを利用者EC2に割り当てる。これによりSSM等の既存接続が失われ得るため、ポータル設定保存、必要な送信先の整理、復旧経路準備を先に行う。ポータルが稼働するEC2やプロキシEC2にはこの専用SGを割り当てない。一般ユーザーにENI/SG/ルート変更のIAM権限を付与しない。
 

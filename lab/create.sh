@@ -4,6 +4,10 @@ STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 umask 077
 HERE="$(cd "$(dirname "$0")" && pwd)"
+if [[ "${AWSPORTAL_DCV_PORT:-8443}" != 8443 && -z "${BINARY_URL:-}" ]]; then
+  echo 'Custom DCV ports require BINARY_URL pointing to a release that supports AWSPORTAL_DCV_PORT' >&2
+  exit 1
+fi
 BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.6.0/awsportal-v1.6.0-linux-arm64.tar.gz}"
 fail(){ rc=$?; echo; echo "RESULT: FAIL - create/verification failed (exit=$rc)"; exit "$rc"; }
 trap fail ERR
@@ -36,7 +40,7 @@ EXISTING="$(aws cloudformation list-stacks --region "$REGION" --query "length(St
   exit 1
 }
 echo "[4/6] Deploying $STACK"
-aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE" BinaryURL="$BINARY_URL" DCVAgentToken="$AGENT_TOKEN" LabTLSCert="$LAB_CERT" LabTLSKey="$LAB_KEY"
+aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE" BinaryURL="$BINARY_URL" DCVPort="${AWSPORTAL_DCV_PORT:-8443}" DCVAgentToken="$AGENT_TOKEN" LabTLSCert="$LAB_CERT" LabTLSKey="$LAB_KEY"
 
 PORTAL_ID="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`PortalInstanceId`].OutputValue' --output text)"
 TEST_ID="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`TestInstanceId`].OutputValue' --output text)"

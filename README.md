@@ -19,7 +19,7 @@ AWS上のEC2／Amazon DCV環境を管理する、イントラネット向け軽�
 
 - 一般UserにAWSアカウント・IAM User・Console・Access Keyを付与せず、PortalのInstance Profileで最小権限のAWS APIを実行します。
 - 本人または所属groupへ割り当てられたEC2だけを表示・操作します。Portal Adminは全体を参照でき、TOTP認証が必須です。
-- 接続はDCV（TCP/8443）に限定し、SSH／RDP／SCP・一般UserのSSM対話アクセスを許可しません。
+- 接続はDCV（指定TCPポート、既定8443）に限定し、SSH／RDP／SCP・一般UserのSSM対話アクセスを許可しません。
 - DCVの転送・clipboard・印刷・USB等を制限し、許可された管理者の持ち出しは監査します。
 
 UIはGo SSR・同梱htmx・自前CSS・ローカルfontで構成し、外部CDNを使いません。1366×768から狭幅まで主要操作を表示し、一覧だけを横scrollさせます。

@@ -59,3 +59,17 @@ assert license_policy == [{"PolicyName": "DCVLicenseRead", "PolicyDocument": {
     "Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:GetObject",
     "Resource": {"Fn::Sub": "arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*"}}]}}]
 print("PASS: EC2 DCV license role grants only regional license object reads")
+
+# One parameter must control the listener, Portal link, firewall and reported URL.
+port = parameters["DCVPort"]
+assert port["Default"] == "8443"
+for value in ("1", "443", "8443", "10443", "65535"):
+    assert re.fullmatch(port["AllowedPattern"], value), value
+for value in ("0", "22", "3389", "8444", "65536", "0443", "443.5", "-1"):
+    assert not re.fullmatch(port["AllowedPattern"], value), value
+rule = resources["TestSG"]["Properties"]["SecurityGroupIngress"][0]
+assert rule["FromPort"] == rule["ToPort"] == {"Ref": "DCVPort"}
+assert "AWSPORTAL_DCV_PORT='${DCVPort}' bash" in resources["TestInstance"]["Properties"]["UserData"]["Fn::Base64"]["Fn::Sub"]
+assert "Environment=AWSPORTAL_DCV_PORT=${DCVPort}" in resources["PortalInstance"]["Properties"]["UserData"]["Fn::Base64"]["Fn::Sub"][0]
+assert document["Outputs"]["DCVURL"]["Value"]["Fn::Sub"].endswith(":${DCVPort}")
+print("PASS: configured DCV port controls the full lab connection path")
