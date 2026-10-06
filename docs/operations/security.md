@@ -10,5 +10,6 @@
 - 一般ユーザーの迂回路となるSession Manager対話アクセスを許可しません。
 - 外向き通信は社内承認済みFirewall/ProxyでAllowlist制御します。
 - CloudTrail、VPC Flow Logs、中央ログ保管を本番要件とします。
+- ポータルの操作・認証ログはSQLiteへ記録し、[gzip付きS3定期出力](audit-s3-export.md)を任意に有効化できます。CloudTrail・VPC Flow Logs・OSログの収集はこの出力とは別に準備します。
 - 緊急管理アクセスは期限付き・記録必須とします。
 - `--no-verify` によるローカルテスト回避を運用上禁止し、mainへのマージはGitHubの必須CIチェック成功後だけ許可します。

@@ -28,4 +28,4 @@ python3 ../../../scripts/network-preflight.py approved-profile.json --region ap-
 
 生成された`approved_profile`は`two-stage.approved_pools`へ渡し、Portal側のAMI/LT登録と一致させる。これだけで自動増減は有効にならない。Portal本体の固定IPはルートTerraformの`portal_private_ip`、固定pilotは`fixed_private_ip`に別途指定する。
 
-全体の導入手順は[組織ネットワーク構成](../../../docs/21-organization-deployment.md)を参照。
+全体の導入手順は[組織ネットワーク構成](../../../docs/deployment/organization-network.md)を参照。

@@ -1,6 +1,6 @@
 # 機能実装・検証マトリクス
 
-> この表は作成時の旧版の調査記録です。現行の二段階機能と組織ネットワーク構成は [二段階実装](20-two-stage-completion.md) と [新規・既存・混在構成](21-organization-deployment.md) を参照してください。
+> 旧版の調査記録です。現在の実装状況は[現行の機能一覧](../features.md)、過去の記録の位置づけは[履歴の目次](README.md)を参照してください。
 
 
 更新基準: main相当コード、必須CI、Disposable Lab、本番向けTerraform/DCV設定を分けて評価する。
@@ -68,7 +68,7 @@
 | 機能 | 状態 | 根拠 / 残課題 |
 |---|---|---|
 | 利用者画面でプロキシ・Gitミラー手順を閲覧 | ① | 認証済み利用者向け同梱マニュアル。実ブラウザでアクセス・コマンド表示・各解像度を確認。実通信は対応機能の実機試験に依存。 |
-| Portal Adminのサイト文言・接続先表示設定 | ① | 権限・文字数・URL・HTMLエスケープ、DB再オープン、利用者/ログイン/部分更新への反映と実ブラウザ保存を確認。docs/15-site-customization.md。 |
+| Portal Adminのサイト文言・接続先表示設定 | ① | 権限・文字数・URL・HTMLエスケープ、DB再オープン、利用者/ログイン/部分更新への反映と実ブラウザ保存を確認。docs/operations/site-customization.md。 |
 
 ## UI・配布・AWS基盤
 
@@ -85,8 +85,8 @@
 | 本番Terraform SG/IAM/IMDSv2/EBS暗号化 | ① | terraform validate + security static test。AWS apply E2Eは②。 |
 | Outbound Allowlist / Firewall | ③ | Terraformは443/0.0.0.0/0のbaseline。承認済みFirewall/Proxyへの制限は未実装。 |
 | CloudTrail / VPC Flow Logs / 中央ログ | ④ | docs/03の本番要件だがTerraform実装なし。 |
-| Proxy管理機能 | ② | UI/認証付きHTTP転送・HTTPS CONNECT・許可/拒否ルールを実装。実ネットワーク/利用ツールは未検証。docs/12-proxy.md。 |
-| EC2 IP/CIDR outbound管理 | ② | Portal Adminが専用SGを確認・適用。IPv4/IPv6、TCP/UDP、ポート範囲。実機未確認。docs/13-egress.md。 |
+| Proxy管理機能 | ② | UI/認証付きHTTP転送・HTTPS CONNECT・許可/拒否ルールを実装。実ネットワーク/利用ツールは未検証。docs/operations/proxy.md。 |
+| EC2 IP/CIDR outbound管理 | ② | Portal Adminが専用SGを確認・適用。IPv4/IPv6、TCP/UDP、ポート範囲。実機未確認。docs/operations/egress.md。 |
 | HTTPS内部メソッド/URL検査 | ④ | TLS検査は対象外。 |
 
 ## 今回の監査で修正した不具合・不足
@@ -106,13 +106,13 @@
 - 実DCV ServerでExternal Authenticationとone-time tokenを確認。
 - 使用するDCV versionでDLP permission名/挙動を確認。
 
-今回のインスタンス管理と将来拡張の詳細は docs/11-instance-administration.md を参照。
+今回のインスタンス管理と将来拡張の詳細は docs/operations/instances.md を参照。
 
 ## GitLab取得専用ミラー
 
 | 機能 | 状態 | 根拠 / 残課題 |
 |---|---|---|
-| 登録HTTPSリポジトリの定期・手動同期 | ② | 管理UI、永続ジョブ、EC2用CLI。社内GitLab/AWS実機は未確認。docs/14-git-mirror.md。 |
+| 登録HTTPSリポジトリの定期・手動同期 | ② | 管理UI、永続ジョブ、EC2用CLI。社内GitLab/AWS実機は未確認。docs/operations/git-mirror.md。 |
 | ミラーのclone/fetch・push禁止 | ① | 実Git/HTTPSテスト、upload-packだけを許可。上流アクセス経路の遮断は初期設定が必要。 |
 | Git LFS取得専用ミラー | ① | 実Git LFS/HTTPSで同期・clone/fetch・upload拒否・未知OID・Range・破損修復・外部storage認証分離を検証。社内GitLab/S3実機・大容量性能は②。 |
 | artifact / submodule再帰取得 | ④ | 未対応。 |

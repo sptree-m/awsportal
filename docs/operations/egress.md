@@ -75,7 +75,7 @@ Terraformの `managed_egress_instance_ids` に対象EC2 IDを追加して適用�
 
 既存の独自SGを使う場合、同じタグを付け、Portal IAMに対象SG ARN限定で `AuthorizeSecurityGroupEgress` / `RevokeSecurityGroupEgress`、読取用のDescribeInstances/DescribeSecurityGroups/DescribeNetworkInterfacesを付与する。AWS変更権限を全SGへ拡大しない。
 
-プロキシは利用者EC2とは別のEC2で稼働させ、非ループバックTLSリスナーを構成する（docs/12-proxy.md）。利用者OS/ツールのHTTPS_PROXY/HTTP_PROXY設定、HTTPSプロキシ証明書信頼は別途設定する。設定しないツールの直接通信は、IP例外に一致しなければ拒否される。プロキシは既定443の外向きSG定義なので、HTTP80を使う際はプロキシEC2のSGも調整する。
+プロキシは利用者EC2とは別のEC2で稼働させ、非ループバックTLSリスナーを構成する（docs/operations/proxy.md）。利用者OS/ツールのHTTPS_PROXY/HTTP_PROXY設定、HTTPSプロキシ証明書信頼は別途設定する。設定しないツールの直接通信は、IP例外に一致しなければ拒否される。プロキシは既定443の外向きSG定義なので、HTTP80を使う際はプロキシEC2のSGも調整する。
 
 ## ポータルでの操作
 

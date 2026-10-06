@@ -1,5 +1,7 @@
 # 構築・導入手順書
 
+全体の入口は[ドキュメント目次](../README.md)。管理者指定のネットワークでは[組織ネットワーク手順](organization-network.md)を併用します。初期ユーザー・EC2登録は[初期設定](initial-setup.md)、開発時の強制テストは[テスト方針](../development/testing.md)を参照してください。
+
 ## 1. 前提
 Terraform 1.7以上、Go 1.23以上、ARM64対応AMI、Private Subnet、社内/VPN CIDR、内部DNS、管理端末が信頼する社内PKI証明書を準備します。
 

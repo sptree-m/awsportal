@@ -1,6 +1,6 @@
 # 機能ステータス
 
-> この表は作成時の旧版の調査記録です。現行の二段階機能と組織ネットワーク構成は [二段階実装](20-two-stage-completion.md) と [新規・既存・混在構成](21-organization-deployment.md) を参照してください。
+> 旧版の調査記録です。現在の実装状況は[現行の機能一覧](../features.md)、過去の記録の位置づけは[履歴の目次](README.md)を参照してください。
 
 
 凡例:
@@ -61,4 +61,4 @@
 
 Portal Admin限定の無効化/再有効化、ユーザー/グループ割り当て、所属変更を実装。
 Store/API/ブラウザテストで検証。OSユーザー/Session/EFS自動準備は未実装。
-詳細: docs/11-instance-administration.md。
+詳細: docs/operations/instances.md。

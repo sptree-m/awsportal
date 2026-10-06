@@ -1,6 +1,6 @@
 # Shared第1段階：固定pilot基盤の実装と導入手順
 
-> この表は作成時の旧版の調査記録です。現行の二段階機能と組織ネットワーク構成は [二段階実装](20-two-stage-completion.md) と [新規・既存・混在構成](21-organization-deployment.md) を参照してください。
+> 固定Shared pilot時点の旧版記録です。現行手順は[Personal／Shared環境](../operations/environments.md)と[組織ネットワーク](../deployment/organization-network.md)、機能の有無は[現行の機能一覧](../features.md)を参照してください。
 
 
 対象：二段階実装仕様書 v1.0（2026-10-04）、基準main 933e6d4 / v1.6.0。
@@ -98,7 +98,7 @@ Stage 1では停止中EC2を要求から起動しない。管理者がIaC/AWS管
 5. 通信切断後は同じ要求から再接続する。席もHOMEも維持される。
 6. Jobを終え、作業を保存し、アプリを終了して「利用終了」を押す。RELEASINGはAgentの確認待ち。手動でDBからseatを削除しない。
 
-現在のプロセス分類は保守的で、通常アプリを残すと解放が保留される。認識済desktopプロセス名に依存するため、これを自動Terminateの最終安全証明として利用してはいけない。Job/cgroupの追加・品質・既知制限は docs/19-release-1.7.0-rc.1.md を参照。第2段階には欠測/終了瞬間counterと未分類作業の実機検証が必要。
+現在のプロセス分類は保守的で、通常アプリを残すと解放が保留される。認識済desktopプロセス名に依存するため、これを自動Terminateの最終安全証明として利用してはいけない。Job/cgroupの追加・品質・既知制限は docs/releases/v1.7.0-rc.1.md を参照。第2段階には欠測/終了瞬間counterと未分類作業の実機検証が必要。
 
 ## 検証と受入の対応
 

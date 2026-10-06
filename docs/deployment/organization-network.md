@@ -1,6 +1,6 @@
-# 組織管理ネットワークと混在構成（v1.8.0-rc.2）
+# 組織管理ネットワークと混在構成
 
-二段階仕様のPersonal/Shared、HOME/Group EFS、Dataset cache、Job保護、動的増減、計測、CUR配賦、Windows Box Importを維持し、指定済みVPC・IP範囲・TGW/ルートテーブルを使う構成を追加した。将来拡張と明記されたGPU、FSx、予測起動、Software Catalog等は二段階の範囲に含めない。
+v1.8.0-rc.2で追加した組織ネットワーク構成の現行導入手順。Personal/Shared、HOME/Group EFS、Dataset cache、Job保護、動的増減、計測、CUR配賦、Windows Box Importは[環境運用](../operations/environments.md)を参照する。本書では指定済みVPC・Subnet・IP範囲・TGW/ルートテーブルを使う構成を扱う。値の差し替えは[Terraform例](../../terraform/examples/org-existing/README.md)を参照。将来拡張と明記されたGPU、FSx、予測起動、Software Catalog等は二段階の範囲に含めない。
 
 ## 所有権と選択
 

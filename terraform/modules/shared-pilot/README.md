@@ -1,7 +1,7 @@
 # Fixed Shared pilot module
 
 Opt-in preparation module for the stage-one connection foundation. See
-[implementation and acceptance status](../../../docs/18-shared-pilot-implementation.md).
+[current environment operations and acceptance requirements](../../../docs/operations/environments.md).
 This module alone does not satisfy the stage-one release acceptance conditions.
 
 Use it from an IT-managed Terraform root. Supply existing approved networking,

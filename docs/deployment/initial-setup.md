@@ -21,4 +21,4 @@
 インスタンスをグループへ割り当てる場合:
 `go run ./cmd/awsportal-admin -db ... -cmd assign-group -instance i-0123456789abcdef0 -group ADAS`
 
-ユーザーのグループ所属は現版ではDB管理操作として実施します。本番の管理画面から変更できる機能は次版候補です。
+ユーザーのグループ所属はPortal Adminの`/admin/instances`画面で追加・除外できます。EC2への直接／グループ割り当ても同じ画面から管理します。詳細は[インスタンス管理](../operations/instances.md)を参照してください。
