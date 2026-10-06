@@ -38,4 +38,4 @@ No public IP, generic Internet egress, SSH or RDP access is created. Verify priv
 DNS, route tables, endpoint policy and corporate routing separately. Dataset and
 quota setup, Group EFS, CUR and dynamic provisioning are follow-up changes.
 
-`dcv_port` defaults to 8443; set it to 443 or another approved TCP port and match `AWSPORTAL_DCV_PORT` on the Portal and DCV installer. Provided security groups must be updated by their administrator. See [DCV port settings](../../../docs/operations/dcv.md#接続ポートの指定main追加未リリース).
+`dcv_port` defaults to 8443; set it to 443 or another approved TCP port and match `AWSPORTAL_DCV_PORT` on the Portal and DCV installer. Provided security groups must be updated by their administrator. See [DCV port settings](../../../docs/operations/dcv.md#接続ポートの指定v191以降).

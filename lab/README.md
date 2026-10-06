@@ -2,11 +2,11 @@
 
 CloudShellで実験環境を作成し、テスト後にスタックと有料資源を廃棄します。
 
-v1.6.0はDCV・軽量デスクトップ・ポータルアカウント同期に対応します。[CloudShell作成・試験・廃棄の手順](../docs/development/dcv-release-test.md) を参照してください。旧ラボは廃棄して作り直します。
+既定の配布物はv1.9.1です。DCV・軽量デスクトップ・ポータルアカウント同期・接続ポート指定に対応します。[CloudShell作成・試験・廃棄の検証記録（v1.6.0）](../docs/development/dcv-release-test.md) を参照してください。旧ラボは廃棄して作り直します。
 
 ```bash
 export AWS_REGION=ap-northeast-1
-export STACK=awsportal-lab-v160
+export STACK=awsportal-lab-v191
 bash lab/create.sh
 bash lab/test-dcv.sh
 # ブラウザ試験が終わったら
@@ -21,4 +21,4 @@ create.shはARM64・EC2 running・Portal healthを検証します。test-dcv.sh�
 
 作成時にEC2とEBSのIDを ~/.awsportal-lab/region/stack/ に記録します。destroy.shはAPIの権限不足や取得失敗を成功扱いせず、CloudFormation削除完了、EC2終了、保存済みEBSとネットワーク・IAM資源の消滅を検査します。terminated EC2は履歴として扱います。ホーム上の検査記録は有料AWS資源ではありません。
 
-DCVポートを変更する場合は`AWSPORTAL_DCV_PORT=443 BINARY_URL=<この変更を含む配布物URL> bash lab/create.sh`を使用します。CloudFormationの`DCVPort`をPortal・DCVインストーラー・SG・接続先出力へ共通で渡します。旧リリースの配布物はポート指定に未対応です。
+DCVポートを変更する場合は`AWSPORTAL_DCV_PORT=443 bash lab/create.sh`を使用します。CloudFormationの`DCVPort`をPortal・DCVインストーラー・SG・接続先出力へ共通で渡します。旧リリースの配布物はポート指定に未対応です。
