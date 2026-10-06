@@ -59,3 +59,14 @@ variable "permissions_boundary" {
   type    = string
   default = null
 }
+
+variable "dcv_port" {
+  description = "DCV native client TCP port; match AWSPORTAL_DCV_PORT on the Portal and DCV installer."
+  type        = number
+  default     = 8443
+  nullable    = false
+  validation {
+    condition     = var.dcv_port == floor(var.dcv_port) && var.dcv_port >= 1 && var.dcv_port <= 65535 && !contains([22, 3389, 8444], var.dcv_port)
+    error_message = "DCV port must be an integer from 1 to 65535, excluding 22, 3389 and the authentication broker port 8444."
+  }
+}

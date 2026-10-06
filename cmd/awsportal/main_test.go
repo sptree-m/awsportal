@@ -121,7 +121,7 @@ func newHandlerTestApp(t *testing.T) (*app, *fakeEC2) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	ec2 := &fakeEC2{states: map[string]string{}}
-	return &app{db: s, ec2: ec2, tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}, ec2
+	return &app{dcvPort: 8443, db: s, ec2: ec2, tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}, ec2
 }
 
 func requestAs(a *app, u store.User, method, target string, body *strings.Reader) *http.Request {

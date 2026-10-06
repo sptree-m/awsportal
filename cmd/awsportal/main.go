@@ -44,6 +44,7 @@ type session struct {
 	Expires time.Time
 }
 type app struct {
+	dcvPort  int
 	db       *store.Store
 	egress   awsapi.EgressController
 	egressMu sync.Mutex
@@ -56,6 +57,10 @@ type app struct {
 }
 
 func main() {
+	dcvPort, err := parseDCVPort(env("AWSPORTAL_DCV_PORT", "8443"))
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx := context.Background()
 	db, e := store.Open(env("AWSPORTAL_DB", "./awsportal.db"))
 	if e != nil {
@@ -69,7 +74,7 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	a := &app{db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), egress: awsapi.NewEgress(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
+	a := &app{dcvPort: dcvPort, db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), egress: awsapi.NewEgress(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
 	if bucket := env("AWSPORTAL_AUDIT_BUCKET", ""); bucket != "" {
 		prefix, err := auditexport.NormalizePrefix(env("AWSPORTAL_AUDIT_PREFIX", "audit/"))
 		if err != nil {
@@ -780,7 +785,7 @@ func (a *app) issueNativeDCV(w http.ResponseWriter, r *http.Request, u store.Use
 	scheme := "dcv://"
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	uri := scheme + x.DCVHost + ":8443/?authToken=" + url.QueryEscape(token) + "#" + url.PathEscape(x.DCVSessionID)
+	uri := scheme + net.JoinHostPort(x.DCVHost, strconv.Itoa(a.dcvPort)) + "/?authToken=" + url.QueryEscape(token) + "#" + url.PathEscape(x.DCVSessionID)
 	http.Redirect(w, r, uri, http.StatusFound)
 }
 func (a *app) dcvAuth(w http.ResponseWriter, r *http.Request) {
@@ -886,6 +891,14 @@ func headers(n http.Handler) http.Handler {
 		n.ServeHTTP(w, r)
 	})
 }
+func parseDCVPort(value string) (int, error) {
+	port, err := strconv.Atoi(value)
+	if err != nil || strconv.Itoa(port) != value || port < 1 || port > 65535 || port == 22 || port == 3389 || port == 8444 {
+		return 0, fmt.Errorf("AWSPORTAL_DCV_PORT must be an integer from 1 to 65535, excluding 22, 3389 and the authentication broker port 8444")
+	}
+	return port, nil
+}
+
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {
 		return v

@@ -12,6 +12,7 @@ aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --ou
 output() { python3 -c 'import json,sys; print(next(x["OutputValue"] for x in json.load(open(sys.argv[1]))["Stacks"][0]["Outputs"] if x["OutputKey"]==sys.argv[2]))' "$WORK/stack.json" "$1"; }
 PORTAL_ID="$(output PortalInstanceId)"
 TEST_ID="$(output TestInstanceId)"
+DCV_PORT="$(output DCVPort)"
 for ID in "$PORTAL_ID" "$TEST_ID"; do
   READY=0
   for attempt in $(seq 1 120); do
@@ -127,5 +128,5 @@ print('PASS: one-time token replay rejected')
 PY"
 echo 'RESULT: PASS - EC2 DCV service, account/session synchronization and external authentication'
 DCV_IP="$(aws ec2 describe-instances --region "$REGION" --instance-ids "$TEST_ID" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
-echo "DCV native endpoint: $DCV_IP:8443 (connect from Portal using the native client)"
+echo "DCV native endpoint: $DCV_IP:$DCV_PORT (connect from Portal using the native client)"
 echo 'Final desktop rendering and input: install the native client, then click Connect in the Portal.'

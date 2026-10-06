@@ -71,6 +71,17 @@ variable "group_id" {
 variable "corporate_cidrs" {
   type = list(string)
 }
+variable "dcv_port" {
+  description = "DCV native client TCP port; match AWSPORTAL_DCV_PORT on the Portal and DCV installer."
+  type        = number
+  default     = 8443
+  nullable    = false
+  validation {
+    condition     = var.dcv_port == floor(var.dcv_port) && var.dcv_port >= 1 && var.dcv_port <= 65535 && !contains([22, 3389, 8444], var.dcv_port)
+    error_message = "DCV port must be an integer from 1 to 65535, excluding 22, 3389 and the authentication broker port 8444."
+  }
+}
+
 variable "portal_security_group_id" {
   type    = string
   default = null
@@ -100,8 +111,8 @@ resource "aws_security_group" "compute" {
   vpc_id      = var.vpc_id
   ingress {
 
-    from_port   = 8443
-    to_port     = 8443
+    from_port   = var.dcv_port
+    to_port     = var.dcv_port
     protocol    = "tcp"
     cidr_blocks = var.corporate_cidrs
 

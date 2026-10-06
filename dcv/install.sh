@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+DCV_PORT="${AWSPORTAL_DCV_PORT:-8443}"
+if [[ ! "$DCV_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( DCV_PORT > 65535 || DCV_PORT == 22 || DCV_PORT == 3389 || DCV_PORT == 8444 )); then
+  echo 'AWSPORTAL_DCV_PORT must be an integer from 1 to 65535, excluding 22, 3389 and the authentication broker port 8444' >&2
+  exit 1
+fi
 [[ "$(id -u)" == 0 ]] || { echo 'Run as root'; exit 1; }
 HERE="$(cd "$(dirname "$0")" && pwd)"
 export DEBIAN_FRONTEND=noninteractive
@@ -55,13 +60,13 @@ cat > /etc/dcv/awsportal-policy/enforced.perm <<'PERM'
 PERM
 # A dedicated local broker authenticates over verified HTTPS to the portal.
 [[ ! -f /etc/dcv/dcv.conf ]] || cp -a /etc/dcv/dcv.conf /etc/dcv/dcv.conf.before-awsportal
-cat > /etc/dcv/dcv.conf <<'CONF'
+cat > /etc/dcv/dcv.conf <<CONF
 [security]
 authentication="none"
 auth-token-verifier="http://127.0.0.1:8444"
 allowed-ws-origin-regex="^$"
 [connectivity]
-web-port=8443
+web-port=$DCV_PORT
 enable-quic-frontend=false
 [session-management]
 create-session=false
