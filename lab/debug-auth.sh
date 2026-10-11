@@ -24,8 +24,8 @@ if [[ -z "$PORTAL_ID" || "$PORTAL_ID" == "None" ]]; then
 fi
 
 if [[ "$MODE" == "off" ]]; then
-  SQL="UPDATE users SET enabled=1 WHERE username='labdebug';"
-  echo "MFAなしデバッグログインを有効化します"
+  SQL="UPDATE users SET enabled=1, role='portal_admin' WHERE username='labdebug';"
+  echo "MFAなしPortal Adminデバッグログインを有効化します"
 else
   SQL="UPDATE users SET enabled=0 WHERE username='labdebug';"
   echo "MFAなしデバッグログインを無効化します"
@@ -35,7 +35,7 @@ CMD_ID="$(aws ssm send-command \
   --region "$REGION" \
   --instance-ids "$PORTAL_ID" \
   --document-name AWS-RunShellScript \
-  --parameters commands="sudo sqlite3 /var/lib/awsportal/awsportal.db \"$SQL\"" \
+  --parameters "$(python3 -c 'import json,sys; print(json.dumps({"commands":[sys.argv[1]]}))' "sudo sqlite3 /var/lib/awsportal/awsportal.db \"$SQL\"")" \
   --query 'Command.CommandId' \
   --output text)"
 
@@ -53,14 +53,22 @@ aws ssm get-command-invocation \
 
 echo
 if [[ "$MODE" == "off" ]]; then
-  echo "DEBUG AUTH: OFF (labdebug有効 / MFA不要)"
+  echo "DEBUG AUTH: OFF (labdebug有効 / portal_admin / MFA不要)"
   echo
   echo "=== Debug login ==="
 
-  aws ssm send-command     --region "$REGION"     --instance-ids "$PORTAL_ID"     --document-name AWS-RunShellScript     --parameters 'commands=["sudo grep ^debug_ /var/lib/awsportal/lab-login.txt"]'     --query 'Command.CommandId'     --output text
-
+  LOGIN_CMD_ID="$(aws ssm send-command \
+    --region "$REGION" \
+    --instance-ids "$PORTAL_ID" \
+    --document-name AWS-RunShellScript \
+    --parameters '{"commands":["sudo grep ^debug_ /var/lib/awsportal/lab-login.txt"]}' \
+    --query 'Command.CommandId' \
+    --output text)"
+  aws ssm wait command-executed --region "$REGION" --command-id "$LOGIN_CMD_ID" --instance-id "$PORTAL_ID"
+  aws ssm get-command-invocation \
+    --region "$REGION" --command-id "$LOGIN_CMD_ID" --instance-id "$PORTAL_ID" \
+    --query 'StandardOutputContent' --output text
   echo "username: labdebug"
-  echo "password: Portal EC2の /var/lib/awsportal/lab-login.txt に保存"
 else
   echo "DEBUG AUTH: ON (labdebug無効 / Portal Admin MFA必須)"
 fi

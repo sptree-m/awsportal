@@ -1,0 +1,133 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	awsapi "github.com/sptree-m/awsportal/internal/aws"
+	"github.com/sptree-m/awsportal/internal/mirror"
+	"github.com/sptree-m/awsportal/internal/store"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type browserCost struct{}
+
+func (browserCost) UserCosts(_ context.Context, _ string, start, end time.Time) (awsapi.CostReport, error) {
+	return awsapi.CostReport{Start: start.Format("2006-01-02"), End: end.Format("2006-01-02"), Total: 123, Rows: []awsapi.CostRow{{User: "admin", Compute: 100, Storage: 23, Total: 123}}}, nil
+}
+
+type browserEC2 struct {
+	mu    sync.Mutex
+	state string
+}
+
+func (f *browserEC2) Start(context.Context, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state = "pending"
+	return nil
+}
+func (f *browserEC2) Stop(context.Context, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state = "stopping"
+	return nil
+}
+func (f *browserEC2) State(context.Context, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.state == "pending" {
+		f.state = "running"
+	} else if f.state == "stopping" {
+		f.state = "stopped"
+	}
+	return f.state, nil
+}
+func (f *browserEC2) States(context.Context, []string) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return map[string]string{"i-dev": f.state, "i-train": "running"}, nil
+}
+
+// Exercise real server templates/headers and bundled htmx in Chromium. AWS is simulated.
+func TestBrowserConsole(t *testing.T) {
+	if os.Getenv("AWSPORTAL_BROWSER_TEST") != "1" {
+		t.Skip("set AWSPORTAL_BROWSER_TEST=1 with Node/Playwright installed")
+	}
+	a, _ := newHandlerTestApp(t)
+	a.egress = &fakeEgressAdmin{}
+	a.mirrors, _ = mirror.New(a.db, filepath.Join(t.TempDir(), "mirrors"), "", "")
+	ctx := context.Background()
+	if err := a.db.CreateUser(ctx, "admin", "x", "portal_admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := a.db.UserByName(ctx, "admin")
+	if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil {
+		t.Fatal(err)
+	}
+	alice, _ := a.db.UserByName(ctx, "alice")
+	a.sessions["alice-session"] = session{User: alice, Expires: time.Now().Add(time.Hour)}
+	if _, err := a.db.DB.ExecContext(ctx, `INSERT INTO instances(instance_id,name,dcv_host) VALUES('i-dev','ADAS Development','dev.local'),('i-train','CV Training','train.local')`); err != nil {
+		t.Fatal(err)
+	}
+	a.cost = browserCost{}
+	a.ec2 = &browserEC2{state: "stopped"}
+	a.sessions["browser-session"] = session{User: admin, Expires: time.Now().Add(time.Hour)}
+	if _, err := a.db.DB.Exec(`INSERT INTO groups(id,name) VALUES(99,'Shared pilot');INSERT INTO environments(id,name,mode,group_id,profile_id) VALUES(1,'Shared Analysis','shared',99,'shared-cpu-v1');`); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []store.User{admin, alice} {
+		id := strings.Repeat("a", 32)
+		if u.ID == alice.ID {
+			id = strings.Repeat("b", 32)
+		}
+		raw, _ := json.Marshal(store.JobMeasurement{JobID: id, UserID: u.ID, State: "RUNNING", Quality: "ok", CPUUsec: 1234, MemoryBytes: 4096, ReadBytes: 100, WriteBytes: 200})
+		if _, err := a.db.DB.Exec(`INSERT INTO managed_jobs SELECT id,?,1,?,'boot-test','RUNNING',1,0,?,? FROM instances WHERE instance_id='i-dev'`, id, u.ID, time.Now().Add(-2*time.Minute).Unix(), string(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /admin/two-stage", a.require(a.stageTwoPage))
+	mux.HandleFunc("GET /settlements", a.require(a.settlements))
+	mux.HandleFunc("GET /environments", a.require(a.environmentPage))
+	mux.HandleFunc("GET /admin/environments", a.require(a.environmentAdminPage))
+	mux.HandleFunc("GET /", a.require(a.dashboard))
+	mux.HandleFunc("GET /instances", a.require(a.instancesPage))
+	mux.HandleFunc("GET /instances/{id}/row", a.require(a.instanceRow))
+	mux.HandleFunc("GET /instances/{id}", a.require(a.instanceDetail))
+	mux.HandleFunc("POST /instance/{id}/{action}", a.require(a.instanceAction))
+	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
+	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
+	mux.HandleFunc("POST /logout", a.logout)
+	mux.HandleFunc("GET /login", a.loginPage)
+	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
+	mux.HandleFunc("GET /manual", a.require(a.manualPage))
+	mux.HandleFunc("GET /admin/site", a.require(a.siteAdminPage))
+	mux.HandleFunc("POST /admin/site", a.require(a.siteAdminChange))
+	mux.HandleFunc("GET /mirrors", a.require(a.mirrorPage))
+	mux.HandleFunc("POST /mirrors", a.require(a.mirrorChange))
+	mux.HandleFunc("GET /admin/egress", a.require(a.egressPage))
+	mux.HandleFunc("POST /admin/egress", a.require(a.egressChange))
+	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
+	mux.HandleFunc("POST /admin/proxy", a.require(a.proxyAdminChange))
+	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))
+	mux.HandleFunc("GET /mfa", a.require(a.mfaPage))
+	mux.HandleFunc("GET /costs", a.require(a.costDashboard))
+	mux.Handle("GET /static/", staticHandler(http.StripPrefix("/static/", http.FileServer(http.FS(web)))))
+	server := httptest.NewServer(headers(mux))
+	defer server.Close()
+	cmd := exec.Command("node", "../../tests/browser-console.cjs", server.URL)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	t.Log(string(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1,30 +1,35 @@
 # awsportal
 
-AWS上のEC2/DCV環境を管理する、イントラネット向け超軽量ポータルです。
+AWS上のEC2／Amazon DCV環境を管理する、イントラネット向け軽量ポータルです。v1.9.1の変更は[リリースノート](docs/releases/v1.9.1.md)を参照してください。
+
+## 最優先のコンセプト
+
+**超軽量・高速・高いメンテナンス性・プロ仕様UI**を、awsportalの最上位の設計原則とします。
+
+| コンセプト | 守る基準 |
+|---|---|
+| 超軽量 | Go SSR・SQLite・同梱assetsを基本とし、依存・メモリ・通信量を抑える。t4g.micro相当で検証し、外部CDNや巨大なUI frameworkを導入しない。 |
+| 高速 | 必要なデータと画面部分だけを取得・更新する。待機中の不要な通信を避け、応答時間と転送量の悪化を検証する。 |
+| 高いメンテナンス性 | 責務を明確にし、依存と重複を減らす。共通の実装・設定・文書を使い、必須テストで変更を検証する。 |
+| プロ仕様UI | 承認済みOperations Consoleの外観、情報密度、桁の揃う文字、明確な状態表示を維持する。各画面幅で主要操作とアクセシビリティを確保する。 |
+
+機能追加・リファクタリング・文書削減でも、この四つのコンセプトの削除・弱体化は禁止します。常に現行READMEに明記し、過去の文書への退避だけで済ませません。設計・UIの変更はこの原則に照らしてレビューします。
 
 ## 基本方針
-- 一般ユーザーにはAWSアカウント、IAMユーザー、AWS Console、Access Keyを付与しません。
-- AWS APIはポータルEC2のInstance Profileから最小権限で実行します。
-- 管理対象デスクトップへの接続経路はAmazon DCV（TCP/8443）のみに限定します。
-- SSH、RDP、SCP、一般ユーザー向けSSM対話セッションは禁止します。
-- 一般ユーザーは本人または所属グループに割り当てられたEC2だけを表示・操作できます。
-- ポータル管理者は全管理対象EC2を表示でき、TOTPによる2要素認証を必須とします。
-- 一般ユーザーのDCVではファイル転送、クリップボード、印刷、USB等を制限します。
-- 管理者によるデータ持ち出しは別権限とし、監査ログを残します。
 
-## UI設計原則
-- 超軽量・高速を最優先し、Go SSR + HTML + 自前CSSを基本とします。
-- Bootstrap、Tailwind、React、Vue、jQuery、Google Fonts、CDNなどの外部UIリソースを使用しません。
-- 1366x768のPC、小さいブラウザウィンドウ、狭幅画面でも主要操作が画面外へ消えないことを必須とします。
-- 横長の一覧はページ全体ではなく一覧領域だけを横スクロール可能にします。
-- 見栄えのためだけのJavaScriptや外部ダウンロード依存を追加しません。
-- CIでHTML/CSSの外部URL、外部script、CSS importを検出して拒否します。
+- 一般UserにAWSアカウント・IAM User・Console・Access Keyを付与せず、PortalのInstance Profileで最小権限のAWS APIを実行します。
+- 本人または所属groupへ割り当てられたEC2だけを表示・操作します。Portal Adminは全体を参照でき、TOTP認証が必須です。
+- 接続はDCV（指定TCPポート、既定8443）に限定し、SSH／RDP／SCP・一般UserのSSM対話アクセスを許可しません。
+- DCVの転送・clipboard・印刷・USB等を制限し、許可された管理者の持ち出しは監査します。
 
-## 開発時の必須テスト
-`./scripts/setup-dev.sh` を一度実行すると、Gitのpre-commit hookを有効化します。
-以後は `./scripts/test-all.sh` が成功しない限りコミットできません。
-`--no-verify` による回避は禁止です。GitHub側でもCIを必須チェックとして設定してください。
+UIはGo SSR・同梱htmx・自前CSS・ローカルfontで構成し、外部CDNを使いません。1366×768から狭幅まで主要操作を表示し、一覧だけを横scrollさせます。
 
-t4g.micro相当テストはARM64、2 vCPU、1 GiB RAMを前提とし、4 GiB swapを補助的に使用します。
+## 導入・運用
 
-詳細は `docs/` を参照してください。
+[文書目次](docs/README.md)を入口とし、[現行機能](docs/features.md)、[構築・初期設定](docs/deployment/setup.md)、[管理者指定ネットワーク](docs/deployment/organization-network.md)を参照してください。監査S3出力、Shared自動増減、Windows取り込みは既定OFFです。
+
+## 開発
+
+`./scripts/setup-dev.sh`でpre-commit hookを有効化します。コミット前の`./scripts/test-all.sh`成功が必須で、`--no-verify`は禁止です。GitHub側でもPR・必須CI成功を要求します。[テスト方針](docs/development/testing.md)を参照してください。
+
+t4g.micro相当試験はARM64・2 vCPU・1 GiB RAMを前提とし、実機では4 GiB swapを補助的に使用します。

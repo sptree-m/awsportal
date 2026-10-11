@@ -1,0 +1,22 @@
+[
+  {
+    "operation": "create-volume",
+    "region": "ap-northeast-1",
+    "scenario": "team-volume",
+    "resource": "new gp3 volume in assigned AZ",
+    "parameters": {
+      "AvailabilityZone": "ap-northeast-1a",
+      "VolumeType": "gp3",
+      "Size": 8,
+      "Encrypted": true,
+      "TagSpecifications": [{"ResourceType": "volume", "Tags": [{"Key": "Project", "Value": "awsportal"}]}]
+    }
+  },
+  {
+    "operation": "delete-volume",
+    "region": "ap-northeast-1",
+    "scenario": "team-volume",
+    "resource": "REPLACE_WITH_EXISTING_VOLUME_ID",
+    "parameters": {"VolumeId": "REPLACE_WITH_EXISTING_VOLUME_ID"}
+  }
+]

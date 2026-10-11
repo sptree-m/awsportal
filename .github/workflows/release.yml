@@ -1,0 +1,120 @@
+name: Release
+on:
+  push:
+    branches: [main]
+    paths:
+      - VERSION
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Resolve Go modules
+        run: go mod download
+
+      - name: Build and publish ARM64
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          V="$(tr -d '[:space:]' < VERSION)"
+          TAG="v$V"
+          ASSET="awsportal-$TAG-linux-arm64.tar.gz"
+          mapfile -t FILES < scripts/release-files.txt
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/tags/$TAG"
+            PUBLISHED_SHA="$(git rev-parse 'FETCH_HEAD^{commit}')"
+            if [[ "$PUBLISHED_SHA" != "$GITHUB_SHA" ]]; then
+              echo 'ERROR: this version was published from another commit; bump VERSION'
+              exit 1
+            fi
+            ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            if grep -Fxq "$ASSET" <<<"$ASSETS" && grep -Fxq "$ASSET.sha256" <<<"$ASSETS"; then
+              rm -rf dist/existing
+              mkdir -p dist/existing
+              if gh release download "$TAG" -p "$ASSET" -p "$ASSET.sha256" -D dist/existing; then
+                EXPECTED="$(awk '{print $1}' "dist/existing/$ASSET.sha256")"
+                ACTUAL="$(sha256sum "dist/existing/$ASSET" | awk '{print $1}')"
+                CONTENTS="$(tar -tzf "dist/existing/$ASSET" 2>/dev/null || true)"
+                if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ] \
+                  && grep -Fxq "awsportal" <<<"$CONTENTS" \
+                  && grep -Fxq "awsportal-admin" <<<"$CONTENTS" \
+                  && [ "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq "${#FILES[@]}" ]; then
+                  ALL_PRESENT=true
+                  for FILE in "${FILES[@]}"; do
+                    if ! grep -Fxq "$FILE" <<<"$CONTENTS"; then ALL_PRESENT=false; fi
+                  done
+                  if "$ALL_PRESENT"; then
+                    echo "$TAG already exists and archive/checksum are valid"
+                    exit 0
+                  fi
+                fi
+              fi
+            fi
+            echo "$TAG exists but assets are incomplete or invalid; rebuilding/uploading"
+          fi
+          mkdir -p dist/pkg
+          for FILE in "${FILES[@]:2}"; do cp --parents "$FILE" dist/pkg/; done
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal ./cmd/awsportal
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/pkg/awsportal-admin ./cmd/awsportal-admin
+          test -x dist/pkg/awsportal
+          test -x dist/pkg/awsportal-admin
+          tar -C dist/pkg -czf "dist/$ASSET" "${FILES[@]}"
+          CONTENTS="$(tar -tzf "dist/$ASSET")"
+          grep -Fxq "awsportal" <<<"$CONTENTS"
+          grep -Fxq "awsportal-admin" <<<"$CONTENTS"
+          for FILE in "${FILES[@]}"; do
+            grep -Fxq "$FILE" <<<"$CONTENTS"
+          done
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq "${#FILES[@]}"
+          sha256sum "dist/$ASSET" > "dist/$ASSET.sha256"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber
+          else
+            RELEASE_FLAGS=()
+            if [[ "$V" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi
+            if [[ -f "docs/releases/$TAG.md" ]]; then
+              RELEASE_FLAGS+=(--notes-file "docs/releases/$TAG.md")
+            else
+              RELEASE_FLAGS+=(--generate-notes)
+            fi
+            gh release create "$TAG" "${RELEASE_FLAGS[@]}" "dist/$ASSET" "dist/$ASSET.sha256" --target "$GITHUB_SHA" --title "$TAG"
+          fi
+
+      - name: Verify published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          V="$(tr -d '[:space:]' < VERSION)"
+          TAG="v$V"
+          ASSET="awsportal-$TAG-linux-arm64.tar.gz"
+          mapfile -t FILES < scripts/release-files.txt
+          gh release view "$TAG" >/dev/null
+          git fetch --no-tags origin "refs/tags/$TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$GITHUB_SHA"
+          ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          grep -Fxq "$ASSET" <<<"$ASSETS"
+          grep -Fxq "$ASSET.sha256" <<<"$ASSETS"
+          rm -rf dist/verify
+          mkdir -p dist/verify
+          gh release download "$TAG" -p "$ASSET" -p "$ASSET.sha256" -D dist/verify
+          EXPECTED="$(awk '{print $1}' "dist/verify/$ASSET.sha256")"
+          ACTUAL="$(sha256sum "dist/verify/$ASSET" | awk '{print $1}')"
+          test -n "$EXPECTED"
+          test "$EXPECTED" = "$ACTUAL"
+          CONTENTS="$(tar -tzf "dist/verify/$ASSET")"
+          grep -Fxq "awsportal" <<<"$CONTENTS"
+          grep -Fxq "awsportal-admin" <<<"$CONTENTS"
+          for FILE in "${FILES[@]}"; do
+            grep -Fxq "$FILE" <<<"$CONTENTS"
+          done
+          test "$(wc -l <<<"$CONTENTS" | tr -d ' ')" -eq "${#FILES[@]}"
+          echo "RESULT: PASS - $TAG ARM64 release archive and checksum verified"

@@ -1,11 +1,14 @@
 (()=>{"use strict";
-const labels={pending:"Starting…",running:"Running",stopping:"Stopping…",stopped:"Stopped",shutting-down:"Shutting down…",terminated:"Terminated",unknown:"Unknown"};
-const busy=new Set(["pending","stopping","shutting-down"]);
-function render(row,state,note=""){row.dataset.state=state;const badge=row.querySelector('[data-role="state"]');const label=row.querySelector('[data-role="state-label"]');const hint=row.querySelector('[data-role="state-note"]');badge.className="state state-"+state;label.textContent=labels[state]||state;hint.textContent=note;const start=row.querySelector('[data-action="start"] button');const stop=row.querySelector('[data-action="stop"] button');const dcv=row.querySelector('[data-role="dcv"]');if(start){start.disabled=state!=="stopped";start.hidden=state==="running"}if(stop){stop.disabled=state!=="running";stop.hidden=state==="stopped"}if(dcv){dcv.classList.toggle("disabled",state!=="running");dcv.setAttribute("aria-disabled",state==="running"?"false":"true")}}
-async function stateOf(id){const r=await fetch("/api/instance/"+encodeURIComponent(id)+"/state",{headers:{"Accept":"application/json"},cache:"no-store"});if(!r.ok)throw new Error("state");return(await r.json()).state}
-async function waitFor(row,want){const id=row.dataset.instance;const started=Date.now();for(;;){await new Promise(r=>setTimeout(r,1500));try{const state=await stateOf(id);render(row,state,state===want?"AWSで完了を確認しました":"AWSの状態を確認中…");if(state===want){setTimeout(()=>render(row,state),2200);return}if(Date.now()-started>90000){render(row,state,"完了を確認できません。再読み込みしてください。");return}}catch(e){if(Date.now()-started>90000){render(row,"unknown","AWS状態を取得できません。");return}}}}
-document.querySelectorAll("tr[data-instance]").forEach(row=>{render(row,row.dataset.state);row.querySelectorAll("form[data-action]").forEach(form=>form.addEventListener("submit",async e=>{e.preventDefault();const action=form.dataset.action;const want=action==="start"?"running":"stopped";render(row,action==="start"?"pending":"stopping","AWSへ操作を送信中…");try{const r=await fetch(form.action,{method:"POST",credentials:"same-origin",redirect:"manual"});if(!r.ok&&r.type!=="opaqueredirect"){throw new Error("action")};render(row,action==="start"?"pending":"stopping","AWSの状態を確認中…");waitFor(row,want)}catch(err){try{render(row,await stateOf(row.dataset.instance),"操作を完了できませんでした。")}catch(e2){render(row,"unknown","AWS操作または状態確認に失敗しました。")}}}))});
+// Document listeners survive boosted navigation and resolve the current controls.
+function filterRows(){const q=(document.getElementById("instance-filter")?.value||"").toLowerCase(),s=document.getElementById("state-filter")?.value||"";let visible=0;const rows=document.querySelectorAll("tr[data-instance]");rows.forEach(row=>{row.hidden=!!((q&&!row.dataset.search.toLowerCase().includes(q))||(s&&row.dataset.state!==s));if(!row.hidden)visible++});const count=document.getElementById("instance-count");if(count)count.textContent=`${visible} / ${rows.length} instances`;const empty=document.getElementById("instance-empty");if(empty)empty.hidden=visible>0}
+function notice(message){let box=document.getElementById("request-notice");if(!box){box=document.createElement("div");box.id="request-notice";box.setAttribute("role","alert");document.body.append(box)}box.textContent=message;box.hidden=false}
+document.addEventListener("input",e=>{if(e.target.id==="instance-filter")filterRows()});
+document.addEventListener("change",e=>{if(e.target.id==="state-filter")filterRows()});
+document.addEventListener("htmx:afterSwap",filterRows);
+document.addEventListener("htmx:beforeRequest",e=>{if(document.hidden&&e.detail.elt.matches("[data-transition]")){e.preventDefault();return}const box=document.getElementById("request-notice");if(box)box.hidden=true});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)document.querySelectorAll("[data-transition]").forEach(el=>htmx.trigger(el,"resume"))});
+document.addEventListener("htmx:responseError",e=>notice(e.detail.xhr.responseText.trim().slice(0,240)||"処理に失敗しました。再度お試しください。"));
+document.addEventListener("htmx:sendError",()=>notice("通信できません。接続を確認して再度お試しください。"));
+document.addEventListener("htmx:timeout",()=>notice("応答がありません。更新して状態を確認してください。"));
+filterRows();
 })();
-const filter=document.getElementById("instance-filter"),stateFilter=document.getElementById("state-filter");
-function filterRows(){const q=(filter?.value||"").toLowerCase(),s=stateFilter?.value||"";document.querySelectorAll("tr[data-instance]").forEach(row=>{row.hidden=!!((q&&!row.dataset.search.toLowerCase().includes(q))||(s&&row.dataset.state!==s))})}
-filter?.addEventListener("input",filterRows);stateFilter?.addEventListener("change",filterRows);
