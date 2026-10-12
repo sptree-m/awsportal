@@ -2,7 +2,7 @@
 
 CloudShellで実験環境を作成し、テスト後にスタックと有料資源を廃棄します。
 
-既定の配布物はv1.9.1です。DCV・軽量デスクトップ・ポータルアカウント同期・接続ポート指定に対応します。[CloudShell作成・試験・廃棄の検証記録（v1.6.0）](../docs/development/dcv-release-test.md) を参照してください。旧ラボは廃棄して作り直します。
+既定の配布物はv1.9.2です。DCV・軽量デスクトップ・ポータルアカウント同期・接続ポート指定に対応します。[CloudShell作成・試験・廃棄の検証記録（v1.6.0）](../docs/development/dcv-release-test.md) を参照してください。旧ラボは廃棄して作り直します。
 
 ```bash
 export AWS_REGION=ap-northeast-1

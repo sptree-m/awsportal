@@ -178,6 +178,7 @@ func main() {
 	mux.HandleFunc("POST /admin/users", a.require(a.adminCreateUser))
 	mux.HandleFunc("POST /admin/users/{username}/reactivate", a.require(a.adminReactivateUser))
 	mux.HandleFunc("POST /admin/users/{username}/disable", a.require(a.adminDisableUser))
+	mux.HandleFunc("POST /admin/users/{username}/unlock", a.require(a.adminUnlockUser))
 	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
 	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
 	mux.HandleFunc("GET /manual", a.require(a.manualPage))
@@ -235,58 +236,29 @@ func health(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	a.renderPage(w, r, "login.html", nil)
 }
-func (a *app) login(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	u, e := a.db.UserByName(r.Context(), r.FormValue("username"))
-	if e == nil && a.db.AccountExpired(u, time.Now()) {
-		_ = a.db.DisableInactive(r.Context(), u.ID, time.Now())
-		a.db.Audit(r.Context(), u.Username, "account.auto_disable", u.Username, "ok", "inactive_30_days")
-		http.Error(w, "アカウントは30日間アクセスがないため無効です。Portal Adminに再有効化を依頼してください", http.StatusForbidden)
-		return
-	}
-	if e != nil || !u.Enabled || (u.TempPasswordExpires > 0 && time.Now().Unix() > u.TempPasswordExpires) || !auth.CheckPassword(u.PasswordHash, r.FormValue("password")) || !a.verifyLoginMFA(r.Context(), u, r.FormValue("totp")) {
-		a.db.Audit(r.Context(), r.FormValue("username"), "login", "", "deny", "")
-		http.Error(w, "認証に失敗しました", http.StatusUnauthorized)
-		return
-	}
-	b := make([]byte, 32)
-	rand.Read(b)
-	tok := base64.RawURLEncoding.EncodeToString(b)
-	a.mu.Lock()
-	a.sessions[tok] = session{u, time.Now().Add(8 * time.Hour)}
-	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "awsportal_session", Value: tok, Path: "/", HttpOnly: true, Secure: env("AWSPORTAL_COOKIE_SECURE", "1") == "1", SameSite: http.SameSiteStrictMode, MaxAge: 28800})
-	_ = a.db.RecordLogin(r.Context(), u.ID, time.Now())
-	a.db.Audit(r.Context(), u.Username, "login", "", "ok", "")
-	if u.MustChangePassword {
-		http.Redirect(w, r, "/change-password", http.StatusSeeOther)
-		return
-	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
 func labDebugMFABypass(u store.User) bool {
 	return env("AWSPORTAL_LAB_DEBUG_AUTH", "0") == "1" && u.Username == "labdebug"
 }
-func (a *app) verifyLoginMFA(ctx context.Context, u store.User, code string) bool {
+func (a *app) checkLoginMFA(ctx context.Context, u store.User, code string) (bool, error) {
 	if labDebugMFABypass(u) {
-		return true
+		return true, nil
 	}
 	secrets, e := a.db.VerifyMFASecrets(ctx, u.ID)
 	if e != nil {
-		return false
+		return false, e
 	}
 	if len(secrets) == 0 {
 		if u.Role != "portal_admin" {
-			return true
+			return true, nil
 		}
-		return u.TOTPSecret != "" && auth.VerifyTOTP(u.TOTPSecret, code)
+		return u.TOTPSecret != "" && auth.VerifyTOTP(u.TOTPSecret, code), nil
 	}
 	for _, s := range secrets {
 		if auth.VerifyTOTP(s, code) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 func (a *app) mfaPage(w http.ResponseWriter, r *http.Request) {
 	u := r.Context().Value("user").(store.User)
@@ -410,7 +382,10 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		fresh, err := a.db.UserByName(r.Context(), s.User.Username)
-		if err != nil || fresh.ID != s.User.ID || !fresh.Enabled || a.db.AccountExpired(fresh, time.Now()) {
+		if err != nil || fresh.ID != s.User.ID || !fresh.Enabled || fresh.LockedAt != 0 || a.db.AccountExpired(fresh, time.Now()) {
+			a.mu.Lock()
+			delete(a.sessions, c.Value)
+			a.mu.Unlock()
 			loginRedirect(w, r)
 			return
 		}
@@ -915,12 +890,13 @@ func errorText(e error) string {
 var _ = strings.TrimSpace
 
 type adminUserRow struct {
-	Username, Role, Status, LastLogin, Expires string
-	Days                                       int
+	Username, Role, Status, LastLogin, Expires, LockedSince, RetryAfter string
+	Days, FailedAttempts                                                int
+	Locked, Enabled                                                     bool
 }
 
 func adminUserView(u store.User, now time.Time) adminUserRow {
-	row := adminUserRow{Username: u.Username, Role: u.Role, Status: "有効", LastLogin: "未ログイン", Expires: "対象外"}
+	row := adminUserRow{Username: u.Username, Role: u.Role, Status: "有効", LastLogin: "未ログイン", Expires: "対象外", Enabled: u.Enabled, FailedAttempts: u.FailedLoginAttempts, Locked: u.LockedAt != 0}
 	if u.LastLoginAt > 0 {
 		row.LastLogin = time.Unix(u.LastLoginAt, 0).Format("2006-01-02 15:04")
 	}
@@ -942,6 +918,13 @@ func adminUserView(u store.User, now time.Time) adminUserRow {
 		} else if row.Days <= 7 {
 			row.Status = "期限警告"
 		}
+	}
+	if row.Locked {
+		row.Status = "ロック中"
+		row.LockedSince = time.Unix(u.LockedAt, 0).Format("2006-01-02 15:04")
+	} else if u.LoginRetryAt > now.Unix() {
+		row.Status = "ログイン待機中"
+		row.RetryAfter = time.Unix(u.LoginRetryAt, 0).Format("2006-01-02 15:04:05")
 	}
 	return row
 }
