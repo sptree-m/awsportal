@@ -7,6 +7,7 @@
 | 区分 | 文書 |
 |---|---|
 | 導入 | [構築・アカウント・EC2初期設定](deployment/setup.md) |
+| 導入 | [ローカルHTTPSの設定](deployment/setup.md#ローカルhttpsと初回端末準備)、[ログイン前のCA証明書・hosts更新スクリプト配布](operations/site-customization.md#ログイン前の証明書配布とhosts設定) |
 | 導入 | [管理者指定VPC・Subnet・TGW・IP範囲](deployment/organization-network.md)、[差し替え設定例](../terraform/examples/org-existing/README.md) |
 | 設計 | [権限境界・セキュリティ要件](architecture/overview.md) |
 | 運用 | [ユーザー・グループ・EC2管理](operations/instances.md) |
@@ -17,6 +18,7 @@
 | 運用 | [Proxy](operations/proxy.md)、[EC2 Outbound](operations/egress.md) |
 | 運用 | [GitLab／Git LFSミラー](operations/git-mirror.md) |
 | 運用 | [利用者マニュアル・サイト表示](operations/site-customization.md) |
+| 管理者マニュアル | [EC2外部作成・種類選択・Portal登録](operations/instances.md#ポータル外でのec2作成と種類選択)、[Golden AMI構築・検証・配布・更新](operations/environments.md#golden-amiの作成配布更新)。ポータル内掲載先は[表示設定](operations/site-customization.md#管理者マニュアル) |
 | 開発 | [必須テスト・コミット・main保護](development/testing.md) |
 | 開発 | [UI・htmxの仕様と検証](development/ui.md)、[画面キャプチャ](screenshots/) |
 | 試験 | [v1.6.0 DCVラボの作成・試験・廃棄](development/dcv-release-test.md) |

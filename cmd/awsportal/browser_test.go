@@ -62,6 +62,12 @@ func TestBrowserConsole(t *testing.T) {
 		t.Skip("set AWSPORTAL_BROWSER_TEST=1 with Node/Playwright installed")
 	}
 	a, _ := newHandlerTestApp(t)
+	caPath, hostsPath, _ := preparationFixture(t)
+	var preparationErr error
+	a.preparation, preparationErr = loadClientPreparation(caPath, hostsPath)
+	if preparationErr != nil {
+		t.Fatal(preparationErr)
+	}
 	a.egress = &fakeEgressAdmin{}
 	a.mirrors, _ = mirror.New(a.db, filepath.Join(t.TempDir(), "mirrors"), "", "")
 	ctx := context.Background()
@@ -113,6 +119,8 @@ func TestBrowserConsole(t *testing.T) {
 	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /login", a.loginPage)
+	mux.HandleFunc("GET /preparation/ca.crt", a.preparationDownload)
+	mux.HandleFunc("GET /preparation/client-setup.zip", a.preparationDownload)
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
 	mux.HandleFunc("POST /admin/users/{username}/unlock", a.require(a.adminUnlockUser))
 	mux.HandleFunc("GET /manual", a.require(a.manualPage))

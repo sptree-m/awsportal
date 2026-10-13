@@ -1,6 +1,17 @@
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $asts=@{}
+$clientScript='cmd/awsportal/preparation/setup-windows.ps1'
+$tokens=$null;$errors=$null
+$clientAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $clientScript),[ref]$tokens,[ref]$errors)
+if($errors.Count){$errors|Format-List;throw 'Client preparation PowerShell parse failed'}
+$hostsHelper=$clientAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-UpdatedHosts'},$true)
+if(-not $hostsHelper){throw 'Client hosts helper missing'}
+. ([ScriptBlock]::Create($hostsHelper.Extent.Text))
+$mappings=@([pscustomobject]@{name='portal.company.example';ip='192.0.2.10'})
+$revised=@(Get-UpdatedHosts @('127.0.0.1 localhost','192.0.2.20 PORTAL.company.example unrelated.example # keep note') $mappings)
+if(($revised -join "`n") -notmatch 'unrelated.example # keep note' -or ($revised -join "`n") -notmatch '127.0.0.1 localhost'){throw 'Client hosts update removed unrelated entries'}
+if(($revised -join "`n") -cne ((Get-UpdatedHosts $revised $mappings) -join "`n")){throw 'Client hosts update is not idempotent'}
 foreach($file in Get-ChildItem -Path windows -Filter '*.ps1'){
     $tokens=$null;$errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseFile($file.FullName,[ref]$tokens,[ref]$errors)

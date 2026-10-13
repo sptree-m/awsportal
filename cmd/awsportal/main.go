@@ -44,16 +44,17 @@ type session struct {
 	Expires time.Time
 }
 type app struct {
-	dcvPort  int
-	db       *store.Store
-	egress   awsapi.EgressController
-	egressMu sync.Mutex
-	mirrors  *mirror.Manager
-	ec2      awsapi.Controller
-	cost     awsapi.CostReporter
-	tpl      *template.Template
-	mu       sync.Mutex
-	sessions map[string]session
+	preparation *clientPreparation
+	dcvPort     int
+	db          *store.Store
+	egress      awsapi.EgressController
+	egressMu    sync.Mutex
+	mirrors     *mirror.Manager
+	ec2         awsapi.Controller
+	cost        awsapi.CostReporter
+	tpl         *template.Template
+	mu          sync.Mutex
+	sessions    map[string]session
 }
 
 func main() {
@@ -75,6 +76,10 @@ func main() {
 		log.Fatal(e)
 	}
 	a := &app{dcvPort: dcvPort, db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), egress: awsapi.NewEgress(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
+	a.preparation, e = loadClientPreparation(env("AWSPORTAL_PREPARATION_CA_FILE", ""), env("AWSPORTAL_PREPARATION_HOSTS_FILE", ""))
+	if e != nil {
+		log.Fatal("client preparation startup failed: ", e)
+	}
 	if bucket := env("AWSPORTAL_AUDIT_BUCKET", ""); bucket != "" {
 		prefix, err := auditexport.NormalizePrefix(env("AWSPORTAL_AUDIT_PREFIX", "audit/"))
 		if err != nil {
@@ -169,6 +174,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health)
 	mux.HandleFunc("GET /login", a.loginPage)
+	mux.HandleFunc("GET /preparation/ca.crt", a.preparationDownload)
+	mux.HandleFunc("GET /preparation/client-setup.zip", a.preparationDownload)
 	mux.HandleFunc("POST /login", a.login)
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /change-password", a.require(a.changePasswordPage))
@@ -234,7 +241,7 @@ func main() {
 }
 func health(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
-	a.renderPage(w, r, "login.html", nil)
+	a.renderPage(w, r, "login.html", map[string]any{"Preparation": a.preparation})
 }
 func labDebugMFABypass(u store.User) bool {
 	return env("AWSPORTAL_LAB_DEBUG_AUTH", "0") == "1" && u.Username == "labdebug"
