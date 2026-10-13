@@ -1,7 +1,7 @@
 const {chromium}=require('playwright');
 const assert=require('node:assert/strict');
 (async()=>{
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({headless:true,args:['--no-sandbox'],executablePath:process.env.AWSPORTAL_CHROMIUM_EXECUTABLE||undefined});
  try{
  const context=await browser.newContext();const base=process.argv[2];
  await context.addCookies([{name:'awsportal_session',value:'browser-session',url:base}]);
@@ -69,11 +69,13 @@ const assert=require('node:assert/strict');
  await lockedUser.locator('[name="reason"]').fill('本人確認済み');await lockedUser.getByRole('button',{name:'ロック解除',exact:true}).click();await lockedUser.locator('[name="reason"]').waitFor({state:'detached'});assert.doesNotMatch(await lockedUser.textContent(),/ロック中/);assert.equal(await lockedUser.locator('td').nth(3).textContent(),'0');
  // Manuals are available to users, and branding changes are administrator-only.
  await page.locator('nav a[href="/manual"]').click();await page.waitForURL(base+'/manual');
+ for(const id of ['admin-provision-guide','admin-golden-guide']){assert.equal(await page.locator('#'+id).count(),1);await page.locator('.manual-index a[href="#'+id+'"]').click();await page.locator('#'+id).getByRole('heading').waitFor()}
  assert.equal(await page.getByRole('heading',{name:'プロキシの設定方法',exact:true}).count(),1);
  assert.equal(await page.getByRole('heading',{name:'Gitミラーの利用方法',exact:true}).count(),1);
  assert.match(await page.locator('#git-guide').textContent(),/awsportal-mirror sync 1 --wait/);
  for(const [width,height] of [[1366,768],[1920,1080],[2560,1440],[3840,2160],[390,844]]){await page.setViewportSize({width,height});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`manual overflow at ${width}`);if(process.env.AWSPORTAL_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/manual-${width}x${height}.png`})}
  await userPage.locator('nav a[href="/manual"]').click();await userPage.waitForURL(base+'/manual');assert.equal(await userPage.locator('#git-guide').count(),1);assert.equal(await userPage.locator('nav a[href="/admin/site"]').count(),0);
+ await userPage.goto(base+'/manual#admin-golden-guide');assert.equal(await userPage.locator('#admin-golden-guide').count(),0);assert.equal(await userPage.locator('#admin-provision-guide').count(),0);
  assert.equal(documents,1,'boosted navigation must not reload document');
  await page.setViewportSize({width:1366,height:768});await page.locator('nav a[href="/admin/site"]').click();await page.waitForURL(base+'/admin/site');
  const settings=page.locator('.site-settings-form');
@@ -108,6 +110,12 @@ const assert=require('node:assert/strict');
    if(process.env.AWSPORTAL_SCREENSHOT_DIR)await page.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/two-stage-${path.includes('admin')?'admin':'settlement'}-${width}x${height}.png`,fullPage:true});
   }
  }
+ await userPage.goto(base+'/login');
+ assert.equal(await userPage.locator('#client-preparation').count(),1);
+ assert.equal(await userPage.locator('a[href="/preparation/client-setup.zip"]').count(),1);
+ const bundleResponse=await userPage.request.get(base+'/preparation/client-setup.zip');assert.equal(bundleResponse.status(),200);assert.match(bundleResponse.headers()['content-disposition'],/attachment/);
+ await userPage.locator('#client-preparation details').evaluateAll(elements=>elements.forEach(element=>element.open=true));
+ for(const [width,height] of [[1366,768],[390,844]]){await userPage.setViewportSize({width,height});assert.equal(await userPage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`login preparation overflow at ${width}`);if(process.env.AWSPORTAL_SCREENSHOT_DIR)await userPage.screenshot({path:`${process.env.AWSPORTAL_SCREENSHOT_DIR}/login-preparation-${width}x${height}.png`,fullPage:true})}
  await userContext.close();
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
  console.log('PASS: boosted navigation, repeated search, partial refresh, detail action/poll termination, idle traffic, errors, cost month/history URL, four desktop resolutions plus mobile logout, administrator-only instance disable/reactivate, user/group grants and effective user access, no external requests');

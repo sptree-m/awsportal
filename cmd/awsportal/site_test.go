@@ -95,6 +95,45 @@ func TestSiteAdminRightsBrandEscapingAndUserManual(t *testing.T) {
 	}
 }
 
+func TestManualAdminGuidesRespectCurrentRole(t *testing.T) {
+	a, _ := newHandlerTestApp(t)
+	ctx := context.Background()
+	for _, role := range []string{"user", "group_admin", "portal_admin"} {
+		if err := a.db.CreateUser(ctx, role, "x", role, ""); err != nil {
+			t.Fatal(err)
+		}
+		u, err := a.db.UserByName(ctx, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, anchor := range []string{"admin-provision-guide", "admin-golden-guide"} {
+			w := httptest.NewRecorder()
+			a.require(a.manualPage)(w, requestAs(a, u, "GET", "/manual#"+anchor, nil))
+			body := w.Body.String()
+			if w.Code != 200 || !strings.Contains(body, `id="git-guide"`) || !strings.Contains(body, "</html>") {
+				t.Fatal("incomplete manual", role, w.Code, body)
+			}
+			for _, marker := range []string{`id="` + anchor + `"`, `href="#` + anchor + `"`} {
+				if strings.Contains(body, marker) != (role == "portal_admin") {
+					t.Fatal("admin guide visibility", role, marker)
+				}
+			}
+		}
+		if role == "portal_admin" {
+			// A cached administrator session must lose the guide after demotion.
+			r := requestAs(a, u, "GET", "/manual#admin-golden-guide", nil)
+			if _, err := a.db.DB.ExecContext(ctx, `UPDATE users SET role='user' WHERE id=?`, u.ID); err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			a.require(a.manualPage)(w, r)
+			if w.Code != 200 || strings.Contains(w.Body.String(), `id="admin-golden-guide"`) {
+				t.Fatal("demoted session retained admin guide", w.Code)
+			}
+		}
+	}
+}
+
 // Japanese text expands to nine bytes per character in a URL-encoded form.
 func TestSiteFormAcceptsDocumentedJapaneseLimits(t *testing.T) {
 	a, _ := newHandlerTestApp(t)

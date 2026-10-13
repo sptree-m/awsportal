@@ -2,7 +2,7 @@
 <div class="manual-content">
 <p class="muted admin-help">利用者EC2で通信とコード取得を準備するための手順です。プロキシとGitミラーは別の接続先・専用トークンを使います。</p>
 {{if .Site.HelpMessage}}<section class="panel"><h2>利用前の確認・問い合わせ</h2><p class="site-message">{{.Site.HelpMessage}}</p></section>{{end}}
-<div class="manual-index"><a class="btn" href="#proxy-guide">プロキシ設定</a><a class="btn" href="#git-guide">Gitミラー</a><a class="btn" href="#troubleshooting">困ったとき</a></div>
+<div class="manual-index"><a class="btn" href="#proxy-guide">プロキシ設定</a><a class="btn" href="#git-guide">Gitミラー</a><a class="btn" href="#troubleshooting">困ったとき</a>{{if eq .User.Role "portal_admin"}}<a class="btn" href="#admin-provision-guide">管理者マニュアル：EC2作成</a><a class="btn" href="#admin-golden-guide">Golden AMI導入・配布</a>{{end}}</div>
 <section class="panel" id="proxy-guide"><p class="eyebrow">01 / NETWORK</p><h2>プロキシの設定方法</h2>
 <p>許可された外部サイトへは、管理者が用意したHTTPSプロキシを経由します。PortalのログインパスワードやMFAコードをツールへ保存する必要はありません。</p>
 <ol><li>管理者からプロキシ接続先、社内CA証明書、プロキシ用ユーザー名と専用トークンを受け取ります。専用トークンは1〜90日で失効します。</li><li>HTTPSプロキシ対応のcurlを準備します。接続先のCAとプロキシのCAを信頼できるように設定します。</li><li>下記のコマンドで、管理者が許可した接続先への通信を確認します。トークン入力は画面に表示されません。</li></ol>
@@ -84,6 +84,44 @@ fi
 <dt>ミラーの409 / 503</dt><dd>409は初回同期が未完了、503はミラー機能の準備状況を管理者へ確認してください。pushなどの書き込み要求は403で拒否されます。</dd>
 <dt>同期の429 / error</dt><dd>429は短時間の再要求です。<code>sync --wait</code> は期限内で自動再試行します。errorの場合はジョブIDを管理者へ連絡してください。前回成功したコードは残ります。</dd>
 <dt>コードの更新に失敗</dt><dd>ブランチ名、originのミラーURL、作業ツリーの変更を確認してください。クライアントはファイルを強制上書きしません。</dd></dl>
-</section></div>
+</section>
+{{if eq .User.Role "portal_admin"}}
+<section class="panel" id="admin-provision-guide"><p class="eyebrow">ADMIN / COMPUTE</p><h2>管理者マニュアル：EC2作成と起動時の種類選択</h2>
+<p>登録済みEC2の起動・停止と、承認済み構成からのShared自動作成は実装済みです。任意Personal EC2の作成、利用者が起動ごとにインスタンスタイプを選ぶ画面、既存EC2の種類変更は未実装です。Golden AMIを登録しても、これらの機能は有効になりません。</p>
+<details open><summary>ポータル外で作成して登録する</summary><ol>
+<li>管理者用AWS CLIまたは組織のIaCで、検証済みAMIと承認済み起動テンプレートを用意します。Private Subnet、SG、IAM Role、ディスク、公開IPなし、IMDSv2を固定します。一般利用者へAWS資格情報は配布しません。</li>
+<li>新規作成時に許可されたインスタンスタイプを指定します。x86_64用AMIではm7i/m7a/c7i/r7i、ARM64用AMIではm7gなど、同じアーキテクチャの検証済み候補から選びます。GPUは別途設計が必要です。</li>
+<li>作成したEC2を、Portal停止中またはDB排他を確保した保守時間に管理CLIの <code>add-instance</code> で登録します。<a href="/admin/instances">Instance Admin</a>でDCVホストとEC2専用認証キー、利用者・グループ割り当てを設定します。</li>
+<li>EC2側へroot所有・0600のAgent設定を配置し、Agentを開始します。DCV設定版と適用版の一致、本人のネイティブ接続を確認します。作成だけでは自動登録・認証設定されません。Personal/EFSを使う場合はEnvironment AdminでOwner・ストレージとHOME leaseも設定します。</li>
+</ol><p>同じEC2を使い続ける場合は、停止を確認してから種類を変更し、再起動します。停止・起動だけでは種類もAMIも変わりません。毎回新規作成する場合は、保存データをEFS/S3へ分離し、ローカルディスクを削除する前に永続化とHOME解放を確認してください。</p></details>
+<details><summary>既存Shared自動作成を導入する</summary><ol>
+<li>Golden AMI、固定Shared pilot、User/Group EFS、Scratch、Agentと計測を準備し、固定pilotで実機受入を行います。</li>
+<li>組織管理のTerraformで <code>managed-profile</code> とShared用 <code>two-stage</code> を構築します。現在のインスタンスタイプは起動テンプレートで固定です。Portalには承認WorkflowのStart/Describeだけを許可し、RunInstances/TerminateInstancesはworkerへ分離します。</li>
+<li>下のAMI手順でNEXT登録とSTABLE昇格を行い、workerの承認設定を一致させます。<code>AWSPORTAL_PROVISION_WORKFLOW</code> / <code>AWSPORTAL_TERMINATE_WORKFLOW</code> に対象ARNを設定します。</li>
+<li>2名・5営業日の観測記録と理由を <a href="/admin/two-stage">運用・費用・取り込み</a> に保存し、poolの増設と <code>AWSPORTAL_SCALE_OUT=true</code> を有効化します。自動終了はdrain・HOME解放の実機確認後に、poolの終了と <code>AWSPORTAL_TERMINATE=true</code> を有効化します。</li>
+</ol><p>全体・poolとも既定OFFです。最大5台、1台2席。EC2がrunningになっただけでは準備完了になりません。Agent、DCV、HOME、計測の確認が必要です。将来タイプ選択を追加する際も、承認候補・利用者権限・上限をWorkflowとworkerで検査します。</p></details>
+</section>
+<section class="panel" id="admin-golden-guide"><p class="eyebrow">ADMIN / GOLDEN AMI</p><h2>Golden AMIの作成・配布・更新</h2>
+<p>AMIの製造と配布は管理者のAWS環境で実施します。ポータルは検証済みAMIの登録・昇格を管理し、AMI自体を作成しません。</p>
+<details open><summary>1. ビルドして検証する</summary><ol>
+<li>用途とCPUアーキテクチャごとにベースAMIを選び、AMI ID、OS、パッケージ、業務ソフト、Portalと同じreleaseのAgentを固定します。現行自動インストーラー <code>dcv/install.sh</code> はUbuntu 24.04のARM64/x86_64に対応しています。</li>
+<li>専用構築EC2にDCV/XFCE、Agent、job broker、Storageと起動時初期化処理を配置します。EFS利用時は <code>amazon-efs-utils</code> も別途導入します。DCVポートと社内CAを本番構成に合わせます。</li>
+<li>利用者データ、EC2専用認証キー、個人の資格情報を含めずAMIを作成します。動的SharedのUserDataには設定Parameter名だけを渡し、起動時にSSMから各EC2の認証情報を取得します。初回は専用構築EC2から手動作成し、再現手順をEC2 Image Builderのレシピとテストへ移せます。Image Builderのパイプラインは別途構築します。</li>
+<li>新AMIから別のEC2を作成し、Agent登録、DCVネイティブ接続、DLP、EFS隔離、Scratch、job、再起動と安全な終了を実機確認します。ビルド定義・成果物一覧のSHA256と検証記録を保存します。</li>
+</ol></details>
+<details open><summary>2. 配布して承認設定を揃える</summary><ol>
+<li>同一account/RegionではAMI IDを使います。他Regionへはコピーし、他accountへは起動許可の共有またはコピーを行います。Image BuilderのDistribution settingsで自動化できます。暗号化AMIのaccount間共有にはカスタマー管理KMSキーと利用許可が必要です。既定のAWS管理キーでは共有できません。</li>
+<li>配布先ごとのAMI ID・所有account・KMSキーを記録し、AMIへ <code>awsportal:golden-sha256</code> タグを付けます。この値は検証成果物の証跡で、AMI全体についてAWSが返すチェックサムではありません。</li>
+<li>配布先AMIを指定した起動テンプレートの数値バージョンを作り、Private Subnet/SG、IAM Profile、IMDSv2、暗号化EBSを確認します。動的Sharedのroot/scratchはDeleteOnTerminationとし、HOME/Group EFSは保持します。組織提供AMIは <code>approved_ami_owners</code> へ所有accountを指定します。</li>
+</ol></details>
+<details open><summary>3. NEXTからSTABLEへ更新する</summary><ol>
+<li><a href="/admin/two-stage">Golden AMI管理画面</a>でProfile、Golden version、配布先AMI ID、起動テンプレートID、数値バージョン、64桁SHA256、実機検証記録を入力し、NEXT登録します。</li>
+<li>更新中は増設をOFFにし、送信済みWorkflowの完了・再照合を確認します。管理者がIaC側の <code>approved_pools</code> を同じAMI/LT/数値version/SHAへ更新し、昇格理由を記録してSTABLEへ進めます。不一致では新規作成が拒否されます。</li>
+<li>新規作成を試験し、準備完了と接続を確認して増設を戻します。PortalとGolden AMIのAgentを互換性のある同じreleaseへ揃えます。稼働中・停止中の既存EC2は昇格だけでは置換されません。</li>
+<li>不具合時は増設を止め、旧AMIの新しいGolden versionをNEXTへ登録し、承認設定を旧AMI/LT/SHAへ戻して再昇格します。ARCHIVEDから直接戻す操作はありません。既存EC2は保守時間に個別対応し、HOME/Group EFSは保持します。</li>
+</ol><p>旧AMI・スナップショットは復旧期間と参照中の起動テンプレートを確認してから整理します。停止中もEBS、保持したAMIのスナップショット、EFS等の費用は続きます。</p></details>
+<p class="muted">同じreleaseのソース文書：<code>docs/operations/instances.md</code>、<code>docs/operations/environments.md</code>、<code>docs/deployment/organization-network.md</code>、<code>docs/operations/dcv.md</code>。構築手順・組織のIAM/ネットワーク設定と併せて確認してください。</p>
+</section>
+{{end}}</div>
 
 <section class="panel"><h2>DCVデスクトップ接続</h2><p>EC2 Instancesの「接続」を押すと、割り当てられたEC2へポータル認証で接続できます。EC2用のパスワード入力は不要です。公式DCVネイティブクライアントを事前にインストールしてください。ブラウザでのDCVデスクトップ接続は禁止です。ポータル自体はブラウザで使用します。</p><p>あなたの専用OSユーザーとセッション名: <code>{{.DCVOSUser}}</code>。ホームはユーザーごとに分離されます。通常のポータル管理者もEC2のsudo権限は自動付与されません。</p><p>起動直後や割り当て直後は同期完了までお待ちください。割り当て解除やアカウント無効化後はセッションと実行中タスクが終了します。ホームデータは保持されます。</p></section></main></body></html>{{end}}

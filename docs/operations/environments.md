@@ -25,6 +25,54 @@ v1.8.0-rc.1で追加した二段階機能の現行運用手順。第1段階の�
 
 実際の環境変数名は `cmd/awsportal/main.go` の設定箇所と照合する。デプロイ先のAWS認証・ネットワーク・SSM/KMS・Boxログインはこのリリースに含めない。
 
+## Golden AMIの作成・配布・更新
+
+Portal Adminはポータルの「利用者マニュアル」内の管理者マニュアル（`/manual#admin-golden-guide`）からも手順を確認できる。AMIの製造・配布は組織のAWS管理環境で実施し、Portalは検証済みAMIの登録・昇格を管理する。AMI製造パイプラインや任意Personal作成機能は同梱していない。ポータル外での作成・登録は[インスタンス管理](instances.md#ポータル外でのec2作成と種類選択)を参照。
+
+### ビルド定義と構築
+
+1. 用途（Shared CPU、Personal、Windows Import）とアーキテクチャごとにベースAMIを選ぶ。ベースAMI ID、OS、導入パッケージ、業務ソフト、Portalと同じreleaseのAgent、DCVポート、社内CAをビルド定義へ記録する。x86_64とARM64は別AMIとし、採用instance typeで確認する。現行のmanaged-profileはm7i/m7a/m7g/c7i/r7iのCPU familyに限定し、Windows Importはm7i.2xlarge固定。GPUは別設計。
+2. 承認済みネットワーク内の専用構築EC2へ、同じreleaseのソース・配布ファイルを展開する。Linux自動インストーラーはUbuntu 24.04のARM64/x86_64に対応する。rootで `sudo env AWSPORTAL_DCV_PORT=8443 bash dcv/install.sh` を実行し、8443はPortalと同じ承認ポートへ置き換える。DCV/XFCE、Agent、job broker、Storage、Bootstrapを配置する。EFSを使う場合のamazon-efs-utilsは別途導入する。Windowsは本書の[専用取り込み手順](#windows取り込み)を使い、Linuxの導入処理を流用しない。
+3. ビルド時のパッケージ取得・DCV配布先への承認通信を確保する。社内CA、DCV license S3への通信・読取権限、SSM/KMS/S3/EFSへの実到達性は[DCV](dcv.md)と[組織ネットワーク](../deployment/organization-network.md)の手順に従う。インストーラーはapt/DCV配布先の内容を取得するため、再現性が必要なら取得パッケージ・配布物の版とhashを固定したビルド工程を用意する。
+4. 利用者のHOME、データ、EC2専用認証キー、個人の資格情報をAMIへ含めない。構築EC2の `/etc/awsportal-dcv/config.json` やAgentの実行状態を焼き込まず、動的SharedではLaunch TemplateのUserDataから `dcv/bootstrap.py` を実行する。UserDataには承認設定Parameter名だけを渡す。workerが作成したEC2固有の認証情報をBootstrapがSSM SecureStringから取得する。固定EC2は作成・登録後に[DCV設定](dcv.md#導入手順)を個別に行う。
+5. 初回は専用構築EC2のアプリとサービスを停止し、停止したEC2からAMIを作成してavailableを待つ。継続運用ではこの手順をEC2 Image Builderのレシピ・build/test componentへ移す。Image BuilderのIAM、構築Subnet/SG、承認取得先、実行スケジュールは別途設定する。製造したAMIをそのままSTABLEへ登録せず、次の検証を行う。
+
+### 検証とビルド証跡
+
+新AMIから別の試験EC2を起動し、採用する種類・OSで確認する。構築元EC2で成功しただけではAMI検証完了としない。
+
+- Agentの個別登録、boot後の同期、Portal/DCVの設定版一致、ネイティブ接続、ブラウザ接続拒否、DLP、一般Userの特権・IMDSアクセス拒否。
+- User HOME隔離、Group領域、EFS TLS/IAM/AP、Scratch quotaとDataset cache、job計測、停止・再起動、安全なdrainとHOME解放。
+- Private IP、公開IP/IPv6なし、承認済みSG・経路、SSM/KMS/S3/DCV licenseと社内CA。
+
+ビルド定義、base AMI、release、導入物のversion/hash、検証結果を固定したmanifestとして保存し、そのファイルのSHA256をattestationとして記録する。試験結果は実機・日時・採用instance typeを特定できる参照先に保存する。
+
+`awsportal:golden-sha256` はこの検証成果物のhashであり、AWSが返すAMI全体のチェックサムではない。workerはAMIタグと承認profileの一致を検査するが、AMI内容を再hashするものではない。各配布先でも同じ証跡に対応するタグを管理者が確認・設定する。
+
+### 配布と起動テンプレート
+
+| 利用先 | 配布方法と記録 |
+|---|---|
+| 同一account・Region | 作成したAMI IDを使用。承認所有者とKMS設定を確認 |
+| 別Region | AMIをコピーし、配布先RegionのAMI ID・KMSキーを記録 |
+| 別account | 起動許可を共有、または配布先accountへコピー。所有accountと利用権限を記録 |
+
+EC2 Image BuilderのDistribution settingsで対象Region/accountへの配布を自動化できる。暗号化AMIをaccount間で共有する場合、スナップショットの暗号化にはカスタマー管理KMSキーを使い、共有先へ必要なキー利用権限を付与する。既定のAWS管理キーで暗号化したAMIは共有できない。account間コピーも配布先Role・KMS権限を準備する。一般公開は行わない。
+
+配布先AMI ID、AMI所有account、KMSキー、証跡SHA256を確定してから、managed-profileで起動テンプレートの新しい数値versionを作る。組織提供AMIの所有者は `approved_ami_owners` に指定する。Private Subnet/SG、非公開primary interface、IAM Profile、IMDSv2、CPUオンデマンド、暗号化root/scratchとDeleteOnTermination、Bootstrap設定Parameterを確認し、preflightと実起動を行う。HOME/Group EFSはAMIに含めず保持する。
+
+### NEXT登録・STABLE昇格・復旧
+
+1. `/admin/two-stage` のGolden AMIへProfile、Golden version、配布先AMI ID、LT ID、数値LT version、64桁SHA256、実機検証記録を入力してNEXT登録する。対応Profileは `shared-cpu-v1` / `personal-v1` / `windows-box-v1`。personal-v1の登録だけではPersonal EC2作成機能は追加されない。
+2. Sharedでは全体の増設をOFFにし、送信済みexecutionの完了・再照合を確認する。新しい依頼をAWSへ送らない保守時間に、IaCの `two-stage.approved_pools` とworker承認設定を同じAMI/LT/数値version/SHAへ更新する。Windowsは新規Import受付を止め、既存executionを追跡する。公開済みworker versionを既存execution向けに上書きしない。
+3. 昇格理由を入力してNEXTをSTABLEへ昇格する。Portal登録値とworker承認profileの不一致では新規起動を拒否する。実機受入済みpoolで制御した新規作成を確認し、Agent/DCV/HOME準備と接続を確認して増設・受付を戻す。実機受入前はproductionスイッチを有効にしない。
+4. PortalとGolden AMIのAgentは互換性のある同じreleaseへ揃える。STABLE更新だけでは既存EC2のOS・Agent・AMIは変わらない。動的Sharedは利用終了、連続idle、drain、終了後の次回新規作成で新STABLEを使う。固定Personal/Sharedは保守時間にAgent更新または移行を行う。
+5. 不具合時は増設・受付を止めて失敗資源を再照合する。旧AMI/LT/SHAを新しいGolden version名でNEXTへ再登録し、worker承認設定を揃えて理由付きで再昇格する。ARCHIVEDを直接STABLEへ戻す操作はない。既存の不具合EC2は別途保守・移行し、永続HOME/Group EFSは保持する。
+
+旧AMI・スナップショット・起動テンプレートは、復旧保持期間と参照中のprofile/executionを確認してから整理する。AMI登録解除だけでスナップショット保持費用がなくなると判断しない。EC2停止中のEBS、EFS、S3などの保存費用も見積もる。
+
+AWS公式：[Image Builderの仕組み](https://docs.aws.amazon.com/imagebuilder/latest/userguide/how-image-builder-works.html)、[AMI配布設定](https://docs.aws.amazon.com/imagebuilder/latest/userguide/cr-upd-ami-distribution-settings.html)、[account間配布](https://docs.aws.amazon.com/imagebuilder/latest/userguide/cross-account-dist.html)、[暗号化AMI共有のKMS条件](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/allow-org-ou-to-use-key.html)。
+
 ## HOME移行とScratch/Dataset
 
 Personalの既存HOMEは移行ロックを取得し、元EC2を停止、元EBSをスナップショットから専用移行ホストへ読取専用でマウントする。原本を削除しない。専用ホストは対象Userだけの一時 `migration_roles` とNFS SGを使う。Compute Roleを移行Roleに指定してはいけない。

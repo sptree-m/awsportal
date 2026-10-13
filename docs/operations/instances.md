@@ -35,6 +35,37 @@ GET/POSTとも403。管理操作は監査ログに記録する。
 
 Personal EFSの停止移行、Group共有領域、HOME lease、Shared作成/安全な終了、Windows専用Box accountは [二段階導入](environments.md) と [組織構成](../deployment/organization-network.md) を参照する。HOME leaseはAgentのsession/jobなし、sync/unmount済み報告後に解放する。一般Windows UserのAD/SSO連携は別仕様であり、Linux UID方式を流用しない。
 
+## ポータル外でのEC2作成と種類選択
+
+Portal Adminはポータルの「利用者マニュアル」内の管理者マニュアル（`/manual#admin-provision-guide`）からも導入方法を確認できる。現行機能の有無は[機能一覧](../features.md)を参照。ポータル外で管理者が作成したEC2を登録する運用は可能だが、利用者が起動ごとに種類を選択して任意Personal EC2を作成するUI/Workflowは未実装。
+
+| 方式 | 起動時の種類指定とデータ保持 |
+|---|---|
+| 毎回新しいEC2を作成 | 承認済みGolden AMIと起動テンプレートから作成。作成時に種類を指定し、保存データをEFS/S3等へ分離 |
+| 同じEC2を停止・再起動 | 停止確認後に対応する種類へ変更して起動。既存のroot EBSは保持し、AMI更新は別工程 |
+
+### 管理者による外部作成・登録
+
+1. [Golden AMIの手順](environments.md#golden-amiの作成配布更新)で検証済みAMIを用意する。起動テンプレートへAMI、承認済みPrivate Subnet/SG、IAM Profile、公開IPなし、IMDSv2とディスク構成を固定する。固定Personalの永続root EBSを、動的Sharedの削除前提設定と混同しない。
+2. 組織の管理者用CLI/IaCから新規作成し、許可された種類だけを選ぶ。一般利用者にAWS Console、Access Key、RunInstances権限を配布しない。起動テンプレートの値はAWS APIでは上書き可能なので、運用ツールとIAMでAMI/Role/SG/種類/上限を制限する。AMIと種類のCPUアーキテクチャを一致させる。ARM64 AMIをm7i等のx86_64へ使用しない。
+3. EC2の実IP/SG/公開IPなし・DCV通信を確認し、Portal停止中またはDB排他を確保した保守時間に既存の管理CLIで登録する。次は作成済みEC2の例で、ID・表示名は実環境へ置き換える。
+
+   ```sh
+   ./awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance \
+     -instance i-0123456789abcdef0 -name DEV-01 -host ec2-private
+   ```
+
+4. Portalを起動し、`/admin/instances` でDCVホスト、EC2専用認証キー、利用者・グループ割り当てを設定する。EC2側は[DCV導入手順](dcv.md#導入手順)に従ってroot所有・0600のconfig.jsonを配置しAgentを開始する。外部作成だけではPortal登録・資格情報発行は行われない。動的Shared用BootstrapはworkerがSSMへ発行する認証情報を前提とするため、固定Personalにそのまま流用しない。
+5. Personal/EFSを使う場合は `/admin/environments` でOwner、User/Group EFS、HOME移行とleaseを設定する。HOMEはPersonal/Sharedで同時保持できない。Agentの準備、設定版一致、本人のネイティブ接続・HOME・停止/起動を実機確認する。
+
+毎回新規作成する場合、旧EC2終了前にデータの永続化、DCV/job停止、sync/unmount、HOME lease解放を確認する。任意Personal削除・自動cleanupは未実装であり、管理者が所有権とEBS保持設定を確認して処理する。停止中もEBS/EFS等の費用は続く。
+
+### 起動ごとの種類選択を追加する場合
+
+管理者用起動ツール、またはPortal→承認Workflow→workerを拡張し、許可された種類の一覧、利用者単位の作成/種類変更権限、同時台数と費用上限、アーキテクチャ・AMI互換性、重複作成防止、失敗資源の再照合を実装する。既存Shared workerは起動テンプレートの種類を使い、依頼ごとのInstanceType上書きを実装していない。managed-profileのinstance_type変更は管理者のIaC更新であり、起動ごとの利用者選択ではない。Portal RoleへRunInstancesを追加せず、AWS作成権限はworkerへ分離する。
+
+AWS公式：[起動テンプレートからの新規作成とパラメーター上書き](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/launch-instances-from-launch-template.html)、[既存EC2の種類変更](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-resize.html)。
+
 ## 将来拡張（未実装）
 
 | 機能 | 設計要件 |
