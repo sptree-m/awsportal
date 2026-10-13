@@ -65,7 +65,6 @@ func main() {
 		if e = s.BreakGlassResetAdmin(ctx, *user, h, secret); e != nil {
 			log.Fatal(e)
 		}
-		s.Audit(ctx, "break-glass", "admin.recovery", *user, "ok", "password and TOTP reset")
 		fmt.Println("TOTP URI:", auth.TOTPURI(secret, "awsportal", *user))
 		fmt.Println("管理者復旧完了。次回ログイン後にパスワード変更が必要です。")
 	case "add-instance":

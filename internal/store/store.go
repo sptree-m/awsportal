@@ -16,6 +16,8 @@ type User struct {
 	Enabled, MustChangePassword                             bool
 	TempPasswordExpires, LastLoginAt, ExpiresAt, DisabledAt int64
 	DisabledReason                                          string
+	FailedLoginAttempts                                     int
+	LockedAt, LoginRetryAt                                  int64
 }
 type Instance struct {
 	ID                                      int64
@@ -52,6 +54,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return e
 		}
 	}
+	for _, q := range []string{"ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN locked_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN login_retry_at INTEGER NOT NULL DEFAULT 0"} {
+		if _, err := s.DB.ExecContext(ctx, q); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+	}
 	_, err := s.DB.ExecContext(ctx, historySchema+auditExportSchema)
 	return err
 }
@@ -59,7 +66,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 func (s *Store) UserByName(ctx context.Context, n string) (User, error) {
 	var u User
 	var en, must int
-	err := s.DB.QueryRowContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason FROM users WHERE username=?", n).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason)
+	err := s.DB.QueryRowContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason,failed_login_attempts,locked_at,login_retry_at FROM users WHERE username=?", n).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason, &u.FailedLoginAttempts, &u.LockedAt, &u.LoginRetryAt)
 	u.Enabled = en == 1
 	u.MustChangePassword = must == 1
 	return u, err
@@ -258,15 +265,35 @@ func (s *Store) ChangePassword(ctx context.Context, userID int64, hash string) e
 	return e
 }
 func (s *Store) BreakGlassResetAdmin(ctx context.Context, username, hash, totpSecret string) error {
-	res, e := s.DB.ExecContext(ctx, "UPDATE users SET password_hash=?,totp_secret=?,must_change_password=1,temp_password_expires=0 WHERE username=? AND role='portal_admin'", hash, totpSecret, username)
-	if e != nil {
-		return e
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	n, _ := res.RowsAffected()
-	if n != 1 {
-		return sql.ErrNoRows
+	defer tx.Rollback()
+	var id int64
+	var detail LoginAuditDetail
+	if err = tx.QueryRowContext(ctx, "SELECT id,failed_login_attempts,locked_at,login_retry_at FROM users WHERE username=? AND role='portal_admin'", username).Scan(&id, &detail.FailedAttempts, &detail.LockedAt, &detail.RetryAt); err != nil {
+		return err
 	}
-	return nil
+	if _, err = tx.ExecContext(ctx, "UPDATE users SET password_hash=?,totp_secret=?,must_change_password=1,temp_password_expires=0,failed_login_attempts=0,locked_at=0,login_retry_at=0 WHERE id=?", hash, totpSecret, id); err != nil {
+		return err
+	}
+	// Registered devices otherwise take precedence over the recovered TOTP secret.
+	if _, err = tx.ExecContext(ctx, "DELETE FROM mfa_devices WHERE user_id=?", id); err != nil {
+		return err
+	}
+	detail.Reason = "break_glass_admin_recovery"
+	detail.FailureLimit = LoginFailureLimit
+	now := time.Now()
+	if err = insertLoginAudit(ctx, tx, "break-glass", "admin.recovery", username, "ok", detail, now); err != nil {
+		return err
+	}
+	if detail.LockedAt != 0 {
+		if err = insertLoginAudit(ctx, tx, "break-glass", "account.unlock", username, "ok", detail, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) MFADevices(ctx context.Context, userID int64) ([]MFADevice, error) {
@@ -351,8 +378,15 @@ func (s *Store) AccountExpired(u User, now time.Time) bool {
 	return u.Role != "portal_admin" && u.Enabled && u.ExpiresAt > 0 && now.Unix() > u.ExpiresAt
 }
 func (s *Store) RecordLogin(ctx context.Context, id int64, now time.Time) error {
-	_, e := s.DB.ExecContext(ctx, "UPDATE users SET last_login_at=?,expires_at=?,disabled_at=0,disabled_reason='' WHERE id=?", now.Unix(), now.Add(30*24*time.Hour).Unix(), id)
-	return e
+	res, err := s.DB.ExecContext(ctx, "UPDATE users SET last_login_at=?,expires_at=?,disabled_at=0,disabled_reason='',failed_login_attempts=0,login_retry_at=0 WHERE id=? AND enabled=1 AND locked_at=0 AND login_retry_at<=? AND (role='portal_admin' OR expires_at=0 OR expires_at>=?) AND (temp_password_expires=0 OR temp_password_expires>=?)", now.Unix(), now.Add(30*24*time.Hour).Unix(), id, now.Unix(), now.Unix(), now.Unix())
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err == nil && n != 1 {
+		return sql.ErrNoRows
+	}
+	return err
 }
 func (s *Store) DisableInactive(ctx context.Context, id int64, now time.Time) error {
 	_, e := s.DB.ExecContext(ctx, "UPDATE users SET enabled=0,disabled_at=?,disabled_reason='inactive_30_days' WHERE id=? AND role!='portal_admin'", now.Unix(), id)
@@ -371,7 +405,7 @@ func (s *Store) ReactivateUser(ctx context.Context, n string, now time.Time) err
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, e := s.DB.QueryContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason FROM users ORDER BY username")
+	rows, e := s.DB.QueryContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason,failed_login_attempts,locked_at,login_retry_at FROM users ORDER BY username")
 	if e != nil {
 		return nil, e
 	}
@@ -380,7 +414,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var en, must int
-		if e = rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason); e != nil {
+		if e = rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason, &u.FailedLoginAttempts, &u.LockedAt, &u.LoginRetryAt); e != nil {
 			return nil, e
 		}
 		u.Enabled = en == 1

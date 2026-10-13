@@ -73,6 +73,12 @@ func TestBrowserConsole(t *testing.T) {
 		t.Fatal(err)
 	}
 	alice, _ := a.db.UserByName(ctx, "alice")
+	if err := a.db.CreateUser(ctx, "locked-user", "x", "user", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.DB.ExecContext(ctx, `UPDATE users SET failed_login_attempts=10,locked_at=? WHERE username='locked-user'`, time.Now().Unix()); err != nil {
+		t.Fatal(err)
+	}
 	a.sessions["alice-session"] = session{User: alice, Expires: time.Now().Add(time.Hour)}
 	if _, err := a.db.DB.ExecContext(ctx, `INSERT INTO instances(instance_id,name,dcv_host) VALUES('i-dev','ADAS Development','dev.local'),('i-train','CV Training','train.local')`); err != nil {
 		t.Fatal(err)
@@ -108,6 +114,7 @@ func TestBrowserConsole(t *testing.T) {
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /login", a.loginPage)
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
+	mux.HandleFunc("POST /admin/users/{username}/unlock", a.require(a.adminUnlockUser))
 	mux.HandleFunc("GET /manual", a.require(a.manualPage))
 	mux.HandleFunc("GET /admin/site", a.require(a.siteAdminPage))
 	mux.HandleFunc("POST /admin/site", a.require(a.siteAdminChange))
