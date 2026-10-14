@@ -22,7 +22,7 @@ ARM64のt4g.microを基本ターゲットとします。Goのサーバーサイ�
 ## 本番運用の要件
 
 - Portal AdminとAWS基盤管理者は別ロール。管理者復旧は複数人承認、緊急操作は期限付き・記録必須とし、障害時もSSH／RDPを臨時開放しない。
-- 管理者のpasswordはbcryptで保存する。一般ユーザーにpasswordによる通常ログインを提供しない。パスキーはUV必須、BE／BS不可、固定RP ID／Origin検証と使い捨てチャレンジを必須とする。TOTP Secretは本番前にKMS等による暗号化へ移行する。SQLite backup・監査ログ・TOTP Secretは機密情報として扱う。
+- 管理者のpasswordはbcryptで保存する。一般ユーザーにpasswordによる通常ログインを提供しない。パスキーはUV必須、BE／BS不可、固定RP ID／Origin検証と使い捨てチャレンジを必須とする。TOTP SecretはAES-256-GCMで暗号化し、DBとは別管理の鍵ファイルを使う。鍵とDBのバックアップは別に安全に保管する。SQLite backup・監査ログ・TOTP Secretは機密情報として扱う。
 - IMDSv2とInstance Profileを使用し、AWS APIの権限を管理対象resourceへ限定する。22／3389の禁止を自動試験し、SSM対話アクセスによる迂回も許可しない。
 - DCV制限と社内承認Firewall／ProxyのAllowlistを併用する。CloudTrail／VPC Flow Logs／中央ログ保管は管理者が別途準備する。
 - Portalの操作・認証ログはSQLiteへ記録し、[gzip付きS3出力](../operations/audit-s3-export.md)を任意に有効化する。CloudTrail・OSログの収集を代替しない。

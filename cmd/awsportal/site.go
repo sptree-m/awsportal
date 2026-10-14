@@ -20,6 +20,7 @@ func (a *app) siteData(r *http.Request, data any) map[string]any {
 		settings = store.DefaultSiteSettings()
 	}
 	values["Site"] = settings
+	values["CSRF"] = passkeyCSRF(r)
 	return values
 }
 func (a *app) renderPage(w http.ResponseWriter, r *http.Request, page string, data any) {

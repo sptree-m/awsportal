@@ -2,14 +2,21 @@ package store
 
 import (
 	"context"
+	"crypto/cipher"
 	"database/sql"
 	"fmt"
 	_ "modernc.org/sqlite"
+	"os"
+	"runtime"
 	"strings"
 	"time"
 )
 
-type Store struct{ DB *sql.DB }
+type Store struct {
+	DB      *sql.DB
+	path    string
+	secrets cipher.AEAD
+}
 type User struct {
 	ID                                                      int64
 	Username, PasswordHash, Role, TOTPSecret                string
@@ -38,16 +45,37 @@ type MFADevice struct {
 }
 
 func Open(path string) (*Store, error) {
+	if path != ":memory:" {
+		if strings.HasPrefix(path, "file:") || strings.Contains(path, "?") {
+			return nil, fmt.Errorf("use a filesystem database path")
+		}
+		if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("database must be a regular file")
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, err
+		}
+		if err = f.Close(); err != nil {
+			return nil, err
+		}
+		if runtime.GOOS != "windows" {
+			if err = os.Chmod(path, 0600); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	db, e := sql.Open("sqlite", path)
 	if e != nil {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	return &Store{DB: db}, nil
+	return &Store{DB: db, path: path}, nil
 }
 func (s *Store) Close() error { return s.DB.Close() }
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema+jobMetricsSchema+poolSchema+billingSchema+importSchema+parquetSchema+billingJobSchema+storageSchema+goldenSchema+desktopSchema+storageMetricSchema+operationMetricSchema+inventorySchema+volumeSchema+reservationSchema+passkeySchema); e != nil {
+	if _, e := s.DB.ExecContext(ctx, schema+securitySchema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema+jobMetricsSchema+poolSchema+billingSchema+importSchema+parquetSchema+billingJobSchema+storageSchema+goldenSchema+desktopSchema+storageMetricSchema+operationMetricSchema+inventorySchema+volumeSchema+reservationSchema+passkeySchema); e != nil {
 		return e
 	}
 	for _, q := range []string{"ALTER TABLE dcv_agents ADD COLUMN browser_blocked INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_policy_json TEXT NOT NULL DEFAULT ''", "ALTER TABLE instances ADD COLUMN dcv_policy_revision INTEGER NOT NULL DEFAULT 1", "ALTER TABLE dcv_agents ADD COLUMN applied_revision INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_connect_mode TEXT NOT NULL DEFAULT 'native'", "ALTER TABLE proxy_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'domain'", "ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"} {
@@ -55,13 +83,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return e
 		}
 	}
-	for _, q := range []string{"ALTER TABLE users ADD COLUMN auth_generation INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN locked_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN login_retry_at INTEGER NOT NULL DEFAULT 0"} {
+	for _, q := range []string{"ALTER TABLE users ADD COLUMN last_totp_counter INTEGER NOT NULL DEFAULT -1", "ALTER TABLE mfa_devices ADD COLUMN last_totp_counter INTEGER NOT NULL DEFAULT -1", "ALTER TABLE users ADD COLUMN auth_generation INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN locked_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN login_retry_at INTEGER NOT NULL DEFAULT 0"} {
 		if _, err := s.DB.ExecContext(ctx, q); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}
 	}
 	_, err := s.DB.ExecContext(ctx, historySchema+auditExportSchema)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrateSecrets(ctx)
 }
 
 func (s *Store) UserByName(ctx context.Context, n string) (User, error) {
@@ -70,9 +101,17 @@ func (s *Store) UserByName(ctx context.Context, n string) (User, error) {
 	err := s.DB.QueryRowContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason,failed_login_attempts,locked_at,login_retry_at,auth_generation FROM users WHERE username=?", n).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason, &u.FailedLoginAttempts, &u.LockedAt, &u.LoginRetryAt, &u.AuthGeneration)
 	u.Enabled = en == 1
 	u.MustChangePassword = must == 1
+	if err == nil {
+		u.TOTPSecret, err = s.openSecret(u.TOTPSecret, "user:"+u.Username)
+	}
 	return u, err
 }
 func (s *Store) CreateUser(ctx context.Context, n, h, role, totp string) error {
+	var err error
+	totp, err = s.sealSecret(totp, "user:"+n)
+	if err != nil {
+		return err
+	}
 	_, e := s.DB.ExecContext(ctx, "INSERT INTO users(username,password_hash,role,totp_secret,enabled,expires_at) VALUES(?,?,?,?,1,?)", n, h, role, totp, time.Now().Add(30*24*time.Hour).Unix())
 	return e
 }
@@ -143,7 +182,7 @@ func (s *Store) Audit(ctx context.Context, actor, action, target, result, detail
 	_, _ = s.DB.ExecContext(ctx, "INSERT INTO audit_log(actor,action,target,result,detail) VALUES(?,?,?,?,?)", actor, action, target, result, detail)
 }
 
-const schema = `PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;
+const schema = `PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT NOT NULL CHECK(role IN ('user','group_admin','portal_admin')),totp_secret TEXT,enabled INTEGER NOT NULL DEFAULT 1,must_change_password INTEGER NOT NULL DEFAULT 0,temp_password_expires INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL);
 CREATE TABLE IF NOT EXISTS group_members(user_id INTEGER NOT NULL REFERENCES users(id),group_id INTEGER NOT NULL REFERENCES groups(id),PRIMARY KEY(user_id,group_id));
@@ -207,7 +246,7 @@ func (s *Store) consumeDCVToken(ctx context.Context, tokenHash, sessionID, awsID
 	var managed bool
 	var expires int64
 	var used sql.NullInt64
-	e = tx.QueryRowContext(ctx, `SELECT t.id,u.username,t.expires_at,t.used_at,u.id,EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id) FROM dcv_tokens t JOIN users u ON u.id=t.user_id JOIN instances i ON i.id=t.instance_id WHERE t.token_hash=? AND t.session_id=? AND i.instance_id=? AND EXISTS(SELECT 1 FROM dcv_agents a,json_each(a.ready_users) j WHERE a.instance_id=i.id AND a.last_seen>=? AND a.applied_revision=i.dcv_policy_revision AND a.browser_blocked=1 AND j.value=u.id) AND u.enabled=1 AND i.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND ((`+nonSharedInstance+` AND `+personalDCVAccess+` AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id))) OR `+sharedDCVAccess+`)`, tokenHash, sessionID, awsID, now.Add(-90*time.Second).Unix(), now.Unix(), now.Unix()).Scan(&id, &username, &expires, &used, &uid, &managed)
+	e = tx.QueryRowContext(ctx, `SELECT t.id,u.username,t.expires_at,t.used_at,u.id,EXISTS(SELECT 1 FROM dcv_agents a WHERE a.instance_id=i.id) FROM dcv_tokens t JOIN users u ON u.id=t.user_id JOIN instances i ON i.id=t.instance_id WHERE t.token_hash=? AND t.session_id=? AND i.instance_id=? AND EXISTS(SELECT 1 FROM dcv_agents a,json_each(a.ready_users) j WHERE a.instance_id=i.id AND a.last_seen>=? AND a.applied_revision=i.dcv_policy_revision AND a.browser_blocked=1 AND j.value=u.id) AND u.enabled=1 AND u.locked_at=0 AND i.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND ((`+nonSharedInstance+` AND `+personalDCVAccess+` AND (u.role='portal_admin' OR EXISTS(SELECT 1 FROM instance_users iu WHERE iu.instance_id=i.id AND iu.user_id=u.id) OR EXISTS(SELECT 1 FROM instance_groups ig JOIN group_members gm ON gm.group_id=ig.group_id WHERE ig.instance_id=i.id AND gm.user_id=u.id))) OR `+sharedDCVAccess+`)`, tokenHash, sessionID, awsID, now.Add(-90*time.Second).Unix(), now.Unix(), now.Unix()).Scan(&id, &username, &expires, &used, &uid, &managed)
 	if e != nil || used.Valid || now.Unix() > expires {
 		return "", false
 	}
@@ -246,6 +285,10 @@ func (s *Store) ListResettableUsers(ctx context.Context) ([]User, error) {
 		}
 		u.Enabled = en == 1
 		u.MustChangePassword = must == 1
+		u.TOTPSecret, e = s.openSecret(u.TOTPSecret, "user:"+u.Username)
+		if e != nil {
+			return nil, e
+		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -261,11 +304,44 @@ func (s *Store) SetTemporaryPassword(ctx context.Context, username, hash string,
 	}
 	return nil
 }
+
+// ChangePassword is retained for local maintenance and legacy recovery callers.
 func (s *Store) ChangePassword(ctx context.Context, userID int64, hash string) error {
-	_, e := s.DB.ExecContext(ctx, "UPDATE users SET password_hash=?,must_change_password=0,temp_password_expires=0 WHERE id=?", hash, userID)
-	return e
+	return s.changePassword(ctx, userID, hash, nil)
+}
+func (s *Store) ChangePasswordFor(ctx context.Context, user User, hash string) error {
+	return s.changePassword(ctx, user.ID, hash, &user.AuthGeneration)
+}
+func (s *Store) changePassword(ctx context.Context, userID int64, hash string, generation *int64) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	query := "UPDATE users SET password_hash=?,must_change_password=0,temp_password_expires=0,auth_generation=auth_generation+1 WHERE id=? AND enabled=1 AND locked_at=0"
+	args := []any{hash, userID}
+	if generation != nil {
+		query += " AND auth_generation=? AND role='portal_admin'"
+		args = append(args, *generation)
+	}
+	res, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return sql.ErrNoRows
+	}
+	if err = revokeCredentialsTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) BreakGlassResetAdmin(ctx context.Context, username, hash, totpSecret string) error {
+	var sealErr error
+	totpSecret, sealErr = s.sealSecret(totpSecret, "user:"+username)
+	if sealErr != nil {
+		return sealErr
+	}
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -276,10 +352,10 @@ func (s *Store) BreakGlassResetAdmin(ctx context.Context, username, hash, totpSe
 	if err = tx.QueryRowContext(ctx, "SELECT id,failed_login_attempts,locked_at,login_retry_at FROM users WHERE username=? AND role='portal_admin'", username).Scan(&id, &detail.FailedAttempts, &detail.LockedAt, &detail.RetryAt); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE users SET auth_generation=auth_generation+1,password_hash=?,totp_secret=?,must_change_password=1,temp_password_expires=0,failed_login_attempts=0,locked_at=0,login_retry_at=0 WHERE id=?", hash, totpSecret, id); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE users SET last_totp_counter=-1,auth_generation=auth_generation+1,password_hash=?,totp_secret=?,must_change_password=1,temp_password_expires=0,failed_login_attempts=0,locked_at=0,login_retry_at=0 WHERE id=?", hash, totpSecret, id); err != nil {
 		return err
 	}
-	for _, table := range []string{"passkeys", "passkey_invites", "passkey_challenges", "dcv_tokens"} {
+	for _, table := range []string{"passkeys", "passkey_invites", "passkey_challenges", "dcv_tokens", "proxy_credentials", "mirror_tokens"} {
 		if _, err = tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id=?", id); err != nil {
 			return err
 		}
@@ -316,11 +392,20 @@ func (s *Store) MFADevices(ctx context.Context, userID int64) ([]MFADevice, erro
 			return nil, e
 		}
 		d.Verified = v == 1
+		d.Secret, e = s.openSecret(d.Secret, mfaScope(userID))
+		if e != nil {
+			return nil, e
+		}
 		out = append(out, d)
 	}
 	return out, rows.Err()
 }
 func (s *Store) AddMFADevice(ctx context.Context, userID int64, name, secret string) (int64, error) {
+	var sealErr error
+	secret, sealErr = s.sealSecret(secret, mfaScope(userID))
+	if sealErr != nil {
+		return 0, sealErr
+	}
 	var n int
 	if e := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM mfa_devices WHERE user_id=?", userID).Scan(&n); e != nil {
 		return 0, e
@@ -339,6 +424,9 @@ func (s *Store) MFADevice(ctx context.Context, userID, id int64) (MFADevice, err
 	var v int
 	e := s.DB.QueryRowContext(ctx, "SELECT id,name,secret,verified,created_at FROM mfa_devices WHERE id=? AND user_id=?", id, userID).Scan(&d.ID, &d.Name, &d.Secret, &v, &d.CreatedAt)
 	d.Verified = v == 1
+	if e == nil {
+		d.Secret, e = s.openSecret(d.Secret, mfaScope(userID))
+	}
 	return d, e
 }
 func (s *Store) VerifyMFADevice(ctx context.Context, userID, id int64) error {
@@ -353,15 +441,25 @@ func (s *Store) VerifyMFADevice(ctx context.Context, userID, id int64) error {
 	return nil
 }
 func (s *Store) DeleteMFADevice(ctx context.Context, userID, id int64) error {
-	res, e := s.DB.ExecContext(ctx, "DELETE FROM mfa_devices WHERE id=? AND user_id=?", id, userID)
-	if e != nil {
-		return e
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	n, _ := res.RowsAffected()
-	if n != 1 {
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, "DELETE FROM mfa_devices WHERE id=? AND user_id=?", id, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if _, err = tx.ExecContext(ctx, "UPDATE users SET auth_generation=auth_generation+1 WHERE id=?", userID); err != nil {
+		return err
+	}
+	if err = revokeCredentialsTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) VerifyMFASecrets(ctx context.Context, userID int64) ([]string, error) {
 	rows, e := s.DB.QueryContext(ctx, "SELECT secret FROM mfa_devices WHERE user_id=? AND verified=1", userID)
@@ -373,6 +471,10 @@ func (s *Store) VerifyMFASecrets(ctx context.Context, userID int64) ([]string, e
 	for rows.Next() {
 		var x string
 		if e = rows.Scan(&x); e != nil {
+			return nil, e
+		}
+		x, e = s.openSecret(x, mfaScope(userID))
+		if e != nil {
 			return nil, e
 		}
 		out = append(out, x)
@@ -395,8 +497,22 @@ func (s *Store) RecordLogin(ctx context.Context, id int64, now time.Time) error 
 	return err
 }
 func (s *Store) DisableInactive(ctx context.Context, id int64, now time.Time) error {
-	_, e := s.DB.ExecContext(ctx, "UPDATE users SET enabled=0,disabled_at=?,disabled_reason='inactive_30_days' WHERE id=? AND role!='portal_admin'", now.Unix(), id)
-	return e
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, "UPDATE users SET enabled=0,disabled_at=?,disabled_reason='inactive_30_days',auth_generation=auth_generation+1 WHERE id=? AND role!='portal_admin'", now.Unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return sql.ErrNoRows
+	}
+	if err = revokeCredentialsTx(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) ReactivateUser(ctx context.Context, n string, now time.Time) error {
 	res, e := s.DB.ExecContext(ctx, "UPDATE users SET enabled=1,disabled_at=0,disabled_reason='',expires_at=? WHERE username=? AND role!='portal_admin'", now.Add(30*24*time.Hour).Unix(), n)
@@ -425,6 +541,10 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 		}
 		u.Enabled = en == 1
 		u.MustChangePassword = must == 1
+		u.TOTPSecret, e = s.openSecret(u.TOTPSecret, "user:"+u.Username)
+		if e != nil {
+			return nil, e
+		}
 		out = append(out, u)
 	}
 	return out, rows.Err()
@@ -455,17 +575,26 @@ func (s *Store) AuditEntries(ctx context.Context, limit int) ([]AuditEntry, erro
 	return out, rows.Err()
 }
 func (s *Store) SetUserEnabled(ctx context.Context, username string, enabled bool) error {
-	v := 0
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var id int64
+	if err = tx.QueryRowContext(ctx, "SELECT id FROM users WHERE username=? AND role!='portal_admin'", username).Scan(&id); err != nil {
+		return err
+	}
+	value, increment := 0, 1
 	if enabled {
-		v = 1
+		value, increment = 1, 0
 	}
-	res, e := s.DB.ExecContext(ctx, "UPDATE users SET enabled=? WHERE username=? AND role!='portal_admin'", v, username)
-	if e != nil {
-		return e
+	if _, err = tx.ExecContext(ctx, "UPDATE users SET enabled=?,auth_generation=auth_generation+? WHERE id=?", value, increment, id); err != nil {
+		return err
 	}
-	n, _ := res.RowsAffected()
-	if n != 1 {
-		return sql.ErrNoRows
+	if !enabled {
+		if err = revokeCredentialsTx(ctx, tx, id); err != nil {
+			return err
+		}
 	}
-	return nil
+	return tx.Commit()
 }

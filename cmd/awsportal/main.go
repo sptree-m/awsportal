@@ -42,11 +42,13 @@ var web embed.FS
 
 type session struct {
 	AuthenticatedAt time.Time
+	LastSeen        time.Time
 	Method          string
 	User            store.User
 	Expires         time.Time
 }
 type app struct {
+	limiter     *authLimiter
 	webauthn    *webauthn.WebAuthn
 	preparation *clientPreparation
 	dcvPort     int
@@ -88,6 +90,11 @@ func main() {
 	if e != nil {
 		log.Fatal("passkey startup failed: ", e)
 	}
+	a.limiter, e = newAuthLimiter()
+	if e != nil {
+		log.Fatal("invalid trusted proxy configuration: ", e)
+	}
+	go a.sessionJanitor(ctx)
 	a.preparation, e = loadClientPreparation(env("AWSPORTAL_PREPARATION_CA_FILE", ""), env("AWSPORTAL_PREPARATION_HOSTS_FILE", ""))
 	if e != nil {
 		log.Fatal("client preparation startup failed: ", e)
@@ -183,6 +190,11 @@ func main() {
 			log.Fatal(err)
 		}()
 	}
+	s := &http.Server{Addr: transport.addr, Handler: a.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32768, TLSConfig: transport.tlsConfig}
+	log.Printf("portal listen %s://%s", transport.mode, s.Addr)
+	log.Fatal(transport.serve(s))
+}
+func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health)
 	mux.HandleFunc("GET /login", a.loginPage)
@@ -192,18 +204,18 @@ func main() {
 	a.passkeyRoutes(mux)
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /change-password", a.require(a.changePasswordPage))
-	mux.HandleFunc("POST /change-password", a.require(a.changePassword))
+	mux.HandleFunc("POST /change-password", a.requireRecentAdmin(a.changePassword))
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
-	mux.HandleFunc("POST /admin/users", a.require(a.adminCreateUser))
-	mux.HandleFunc("POST /admin/users/{username}/reactivate", a.require(a.adminReactivateUser))
-	mux.HandleFunc("POST /admin/users/{username}/disable", a.require(a.adminDisableUser))
-	mux.HandleFunc("POST /admin/users/{username}/unlock", a.require(a.adminUnlockUser))
+	mux.HandleFunc("POST /admin/users", a.requireRecentAdmin(a.adminCreateUser))
+	mux.HandleFunc("POST /admin/users/{username}/reactivate", a.requireRecentAdmin(a.adminReactivateUser))
+	mux.HandleFunc("POST /admin/users/{username}/disable", a.requireRecentAdmin(a.adminDisableUser))
+	mux.HandleFunc("POST /admin/users/{username}/unlock", a.requireRecentAdmin(a.adminUnlockUser))
 	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
-	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
+	mux.HandleFunc("POST /admin/instances", a.requireRecentAdmin(a.instanceAdminChange))
 	mux.HandleFunc("GET /manual", a.require(a.manualPage))
 	mux.HandleFunc("GET /admin/preparation/generate-preparation.py", a.require(a.preparationGeneratorDownload))
 	mux.HandleFunc("GET /admin/site", a.require(a.siteAdminPage))
-	mux.HandleFunc("POST /admin/site", a.require(a.siteAdminChange))
+	mux.HandleFunc("POST /admin/site", a.requireRecentAdmin(a.siteAdminChange))
 	mux.HandleFunc("GET /mirrors", a.require(a.mirrorPage))
 	mux.HandleFunc("POST /mirrors", a.require(a.mirrorChange))
 	mux.HandleFunc("POST /api/mirrors/{id}/sync", a.mirrorSyncAPI)
@@ -211,15 +223,15 @@ func main() {
 	mux.HandleFunc("GET /git/mirrors/{id}/{suffix...}", a.mirrorGit)
 	mux.HandleFunc("POST /git/mirrors/{id}/{suffix...}", a.mirrorGit)
 	mux.HandleFunc("GET /admin/egress", a.require(a.egressPage))
-	mux.HandleFunc("POST /admin/egress", a.require(a.egressChange))
+	mux.HandleFunc("POST /admin/egress", a.requireRecentAdmin(a.egressChange))
 	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
-	mux.HandleFunc("POST /admin/proxy", a.require(a.proxyAdminChange))
+	mux.HandleFunc("POST /admin/proxy", a.requireRecentAdmin(a.proxyAdminChange))
 	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))
 	mux.HandleFunc("GET /mfa", a.require(a.mfaPage))
-	mux.HandleFunc("POST /mfa/add", a.require(a.mfaAdd))
-	mux.HandleFunc("GET /mfa/{id}/qr.png", a.require(a.mfaQR))
-	mux.HandleFunc("POST /mfa/{id}/verify", a.require(a.mfaVerify))
-	mux.HandleFunc("POST /mfa/{id}/delete", a.require(a.mfaDelete))
+	mux.HandleFunc("POST /mfa/add", a.requireRecentAdmin(a.mfaAdd))
+	mux.HandleFunc("GET /mfa/{id}/qr.png", a.requireRecentAdmin(a.mfaQR))
+	mux.HandleFunc("POST /mfa/{id}/verify", a.requireRecentAdmin(a.mfaVerify))
+	mux.HandleFunc("POST /mfa/{id}/delete", a.requireRecentAdmin(a.mfaDelete))
 	mux.HandleFunc("GET /", a.require(a.dashboard))
 	mux.HandleFunc("GET /instances", a.require(a.instancesPage))
 	mux.HandleFunc("GET /instances/{id}/row", a.require(a.instanceRow))
@@ -230,9 +242,9 @@ func main() {
 	mux.HandleFunc("POST /environment-requests/{id}/end", a.require(a.environmentEnd))
 	mux.HandleFunc("POST /environment-requests/{id}/dcv", a.require(a.environmentDCV))
 	mux.HandleFunc("GET /admin/environments", a.require(a.environmentAdminPage))
-	mux.HandleFunc("POST /admin/environments", a.require(a.environmentAdminChange))
+	mux.HandleFunc("POST /admin/environments", a.requireRecentAdmin(a.environmentAdminChange))
 	mux.HandleFunc("GET /admin/two-stage", a.require(a.stageTwoPage))
-	mux.HandleFunc("POST /admin/two-stage", a.require(a.stageTwoChange))
+	mux.HandleFunc("POST /admin/two-stage", a.requireRecentAdmin(a.stageTwoChange))
 	mux.HandleFunc("GET /api/import/agent/state", a.importAgentState)
 	mux.HandleFunc("POST /api/import/agent/event", a.importAgentEvent)
 	mux.HandleFunc("GET /settlements", a.require(a.settlements))
@@ -248,31 +260,12 @@ func main() {
 	mux.HandleFunc("POST /api/dcv/agent/heartbeat", a.dcvAgentHeartbeat)
 	mux.HandleFunc("POST /api/dcv/agent/auth", a.dcvAgentAuth)
 	mux.Handle("GET /static/", staticHandler(http.StripPrefix("/static/", http.FileServer(http.FS(web)))))
-	s := &http.Server{Addr: transport.addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, TLSConfig: transport.tlsConfig}
-	log.Printf("portal listen %s://%s", transport.mode, s.Addr)
-	log.Fatal(transport.serve(s))
+	return headers(a.limitAuthentication(mux))
 }
+
 func health(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	a.renderPage(w, r, "login.html", map[string]any{"Preparation": a.preparation})
-}
-func (a *app) checkLoginMFA(ctx context.Context, u store.User, code string) (bool, error) {
-	secrets, e := a.db.VerifyMFASecrets(ctx, u.ID)
-	if e != nil {
-		return false, e
-	}
-	if len(secrets) == 0 {
-		if u.Role != "portal_admin" {
-			return true, nil
-		}
-		return u.TOTPSecret != "" && auth.VerifyTOTP(u.TOTPSecret, code), nil
-	}
-	for _, s := range secrets {
-		if auth.VerifyTOTP(s, code) {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 func (a *app) mfaPage(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Value("user").(store.User).Role != "portal_admin" {
@@ -351,19 +344,16 @@ func (a *app) mfaVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	u := r.Context().Value("user").(store.User)
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	d, e := a.db.MFADevice(r.Context(), u.ID, id)
-	_ = r.ParseForm()
-	if e != nil || d.Verified || !auth.VerifyTOTP(d.Secret, r.FormValue("code")) {
-		a.db.Audit(r.Context(), u.Username, "mfa.enroll.verify", d.Name, "deny", "")
+	if r.ParseForm() != nil {
+		http.Error(w, "入力を確認してください", 400)
+		return
+	}
+	valid, err := a.db.CompleteMFAVerification(r.Context(), u, id, r.PostFormValue("code"), time.Now())
+	if err != nil || !valid {
 		http.Error(w, "認証コードを確認できません", 400)
 		return
 	}
-	if e = a.db.VerifyMFADevice(r.Context(), u.ID, id); e != nil {
-		http.Error(w, "登録失敗", 500)
-		return
-	}
-	a.db.Audit(r.Context(), u.Username, "mfa.enroll.verify", d.Name, "ok", "")
-	http.Redirect(w, r, "/mfa", 303)
+	http.Redirect(w, r, "/login", 303)
 }
 func (a *app) mfaDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Value("user").(store.User).Role != "portal_admin" {
@@ -382,13 +372,12 @@ func (a *app) mfaDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.db.Audit(r.Context(), u.Username, "mfa.device.delete", d.Name, "ok", "")
-	if r.Header.Get("HX-Request") == "true" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	http.Redirect(w, r, "/mfa", 303)
+	loginRedirect(w, r)
 }
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
+	if !a.browserMutation(w, r) {
+		return
+	}
 	if c, e := r.Cookie("awsportal_session"); e == nil {
 		a.mu.Lock()
 		s, ok := a.sessions[c.Value]
@@ -411,7 +400,10 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 		a.mu.Lock()
 		s, ok := a.sessions[c.Value]
 		a.mu.Unlock()
-		if !ok || time.Now().After(s.Expires) {
+		if !ok || sessionExpired(s, time.Now()) {
+			a.mu.Lock()
+			delete(a.sessions, c.Value)
+			a.mu.Unlock()
 			loginRedirect(w, r)
 			return
 		}
@@ -432,6 +424,15 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 			}
 			return
 		}
+		if !a.browserMutation(w, r) {
+			return
+		}
+		a.mu.Lock()
+		if current, exists := a.sessions[c.Value]; exists {
+			current.LastSeen = time.Now()
+			a.sessions[c.Value] = current
+		}
+		a.mu.Unlock()
 		next(w, r.WithContext(context.WithValue(r.Context(), "user", fresh)))
 	}
 }
@@ -456,7 +457,7 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h, e := auth.HashPassword(p)
-	if e != nil || a.db.ChangePassword(r.Context(), u.ID, h) != nil {
+	if e != nil || a.db.ChangePasswordFor(r.Context(), u, h) != nil {
 		http.Error(w, "変更失敗", 500)
 		return
 	}
@@ -878,6 +879,9 @@ func headers(n http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.TLS != nil {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		if !strings.HasPrefix(r.URL.Path, "/static/") {
 			w.Header().Set("Cache-Control", "no-store")

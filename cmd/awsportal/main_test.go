@@ -91,8 +91,12 @@ func newHandlerTestApp(t *testing.T) (*app, *fakeEC2) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
+	limiter, err := newAuthLimiter()
+	if err != nil {
+		t.Fatal(err)
+	}
 	ec2 := &fakeEC2{states: map[string]string{}}
-	return &app{dcvPort: 8443, db: s, ec2: ec2, tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}, ec2
+	return &app{limiter: limiter, dcvPort: 8443, db: s, ec2: ec2, tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}, ec2
 }
 
 func requestAs(a *app, u store.User, method, target string, body *strings.Reader) *http.Request {
@@ -104,8 +108,9 @@ func requestAs(a *app, u store.User, method, target string, body *strings.Reader
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	token := "test-session-" + u.Username
-	a.sessions[token] = session{User: u, Expires: time.Now().Add(time.Hour)}
+	a.sessions[token] = session{User: u, Expires: time.Now().Add(time.Hour), AuthenticatedAt: time.Now(), LastSeen: time.Now(), Method: "passkey"}
 	r.AddCookie(&http.Cookie{Name: "awsportal_session", Value: token})
+	r.Header.Set("X-CSRF-Token", passkeyCSRF(r))
 	return r
 }
 
@@ -305,7 +310,7 @@ func TestHTMXAdminDisableReturnsUpdatedUserRow(t *testing.T) {
 	}
 }
 
-func TestHTMXMFADeleteRemovesDeviceWithoutRedirect(t *testing.T) {
+func TestHTMXMFADeleteRevokesSessionAndRequiresLogin(t *testing.T) {
 	a, _ := newHandlerTestApp(t)
 	ctx := context.Background()
 	if err := a.db.CreateUser(ctx, "alice", "x", "portal_admin", "SECRET"); err != nil {
@@ -325,11 +330,11 @@ func TestHTMXMFADeleteRemovesDeviceWithoutRedirect(t *testing.T) {
 	r.Header.Set("HX-Request", "true")
 	w := httptest.NewRecorder()
 	a.require(a.mfaDelete)(w, r)
-	if w.Code != http.StatusOK {
+	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("mfa delete code=%d body=%s", w.Code, w.Body.String())
 	}
-	if w.Header().Get("Location") != "" {
-		t.Fatalf("htmx delete must not redirect: %q", w.Header().Get("Location"))
+	if w.Header().Get("HX-Redirect") != "/login" {
+		t.Fatalf("htmx delete must require a fresh login: %q", w.Header().Get("Location"))
 	}
 	if ds, _ := a.db.MFADevices(ctx, u.ID); len(ds) != 0 {
 		t.Fatalf("device not deleted: %#v", ds)

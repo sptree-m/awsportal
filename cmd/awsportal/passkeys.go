@@ -234,7 +234,9 @@ func (a *app) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	err = a.db.RecordPasskeyLogin(r.Context(), u.User, credential, time.Now())
 	if err == nil {
-		a.sessions[token] = session{User: u.User, Expires: time.Now().Add(8 * time.Hour), AuthenticatedAt: time.Now(), Method: "passkey"}
+		if !a.putSessionLocked(token, session{User: u.User, Expires: time.Now().Add(8 * time.Hour), AuthenticatedAt: time.Now(), Method: "passkey"}) {
+			err = fmt.Errorf("session capacity reached")
+		}
 	}
 	a.mu.Unlock()
 	if err != nil {

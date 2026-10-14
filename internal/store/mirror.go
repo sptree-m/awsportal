@@ -165,7 +165,7 @@ func (s *Store) MirrorTokenUser(ctx context.Context, token string) (User, bool, 
 		return User{}, false, e
 	}
 	u, e := s.UserByName(ctx, name)
-	if e != nil || !u.Enabled || u.MustChangePassword || s.AccountExpired(u, time.Now()) {
+	if e != nil || !u.Enabled || u.LockedAt != 0 || u.MustChangePassword || s.AccountExpired(u, time.Now()) {
 		return User{}, false, fmt.Errorf("account disabled")
 	}
 	return u, canSync, nil

@@ -52,7 +52,7 @@ type ConnectionRequest struct {
 	State, Reason, InstanceID               string
 }
 
-const environmentAccess = `(u.enabled=1 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND e.enabled=1 AND (u.role='portal_admin' OR (e.mode='personal' AND e.owner_user_id=u.id) OR EXISTS(SELECT 1 FROM environment_acl acl WHERE acl.environment_id=e.id AND acl.permission='environment.connect' AND ((acl.kind='user' AND acl.subject_id=u.id) OR (acl.kind='group' AND EXISTS(SELECT 1 FROM group_members gm WHERE gm.group_id=acl.subject_id AND gm.user_id=u.id))))))`
+const environmentAccess = `(u.enabled=1 AND u.locked_at=0 AND u.must_change_password=0 AND (u.role='portal_admin' OR u.expires_at=0 OR u.expires_at>=?) AND e.enabled=1 AND (u.role='portal_admin' OR (e.mode='personal' AND e.owner_user_id=u.id) OR EXISTS(SELECT 1 FROM environment_acl acl WHERE acl.environment_id=e.id AND acl.permission='environment.connect' AND ((acl.kind='user' AND acl.subject_id=u.id) OR (acl.kind='group' AND EXISTS(SELECT 1 FROM group_members gm WHERE gm.group_id=acl.subject_id AND gm.user_id=u.id))))))`
 
 // Applied inside instance/DCV queries with aliases i/u. A Shared instance never
 // inherits legacy instance grants or administrator automatic sessions.
