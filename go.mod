@@ -1,8 +1,6 @@
 module github.com/sptree-m/awsportal
 
-go 1.23.0
-
-toolchain go1.23.12
+go 1.27.2
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.3

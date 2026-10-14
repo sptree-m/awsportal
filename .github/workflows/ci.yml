@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23.x'
+          go-version-file: go.mod
           cache: false
       - name: Install Git LFS for real integration tests
         run: sudo apt-get update -qq && sudo apt-get install -y git-lfs
@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23.x'
+          go-version-file: go.mod
           cache: false
       - name: t4g.micro相当リソース制約テスト
         run: bash scripts/test-t4g-micro.sh
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23.x'
+          go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
