@@ -41,11 +41,13 @@ import (
 var web embed.FS
 
 type session struct {
-	AuthenticatedAt time.Time
-	LastSeen        time.Time
-	Method          string
-	User            store.User
-	Expires         time.Time
+	StepUpHash, StepUpAction string
+	StepUpExpires            time.Time
+	AuthenticatedAt          time.Time
+	LastSeen                 time.Time
+	Method                   string
+	User                     store.User
+	Expires                  time.Time
 }
 type app struct {
 	limiter     *authLimiter
@@ -201,6 +203,10 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("GET /preparation/ca.crt", a.preparationDownload)
 	mux.HandleFunc("GET /preparation/client-setup.zip", a.preparationDownload)
 	mux.HandleFunc("POST /login", a.login)
+	mux.HandleFunc("GET /reauthenticate", a.require(a.reauthenticationPage))
+	mux.HandleFunc("POST /reauthenticate", a.require(a.reauthenticatePassword))
+	mux.HandleFunc("POST /passkeys/reauth/begin", a.require(a.reauthenticatePasskeyBegin))
+	mux.HandleFunc("POST /passkeys/reauth/finish", a.require(a.reauthenticatePasskeyFinish))
 	a.passkeyRoutes(mux)
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /change-password", a.require(a.changePasswordPage))
@@ -310,7 +316,6 @@ func (a *app) mfaAdd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "最大3台です。同じ端末名も登録できません", 400)
 		return
 	}
-	a.db.Audit(r.Context(), u.Username, "mfa.enroll.start", name, "ok", "")
 	http.Redirect(w, r, fmt.Sprintf("/mfa?setup=%d", id), 303)
 }
 func (a *app) mfaQR(w http.ResponseWriter, r *http.Request) {
@@ -362,7 +367,7 @@ func (a *app) mfaDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	u := r.Context().Value("user").(store.User)
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	d, e := a.db.MFADevice(r.Context(), u.ID, id)
+	_, e := a.db.MFADevice(r.Context(), u.ID, id)
 	if e != nil {
 		http.NotFound(w, r)
 		return
@@ -371,7 +376,6 @@ func (a *app) mfaDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "削除失敗", 500)
 		return
 	}
-	a.db.Audit(r.Context(), u.Username, "mfa.device.delete", d.Name, "ok", "")
 	loginRedirect(w, r)
 }
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
@@ -415,7 +419,7 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 			loginRedirect(w, r)
 			return
 		}
-		if fresh.Role == "portal_admin" && fresh.MustChangePassword && r.URL.Path != "/change-password" {
+		if fresh.Role == "portal_admin" && fresh.MustChangePassword && r.URL.Path != "/change-password" && r.URL.Path != "/reauthenticate" && !strings.HasPrefix(r.URL.Path, "/passkeys/reauth/") {
 			if r.Header.Get("HX-Request") == "true" {
 				w.Header().Set("HX-Redirect", "/change-password")
 				w.WriteHeader(401)
@@ -433,7 +437,7 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 			a.sessions[c.Value] = current
 		}
 		a.mu.Unlock()
-		next(w, r.WithContext(context.WithValue(r.Context(), "user", fresh)))
+		a.auditedMutation(w, r.WithContext(context.WithValue(r.Context(), "user", fresh)), fresh, next)
 	}
 }
 func (a *app) changePasswordPage(w http.ResponseWriter, r *http.Request) {
@@ -461,7 +465,6 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "変更失敗", 500)
 		return
 	}
-	a.db.Audit(r.Context(), u.Username, "password.change", u.Username, "ok", "")
 	a.mu.Lock()
 	for k, s := range a.sessions {
 		if s.User.ID == u.ID {
@@ -836,11 +839,12 @@ func (a *app) scheduler(ctx context.Context) {
 					continue
 				}
 				var runErr error
-				if x.Action == "start" {
-					runErr = a.ec2.Start(ctx, x.InstanceID)
-				} else {
-					runErr = a.ec2.Stop(ctx, x.InstanceID)
-				}
+				runErr = a.db.AuditedEffect(ctx, "scheduler", "ec2."+x.Action, x.InstanceID, func() error {
+					if x.Action == "start" {
+						return a.ec2.Start(ctx, x.InstanceID)
+					}
+					return a.ec2.Stop(ctx, x.InstanceID)
+				})
 				res := "ok"
 				if runErr != nil {
 					res = "error"

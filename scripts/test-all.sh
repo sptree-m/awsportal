@@ -35,6 +35,7 @@ python3 -m unittest discover -s tests -p 'test_lab_*.py'
 python3 -m unittest discover -s tests -p 'test_cloud_*.py'
 python3 -m unittest discover -s tests -p 'test_aws_audit.py'
 python3 -m unittest discover -s tests -p 'test_client_preparation.py'
+python3 -m unittest discover -s tests -p 'test_git_hook.py'
 bash -n tools/aws-audit/run.sh
 bash -n dcv/install.sh dcv/desktop.sh lab/create.sh lab/test-dcv.sh
 python3 tests/lab-template.py

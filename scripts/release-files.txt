@@ -39,3 +39,4 @@ docs/releases/v1.9.1.md
 docs/releases/v1.9.2.md
 docs/releases/v2.0.0.md
 docs/releases/v2.1.0.md
+docs/releases/v2.1.1.md

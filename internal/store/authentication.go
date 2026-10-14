@@ -23,6 +23,14 @@ func revokeCredentialsTx(ctx context.Context, tx *sql.Tx, uid int64) error {
 // records login and updates account state in one transaction. Only the hash is
 // compared here; bcrypt verification happens before entering the transaction.
 func (s *Store) RecordPasswordLogin(ctx context.Context, u User, code string, now time.Time) (bool, error) {
+	return s.recordPasswordAuthentication(ctx, u, code, now, "login")
+}
+
+func (s *Store) RecordPasswordReauthentication(ctx context.Context, u User, code string, now time.Time) (bool, error) {
+	return s.recordPasswordAuthentication(ctx, u, code, now, "reauth.password_totp")
+}
+
+func (s *Store) recordPasswordAuthentication(ctx context.Context, u User, code string, now time.Time, action string) (bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -94,7 +102,7 @@ func (s *Store) RecordPasswordLogin(ctx context.Context, u User, code string, no
 		if _, err = tx.ExecContext(ctx, `UPDATE users SET last_login_at=?,expires_at=?,failed_login_attempts=0,login_retry_at=0 WHERE id=?`, now.Unix(), now.Add(30*24*time.Hour).Unix(), u.ID); err != nil {
 			return false, err
 		}
-		if err = insertLoginAudit(ctx, tx, u.Username, "login", u.Username, "ok", LoginAuditDetail{Reason: "password_totp"}, now); err != nil {
+		if err = insertLoginAudit(ctx, tx, u.Username, action, u.Username, "ok", LoginAuditDetail{Reason: "password_totp"}, now); err != nil {
 			return false, err
 		}
 		return true, tx.Commit()
