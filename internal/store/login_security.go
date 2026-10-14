@@ -73,7 +73,7 @@ func (s *Store) RecordLoginFailure(ctx context.Context, username string, detail 
 			detail.Reason = "account_locked"
 		} else if detail.RetryAt > now.Unix() {
 			detail.Reason = "login_throttled"
-		} else if detail.Reason == "invalid_password" || detail.Reason == "invalid_mfa" {
+		} else if detail.Reason == "invalid_password" || detail.Reason == "invalid_mfa" || detail.Reason == "invalid_passkey" || detail.Reason == "invalid_enrollment_code" {
 			next := detail.FailedAttempts + 1
 			retryAt := int64(0)
 			if delay := LoginFailureDelay(next); delay > 0 {

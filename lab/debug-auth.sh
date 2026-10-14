@@ -5,10 +5,8 @@ MODE="${1:-}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 STACK="${STACK:-awsportal-lab}"
 
-if [[ "$MODE" != "on" && "$MODE" != "off" ]]; then
-  echo "Usage: $0 on|off"
-  echo "  off = MFA不要のlabdebugを有効化"
-  echo "  on  = labdebugを無効化"
+if [[ "$MODE" != "enable" && "$MODE" != "disable" ]]; then
+  echo "Usage: $0 enable|disable (labdebug uses password+TOTP; no bypass)"
   exit 2
 fi
 
@@ -23,12 +21,12 @@ if [[ -z "$PORTAL_ID" || "$PORTAL_ID" == "None" ]]; then
   exit 1
 fi
 
-if [[ "$MODE" == "off" ]]; then
+if [[ "$MODE" == "enable" ]]; then
   SQL="UPDATE users SET enabled=1, role='portal_admin' WHERE username='labdebug';"
-  echo "MFAなしPortal Adminデバッグログインを有効化します"
+  echo "password＋TOTPのラボ管理者を有効化します"
 else
   SQL="UPDATE users SET enabled=0 WHERE username='labdebug';"
-  echo "MFAなしデバッグログインを無効化します"
+  echo "ラボ管理者を無効化します"
 fi
 
 CMD_ID="$(aws ssm send-command \
@@ -51,24 +49,4 @@ aws ssm get-command-invocation \
   --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' \
   --output table
 
-echo
-if [[ "$MODE" == "off" ]]; then
-  echo "DEBUG AUTH: OFF (labdebug有効 / portal_admin / MFA不要)"
-  echo
-  echo "=== Debug login ==="
-
-  LOGIN_CMD_ID="$(aws ssm send-command \
-    --region "$REGION" \
-    --instance-ids "$PORTAL_ID" \
-    --document-name AWS-RunShellScript \
-    --parameters '{"commands":["sudo grep ^debug_ /var/lib/awsportal/lab-login.txt"]}' \
-    --query 'Command.CommandId' \
-    --output text)"
-  aws ssm wait command-executed --region "$REGION" --command-id "$LOGIN_CMD_ID" --instance-id "$PORTAL_ID"
-  aws ssm get-command-invocation \
-    --region "$REGION" --command-id "$LOGIN_CMD_ID" --instance-id "$PORTAL_ID" \
-    --query 'StandardOutputContent' --output text
-  echo "username: labdebug"
-else
-  echo "DEBUG AUTH: ON (labdebug無効 / Portal Admin MFA必須)"
-fi
+echo "Lab debug account: $MODE (password+TOTP required; credentials from lab creation)"

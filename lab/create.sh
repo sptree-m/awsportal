@@ -4,7 +4,7 @@ STACK="${STACK:-awsportal-lab}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-1}}"
 umask 077
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v1.9.2/awsportal-v1.9.2-linux-arm64.tar.gz}"
+BINARY_URL="${BINARY_URL:-https://github.com/sptree-m/awsportal/releases/download/v2.0.0/awsportal-v2.0.0-linux-arm64.tar.gz}"
 fail(){ rc=$?; echo; echo "RESULT: FAIL - create/verification failed (exit=$rc)"; exit "$rc"; }
 trap fail ERR
 
@@ -18,6 +18,7 @@ echo "[OK] AWS credentials"
 CIDR="${ALLOWED_CIDR:-0.0.0.0/0}"
 echo "[2/6] Browser CIDR: $CIDR"
 TYPE="${INSTANCE_TYPE:-t4g.micro}"
+PORTAL_HOST="${LAB_PORTAL_HOST:-portal.awsportal.test}"
 ARCH="$(aws ec2 describe-instance-types --region "$REGION" --instance-types "$TYPE" --query 'InstanceTypes[0].ProcessorInfo.SupportedArchitectures' --output text)"
 grep -qw arm64 <<<"$ARCH"
 echo "[3/6] Instance type: $TYPE (ARM64 verified)"
@@ -26,7 +27,7 @@ PASS="Lab-$(openssl rand -hex 12)-A1!"
 TOTP="$(openssl rand 20 | base32 | tr -d '=\n')"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 7 -subj '/CN=awsportal-lab-internal' -addext 'subjectAltName=IP:10.77.0.10' -keyout "$WORK/server.key" -out "$WORK/server.pem" >/dev/null 2>&1
+openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 7 -subj '/CN=awsportal-lab-internal' -addext "subjectAltName=IP:10.77.0.10,DNS:$PORTAL_HOST" -keyout "$WORK/server.key" -out "$WORK/server.pem" >/dev/null 2>&1
 LAB_CERT="$(base64 -w0 "$WORK/server.pem")"
 LAB_KEY="$(base64 -w0 "$WORK/server.key")"
 AGENT_TOKEN="$(openssl rand -hex 32)"
@@ -36,13 +37,15 @@ EXISTING="$(aws cloudformation list-stacks --region "$REGION" --query "length(St
   exit 1
 }
 echo "[4/6] Deploying $STACK"
-aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE" BinaryURL="$BINARY_URL" DCVPort="${AWSPORTAL_DCV_PORT:-8443}" DCVAgentToken="$AGENT_TOKEN" LabTLSCert="$LAB_CERT" LabTLSKey="$LAB_KEY"
+aws cloudformation deploy --region "$REGION" --stack-name "$STACK" --template-file "$HERE/cloudformation.yaml" --capabilities CAPABILITY_IAM --parameter-overrides AllowedCidr="$CIDR" LabPortalHost="$PORTAL_HOST" LabPassword="$PASS" LabTOTPSecret="$TOTP" InstanceType="$TYPE" BinaryURL="$BINARY_URL" DCVPort="${AWSPORTAL_DCV_PORT:-8443}" DCVAgentToken="$AGENT_TOKEN" LabTLSCert="$LAB_CERT" LabTLSKey="$LAB_KEY"
 
 PORTAL_ID="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`PortalInstanceId`].OutputValue' --output text)"
 TEST_ID="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`TestInstanceId`].OutputValue' --output text)"
 URL="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`PortalURL`].OutputValue' --output text)"
+PORTAL_IP="$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`PortalPublicIP`].OutputValue' --output text)"
 STATE_DIR="$HOME/.awsportal-lab/$REGION/$STACK"
 mkdir -p "$STATE_DIR"
+cp "$WORK/server.pem" "$STATE_DIR/portal-ca.pem"
 aws ec2 describe-instances --region "$REGION" --instance-ids "$PORTAL_ID" "$TEST_ID" --output json > "$STATE_DIR/instances-created.json"
 echo "[5/6] EC2 verification"
 aws ec2 wait instance-running --region "$REGION" --instance-ids "$PORTAL_ID" "$TEST_ID"
@@ -54,7 +57,7 @@ echo "[OK] Test EC2:   $TEST_ID / arm64 / running"
 echo "[6/6] Application health"
 HEALTH=""
 for attempt in $(seq 1 60); do
-  if [[ "$(curl -fsS --max-time 3 "$URL/healthz" 2>/dev/null || true)" == "ok" ]]; then HEALTH=ok; break; fi
+  if [[ "$(curl -fsS --max-time 3 --cacert "$STATE_DIR/portal-ca.pem" --resolve "$PORTAL_HOST:8080:$PORTAL_IP" "$URL/healthz" 2>/dev/null || true)" == "ok" ]]; then HEALTH=ok; break; fi
   echo "  waiting for /healthz... $((attempt * 5))s"
   sleep 5
 done
@@ -71,8 +74,10 @@ fi
 echo "[OK] /healthz: ok"
 
 echo "------------------------------------------------------------"
-echo "RESULT: PASS - ARM lab deployment and portal health verified; run lab/test-dcv.sh after enabling labdebug"
+echo "RESULT: PASS - ARM lab deployment and portal health verified; run lab/test-dcv.sh with the lab password+TOTP account"
 echo "Portal URL: $URL"
+echo "hosts: $PORTAL_IP $PORTAL_HOST"
+echo "Public lab CA: $STATE_DIR/portal-ca.pem (trust on test PCs before browser login)"
 echo "username=labadmin"
 echo "password=$PASS"
 echo "TOTP secret=$TOTP"

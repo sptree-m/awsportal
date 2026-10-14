@@ -61,7 +61,7 @@ server {
 }
 ```
 
-Portalは `AWSPORTAL_ADDR=127.0.0.1:8080` で内部待受とし、セキュアCookieの既定を維持する。nginxの構文確認・reload、管理端末から443への疎通を確認する。別ホストで終端する場合は、組織の承認経路とバックエンド通信の保護を別途設計する。
+Portalは `AWSPORTAL_ADDR=127.0.0.1:8080` で内部待受とし、セキュアCookieの既定を維持する。v2.0.0では `AWSPORTAL_WEBAUTHN_ORIGIN=https://portal.company.example` をsystemdのEnvironmentへ必ず設定する。URLの末尾スラッシュ・パスは付けない。ブラウザーで443以外を使用する場合はOriginにそのポートも含める。RP IDはホスト名で固定され、表示設定のPortal URLとは独立する。未設定／不正Originでは起動しない。nginxの構文確認・reload、管理端末から443への疎通を確認する。別ホストで終端する場合は、組織の承認経路とバックエンド通信の保護を別途設計する。
 
 [ログイン前の配布設定](../operations/site-customization.md#ログイン前の証明書配布とhosts設定)でca.crtとhosts対応表を用意する。hostsは利用端末から到達できるサーバーIPを指定する。サーバーが別のPC/EC2で動く場合、利用端末の127.0.0.1へ割り当てない。初回端末はまだ名前解決・CA信頼がないため、管理者が既存の信頼済み社内配布経路でZIPと別途フィンガープリントを渡す。準備済み端末ではログイン画面下から再取得できる。
 
@@ -71,13 +71,13 @@ Portal停止中、またはDB排他を考慮した保守時間に管理CLIを使
 
 ```sh
 ./awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user admin01 -password '十分に長い初期パスワード' -role portal_admin
-./awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user user01 -password '十分に長い初期パスワード' -role user
+./awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user user01 -role user
 ./awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance i-0123456789abcdef0 -name DEV-01 -host dev01.internal.example
 ./awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-group -group ADAS
 ./awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd assign-group -instance i-0123456789abcdef0 -group ADAS
 ```
 
-表示される管理者TOTP URIをAuthenticatorへ登録し、ログイン確認後に初期passwordを変更する。Userのgroup所属追加／除外、EC2の直接／group割り当てはPortal Adminの`/admin/instances`で管理する。[権限と無効化](../operations/instances.md)を参照。
+管理者作成時は表示されるTOTP URIをAuthenticatorへ登録し、password＋TOTPでログインする。初期passwordを必要に応じて変更し、ログイン後10分以内に「パスキー」でこのPCの鍵を登録する。User／Group Admin作成時は30分有効の登録コードが表示される。本人確認後にコードを配布し、利用者が `/passkeys/enroll` で端末固定型パスキーを登録してからログインする。一般ユーザーへのpassword配布は不要。[複数PC・復旧手順](../operations/passkeys.md)を参照。Userのgroup所属追加／除外、EC2の直接／group割り当てはPortal Adminの`/admin/instances`で管理する。[権限と無効化](../operations/instances.md)を参照。
 
 ## デスクトップ・受入
 
@@ -85,7 +85,7 @@ EC2をポータル外で新規作成する場合は[外部作成・種類選択�
 
 管理対象OSへ対応版DCVを導入し、[DCV手順](../operations/dcv.md)でAgent・外部認証・permissionを設定する。SSH／RDPはOSとSGで遮断し、外部認証はstagingで検証してから本番へ適用する。Personal／SharedとEFSは[環境運用](../operations/environments.md)の手順を併用する。
 
-一般Userは割り当て対象だけを表示・操作できること、起動／停止／schedule／DCVが動作すること、SSH／RDPと禁止転送が失敗することを確認する。管理者はTOTP必須、全EC2表示、許可された持ち出しと監査記録を確認する。監査S3・Shared自動増減・Windows Importは初期OFFで、対象環境で必要な受入を確認してから有効化する。
+一般Userは割り当て対象だけを表示・操作できること、起動／停止／schedule／DCVが動作すること、SSH／RDPと禁止転送が失敗することを確認する。一般User／Group Adminのpassword＋TOTPログイン拒否、UVなし／同期可能キーの拒否、複数PC登録、管理者リセットと旧セッション拒否を確認する。管理者はパスキーとpassword＋TOTPの両経路、全EC2表示、許可された持ち出しと監査記録を確認する。監査S3・Shared自動増減・Windows Importは初期OFFで、対象環境で必要な受入を確認してから有効化する。
 
 ## 64 IPの証明書・hosts生成支援
 
@@ -112,4 +112,4 @@ python3 generate-preparation.py --hosts hosts.json --out generated \
 
 ログイン画面でのZIP配布・端末適用は[配布手順](../operations/site-customization.md#ログイン前の証明書配布とhosts設定)を使う。IPの変更は台帳と配布設定を更新して再配布する。同じ名前・CAで証明書を更新する場合、通常は端末CAの再登録は不要。台帳から削除した名前は現行スクリプトが自動削除しないため、管理者が確認して整理する。
 
-将来のパスキー対応に備え、Portalは組織の管理ドメイン配下の固定HTTPS名を使い、WebAuthnのRP IDと許可Originをその名前に合わせる。64個の接続先名すべてを認証元にする必要はない。パスキー認証自体は未実装。
+v2.0.0のパスキー用に、Portalは組織の管理ドメイン配下の固定HTTPS名を使い、`AWSPORTAL_WEBAUTHN_ORIGIN`をそのOriginへ設定する。RP IDはPortalのホスト名。64個の接続先名すべてを認証元にする必要はない。証明書・hosts配布とは別に、本人確認後のパスキー登録コードを発行する。

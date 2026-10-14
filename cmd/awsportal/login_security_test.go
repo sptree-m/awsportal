@@ -32,7 +32,7 @@ func TestLoginDelayRejectsCorrectCredentialsAndLogsDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = a.db.CreateUser(ctx, "alice", hash, "user", ""); err != nil {
+	if err = a.db.CreateUser(ctx, "alice", hash, "portal_admin", "JBSWY3DPEHPK3PXP"); err != nil {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 4; i++ {
@@ -45,7 +45,7 @@ func TestLoginDelayRejectsCorrectCredentialsAndLogsDetails(t *testing.T) {
 			t.Fatalf("attempt %d: %d %s", i, w.Code, w.Body.String())
 		}
 	}
-	w := securityLogin(a, "alice", "Good-Password-42", "")
+	w := securityLogin(a, "alice", "Good-Password-42", validSecurityTOTP(t))
 	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" || len(a.sessions) != 0 {
 		t.Fatalf("correct credentials bypassed cooldown: %d", w.Code)
 	}
@@ -67,7 +67,7 @@ func TestLoginDelayRejectsCorrectCredentialsAndLogsDetails(t *testing.T) {
 	if _, err = a.db.DB.ExecContext(ctx, `UPDATE users SET login_retry_at=? WHERE id=?`, time.Now().Unix(), u.ID); err != nil {
 		t.Fatal(err)
 	}
-	w = securityLogin(a, "alice", "Good-Password-42", "")
+	w = securityLogin(a, "alice", "Good-Password-42", validSecurityTOTP(t))
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("login after cooldown failed: %d %s", w.Code, w.Body.String())
 	}
@@ -81,8 +81,8 @@ func TestFinalLockRevokesSessionsAndAdminUnlocks(t *testing.T) {
 	a, _ := newHandlerTestApp(t)
 	ctx := context.Background()
 	hash, _ := auth.HashPassword("Good-Password-42")
-	for _, pair := range [][2]string{{"alice", "user"}, {"admin", "portal_admin"}, {"group", "group_admin"}} {
-		if err := a.db.CreateUser(ctx, pair[0], hash, pair[1], ""); err != nil {
+	for _, pair := range [][2]string{{"alice", "portal_admin"}, {"admin", "portal_admin"}, {"group", "group_admin"}} {
+		if err := a.db.CreateUser(ctx, pair[0], hash, pair[1], "JBSWY3DPEHPK3PXP"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -102,7 +102,7 @@ func TestFinalLockRevokesSessionsAndAdminUnlocks(t *testing.T) {
 	if u.LockedAt == 0 || u.FailedLoginAttempts != 10 {
 		t.Fatalf("not permanently locked: %+v", u)
 	}
-	if w = securityLogin(a, "alice", "Good-Password-42", ""); w.Code != http.StatusUnauthorized {
+	if w = securityLogin(a, "alice", "Good-Password-42", validSecurityTOTP(t)); w.Code != http.StatusUnauthorized {
 		t.Fatal("locked account authenticated")
 	}
 	group, _ := a.db.UserByName(ctx, "group")
@@ -129,7 +129,7 @@ func TestFinalLockRevokesSessionsAndAdminUnlocks(t *testing.T) {
 	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login" {
 		t.Fatal("old session revived after unlock")
 	}
-	if w = securityLogin(a, "alice", "Good-Password-42", ""); w.Code != http.StatusSeeOther {
+	if w = securityLogin(a, "alice", "Good-Password-42", validSecurityTOTP(t)); w.Code != http.StatusSeeOther {
 		t.Fatalf("fresh login after unlock failed: %d", w.Code)
 	}
 }
@@ -175,4 +175,13 @@ func TestLoginMFAErrorsAndInactiveAccountsAreAudited(t *testing.T) {
 	if err := json.Unmarshal([]byte(entries[0].Detail), &d); err != nil || d.Reason != "authentication_error" {
 		t.Fatalf("storage error misreported: %+v %v", d, err)
 	}
+}
+
+func validSecurityTOTP(t *testing.T) string {
+	t.Helper()
+	code, err := auth.TOTPAt("JBSWY3DPEHPK3PXP", time.Now(), 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code
 }
