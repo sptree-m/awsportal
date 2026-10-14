@@ -137,8 +137,8 @@ func (s *Store) issuePasskeyInvite(ctx context.Context, admin *User, username, r
 		if _, err = tx.ExecContext(ctx, `DELETE FROM passkeys WHERE user_id=?`, uid); err != nil {
 			return err
 		}
-		// Pending DCV tokens must not survive a credential reset.
-		if _, err = tx.ExecContext(ctx, `DELETE FROM dcv_tokens WHERE user_id=? AND used_at IS NULL`, uid); err != nil {
+		// All dedicated credentials must be reissued after a security reset.
+		if err = revokeCredentialsTx(ctx, tx, uid); err != nil {
 			return err
 		}
 	}
@@ -179,8 +179,23 @@ func (s *Store) SavePasskeyChallenge(ctx context.Context, token string, uid int6
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(user_id=?),0) FROM passkey_challenges`, uid).Scan(&total, &perUser); err != nil {
 		return err
 	}
-	if total >= 4096 || perUser >= 16 {
+	if total >= 4096 {
 		return fmt.Errorf("too many outstanding authentication attempts")
+	}
+	if perUser >= 16 {
+		// Public login starts cannot reserve every account slot for two minutes.
+		// Rotate the oldest login challenge; never evict a registration grant.
+		res, err := tx.ExecContext(ctx, `DELETE FROM passkey_challenges WHERE token_hash=(SELECT token_hash FROM passkey_challenges WHERE user_id=? AND purpose='login' ORDER BY expires_at, rowid LIMIT 1)`, uid)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("too many outstanding registration attempts")
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO passkey_challenges VALUES(?,?,?,?,?)`, tokenHash(token), uid, purpose, payload, now.Add(2*time.Minute).Unix()); err != nil {
 		return err

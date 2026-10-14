@@ -1,4 +1,7 @@
 (()=>{"use strict";
+const csrf=()=>document.querySelector('meta[name="csrf-token"]')?.content||"";
+document.addEventListener("submit",e=>{const form=e.target;if(form.method.toLowerCase()!=="post")return;let field=form.querySelector('input[name="csrf"]');if(!field){field=document.createElement("input");field.type="hidden";field.name="csrf";form.append(field)}field.value=csrf()},true);
+document.addEventListener("htmx:configRequest",e=>{e.detail.headers["X-CSRF-Token"]=csrf()});
 // Document listeners survive boosted navigation and resolve the current controls.
 function filterRows(){const q=(document.getElementById("instance-filter")?.value||"").toLowerCase(),s=document.getElementById("state-filter")?.value||"";let visible=0;const rows=document.querySelectorAll("tr[data-instance]");rows.forEach(row=>{row.hidden=!!((q&&!row.dataset.search.toLowerCase().includes(q))||(s&&row.dataset.state!==s));if(!row.hidden)visible++});const count=document.getElementById("instance-count");if(count)count.textContent=`${visible} / ${rows.length} instances`;const empty=document.getElementById("instance-empty");if(empty)empty.hidden=visible>0}
 function notice(message){let box=document.getElementById("request-notice");if(!box){box=document.createElement("div");box.id="request-notice";box.setAttribute("role","alert");document.body.append(box)}box.textContent=message;box.hidden=false}

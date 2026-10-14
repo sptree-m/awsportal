@@ -42,22 +42,28 @@ func TOTPURI(secret, issuer, account string) string {
 }
 
 func VerifyTOTP(secret, code string) bool {
+	_, ok := MatchTOTP(secret, code, time.Now())
+	return ok
+}
+
+// MatchTOTP returns the verified time step so callers can atomically consume it.
+func MatchTOTP(secret, code string, at time.Time) (int64, bool) {
 	if len(code) != 6 {
-		return false
+		return 0, false
 	}
 	for _, r := range code {
 		if r < '0' || r > '9' {
-			return false
+			return 0, false
 		}
 	}
-	now := time.Now().Unix() / 30
+	now := at.Unix() / 30
 	for d := int64(-1); d <= 1; d++ {
 		v, e := totpAtCounter(secret, uint64(now+d), 6)
 		if e == nil && hmac.Equal([]byte(v), []byte(code)) {
-			return true
+			return now + d, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 func TOTPAt(secret string, t time.Time, digits int) (string, error) {

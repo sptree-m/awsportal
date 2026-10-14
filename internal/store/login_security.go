@@ -96,6 +96,12 @@ func (s *Store) RecordLoginFailure(ctx context.Context, username string, detail 
 		return detail, err
 	}
 	if before == 0 && detail.LockedAt != 0 {
+		if _, err = tx.ExecContext(ctx, `UPDATE users SET auth_generation=auth_generation+1 WHERE id=?`, id); err != nil {
+			return detail, err
+		}
+		if err = revokeCredentialsTx(ctx, tx, id); err != nil {
+			return detail, err
+		}
 		if err = insertLoginAudit(ctx, tx, actor, "account.lock", actor, "ok", detail, now); err != nil {
 			return detail, err
 		}

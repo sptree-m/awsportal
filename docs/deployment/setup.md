@@ -76,7 +76,8 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     location / {
         proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header Authorization $http_authorization;
     }
@@ -148,3 +149,9 @@ python3 generate-preparation.py --hosts hosts.json --out generated \
 ログイン画面でのZIP配布・端末適用は[配布手順](../operations/site-customization.md#ログイン前の証明書配布とhosts設定)を使う。IPの変更は台帳と配布設定を更新して再配布する。同じ名前・CAで証明書を更新する場合、通常は端末CAの再登録は不要。台帳から削除した名前は現行スクリプトが自動削除しないため、管理者が確認して整理する。
 
 v2.0.0のパスキー用に、Portalは組織の管理ドメイン配下の固定HTTPS名を使い、`AWSPORTAL_WEBAUTHN_ORIGIN`をそのOriginへ設定する。RP IDはPortalのホスト名。64個の接続先名すべてを認証元にする必要はない。証明書・hosts配布とは別に、本人確認後のパスキー登録コードを発行する。
+
+## v2.1.0の防御設定と更新
+
+[更新・鍵管理・切り戻し手順](../releases/v2.1.0.md)に従う。TOTP秘密情報は別鍵で暗号化される。`AWSPORTAL_TOTP_KEY_FILE`未指定ではDBに`.totp-key`を付けた所有者限定ファイルを生成し、Portalと管理CLIで共有する。DBとは別の安全な場所へ鍵もバックアップする。systemdは`UMask=0077`、DBディレクトリは専用ユーザー所有0700とする。
+
+nginxのlocationでは`proxy_set_header X-Real-IP $remote_addr;`で接続元を上書きする。別ホストのプロキシを使う場合だけ、`AWSPORTAL_TRUSTED_PROXY_CIDRS`へそのプロキシの限定CIDRを設定する。単体HTTPSでは送信元のヘッダーを信用せず、接続元IPを使う。

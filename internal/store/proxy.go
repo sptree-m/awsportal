@@ -243,7 +243,7 @@ func (s *Store) IssueProxyCredential(ctx context.Context, uid int64, label strin
 }
 func (s *Store) ProxyUser(ctx context.Context, username, token string) (User, error) {
 	u, e := s.UserByName(ctx, username)
-	if e != nil || !u.Enabled || u.MustChangePassword || s.AccountExpired(u, time.Now()) {
+	if e != nil || !u.Enabled || u.LockedAt != 0 || u.MustChangePassword || s.AccountExpired(u, time.Now()) {
 		return User{}, fmt.Errorf("account denied")
 	}
 	var n int

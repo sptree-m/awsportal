@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -90,13 +91,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		reason = "passkey_required"
 	case !auth.CheckPassword(u.PasswordHash, r.PostFormValue("password")):
 		reason = "invalid_password"
-	default:
-		valid, mfaErr := a.checkLoginMFA(r.Context(), u, r.PostFormValue("totp"))
-		if mfaErr != nil {
-			reason = "authentication_error"
-		} else if !valid {
-			reason = "invalid_mfa"
-		}
+
 	}
 	if reason != "" {
 		a.loginFailure(w, r, username, reason)
@@ -110,17 +105,23 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	token := base64.RawURLEncoding.EncodeToString(b)
 	// Coordinate session creation with lock-triggered session revocation.
 	a.mu.Lock()
-	err = a.db.RecordLogin(r.Context(), u.ID, time.Now())
-	if err == nil {
-		a.sessions[token] = session{User: u, Expires: time.Now().Add(8 * time.Hour), AuthenticatedAt: time.Now(), Method: "password_totp"}
+	valid, loginErr := a.db.RecordPasswordLogin(r.Context(), u, r.PostFormValue("totp"), time.Now())
+	err = loginErr
+	if err == nil && valid {
+		if !a.putSessionLocked(token, session{User: u, Expires: time.Now().Add(8 * time.Hour), AuthenticatedAt: time.Now(), Method: "password_totp"}) {
+			err = fmt.Errorf("session capacity reached")
+		}
 	}
 	a.mu.Unlock()
+	if err == nil && !valid {
+		a.loginFailure(w, r, username, "invalid_mfa")
+		return
+	}
 	if err != nil {
-		a.loginFailure(w, r, username, "account_state_changed")
+		a.loginFailure(w, r, username, "authentication_error")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "awsportal_session", Value: token, Path: "/", HttpOnly: true, Secure: env("AWSPORTAL_COOKIE_SECURE", "1") == "1", SameSite: http.SameSiteStrictMode, MaxAge: 28800})
-	a.db.Audit(r.Context(), u.Username, "login", "", "ok", "")
 	if u.MustChangePassword {
 		http.Redirect(w, r, "/change-password", http.StatusSeeOther)
 		return

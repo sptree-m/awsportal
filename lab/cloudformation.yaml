@@ -185,6 +185,7 @@ Resources:
               After=network-online.target
               [Service]
               User=awsportal
+              UMask=0077
               WorkingDirectory=/var/lib/awsportal
               Environment=AWSPORTAL_DB=/var/lib/awsportal/awsportal.db
               Environment=AWSPORTAL_ADDR=127.0.0.1:8081
@@ -215,7 +216,8 @@ Resources:
                 ssl_protocols TLSv1.2 TLSv1.3;
                 location / {
                   proxy_pass http://127.0.0.1:8081;
-                  proxy_set_header Host $host;
+                  proxy_set_header Host $http_host;
+                  proxy_set_header X-Real-IP $remote_addr;
                 }
               }
               server {

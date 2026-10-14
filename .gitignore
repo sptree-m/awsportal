@@ -1,0 +1,7 @@
+/dist/
+*.db
+*.db-wal
+*.db-shm
+*.totp-key
+__pycache__/
+.terraform/

@@ -101,6 +101,7 @@ func passkeyRequest(a *app, handler http.HandlerFunc, path string, body []byte, 
 	for _, c := range cookies {
 		r.AddCookie(c)
 	}
+	r.Header.Set("X-CSRF-Token", passkeyCSRF(r))
 	w := httptest.NewRecorder()
 	handler(w, r)
 	return w

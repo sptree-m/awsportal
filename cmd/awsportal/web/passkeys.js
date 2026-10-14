@@ -4,7 +4,7 @@ const encode=b=>b==null?null:btoa(String.fromCharCode(...new Uint8Array(b))).rep
 async function request(path,data){
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),20000);
  try{
-  const response=await fetch(path,{method:'POST',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  const response=await fetch(path,{method:'POST',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json','X-CSRF-Token':document.querySelector('meta[name="csrf-token"]')?.content||''},body:JSON.stringify(data)});
   if(response.redirected){location.assign(response.url);throw new Error('ログインし直してください');}
   if(!response.ok)throw new Error(await response.text());
   return await response.json();
