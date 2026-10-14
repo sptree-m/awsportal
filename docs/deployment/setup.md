@@ -4,7 +4,7 @@
 
 ## 準備と配布
 
-Terraform 1.7以上、Go 1.23以上、ARM64 AMI、Private Subnet、社内／VPN CIDR、内部DNS、管理端末が信頼する社内PKI証明書を準備する。
+Terraform 1.7以上、Go 1.27.2、ARM64 AMI、Private Subnet、社内／VPN CIDR、内部DNS、管理端末が信頼する社内PKI証明書を準備する。Goの基準版は`go.mod`の`go`行を正とし、開発・CI・リリースビルドで揃える。
 
 開発する場合は`./scripts/setup-dev.sh`でコミット前hookを有効化し、[テスト方針](../development/testing.md)に従う。ARM64制約試験は`./scripts/test-t4g-micro.sh`、実t4g.microでは4 GiB swapも確認する。
 
