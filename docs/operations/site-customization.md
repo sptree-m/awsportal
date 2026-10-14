@@ -22,13 +22,15 @@ Portal Adminには `/manual` の目次と本文に次の手順を表示する。
 
 ## ログイン前の証明書配布とhosts設定
 
+64個のIPを含む台帳・証明書の生成は[管理者生成手順と支援ツール](../deployment/setup.md#64-ipの証明書hosts生成支援)を使う。管理者ポータルの `/manual#admin-preparation-guide` にも手順とツール取得リンクを掲載する。利用者向け配布はログイン画面で行う。
+
 ログイン画面のフォーム下に「事前準備：証明書・hosts設定」を表示する。設定済みなら公開CA証明書と端末準備ZIPをログイン前に取得できる。ZIPには `ca.crt`、接続先とCA SHA256を記録した `client-setup.json`、Windows用 `setup-windows.ps1`、macOS/Linux用 `setup-unix.py`、READMEを含む。秘密鍵やログイン資格情報は配布しない。未設定なら管理者への案内だけを表示する。
 
 ### 管理者の配布設定
 
 1. HTTPSリバースプロキシとSAN付きサーバー証明書を[構築手順](../deployment/setup.md#ローカルhttpsと初回端末準備)に従って用意する。ここで配布するのはサーバー証明書を発行した公開CAで、サーバー秘密鍵は別管理。
 2. 公開CAをPortalホストの `/etc/awsportal/client-preparation/ca.crt` に配置する。有効期間内のCA証明書1枚をPEMで保存する。秘密鍵・複数証明書・余分なPEMは起動時に拒否する。
-3. `/etc/awsportal/client-preparation/hosts.json` に、利用端末から到達可能な接続先を1〜32件記録する。次のIP/名前は例示。実IP、サーバー証明書のSANと一致する実ホスト名へ置き換える。Portal、Proxy、必要ならDCVホストを含める。端末上でサーバーが稼働するときだけ127.0.0.1等を指定する。
+3. `/etc/awsportal/client-preparation/hosts.json` に、利用端末から到達可能な接続先を1〜128件記録する。次のIP/名前は例示。実IP、サーバー証明書のSANと一致する実ホスト名へ置き換える。Portal、Proxy、必要ならDCVホストを含める。端末上でサーバーが稼働するときだけ127.0.0.1等を指定する。
 
    ```json
    {"hosts":[{"name":"portal.company.example","ip":"192.0.2.10"},{"name":"proxy.company.example","ip":"192.0.2.11"}]}

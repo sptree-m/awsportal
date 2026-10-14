@@ -106,7 +106,7 @@ func TestManualAdminGuidesRespectCurrentRole(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, anchor := range []string{"admin-provision-guide", "admin-golden-guide"} {
+		for _, anchor := range []string{"admin-provision-guide", "admin-golden-guide", "admin-preparation-guide"} {
 			w := httptest.NewRecorder()
 			a.require(a.manualPage)(w, requestAs(a, u, "GET", "/manual#"+anchor, nil))
 			body := w.Body.String()

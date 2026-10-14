@@ -2,7 +2,7 @@
 <div class="manual-content">
 <p class="muted admin-help">利用者EC2で通信とコード取得を準備するための手順です。プロキシとGitミラーは別の接続先・専用トークンを使います。</p>
 {{if .Site.HelpMessage}}<section class="panel"><h2>利用前の確認・問い合わせ</h2><p class="site-message">{{.Site.HelpMessage}}</p></section>{{end}}
-<div class="manual-index"><a class="btn" href="#proxy-guide">プロキシ設定</a><a class="btn" href="#git-guide">Gitミラー</a><a class="btn" href="#troubleshooting">困ったとき</a>{{if eq .User.Role "portal_admin"}}<a class="btn" href="#admin-provision-guide">管理者マニュアル：EC2作成</a><a class="btn" href="#admin-golden-guide">Golden AMI導入・配布</a>{{end}}</div>
+<div class="manual-index"><a class="btn" href="#proxy-guide">プロキシ設定</a><a class="btn" href="#git-guide">Gitミラー</a><a class="btn" href="#troubleshooting">困ったとき</a>{{if eq .User.Role "portal_admin"}}<a class="btn" href="#admin-provision-guide">管理者マニュアル：EC2作成</a><a class="btn" href="#admin-golden-guide">Golden AMI導入・配布</a><a class="btn" href="#admin-preparation-guide">証明書生成・64 IPのhosts配布</a>{{end}}</div>
 <section class="panel" id="proxy-guide"><p class="eyebrow">01 / NETWORK</p><h2>プロキシの設定方法</h2>
 <p>許可された外部サイトへは、管理者が用意したHTTPSプロキシを経由します。PortalのログインパスワードやMFAコードをツールへ保存する必要はありません。</p>
 <ol><li>管理者からプロキシ接続先、社内CA証明書、プロキシ用ユーザー名と専用トークンを受け取ります。専用トークンは1〜90日で失効します。</li><li>HTTPSプロキシ対応のcurlを準備します。接続先のCAとプロキシのCAを信頼できるように設定します。</li><li>下記のコマンドで、管理者が許可した接続先への通信を確認します。トークン入力は画面に表示されません。</li></ol>
@@ -86,6 +86,36 @@ fi
 <dt>コードの更新に失敗</dt><dd>ブランチ名、originのミラーURL、作業ツリーの変更を確認してください。クライアントはファイルを強制上書きしません。</dd></dl>
 </section>
 {{if eq .User.Role "portal_admin"}}
+<section class="panel" id="admin-preparation-guide"><p class="eyebrow">ADMIN / CERTIFICATES &amp; HOSTS</p><h2>証明書生成と64 IPのhosts配布</h2>
+<p>利用者への公開CA・hosts登録スクリプトの配布場所はログイン画面です。この管理者手順と支援ツールで配布物を準備します。64個のIPに対応するホスト名を台帳へ登録し、追加の別名を含め最大128件まで扱えます。</p>
+<p><a class="btn" href="/admin/preparation/generate-preparation.py" download="generate-preparation.py" hx-boost="false">管理者用の生成支援ツールをダウンロード</a></p>
+<details open><summary>1. ホスト名・IPとCAを準備する</summary><p>Python 3とOpenSSLを備えた管理者専用Linux/macOS環境で実行します。社内の管理ドメイン配下でPortal、Proxy、DCV等の名前を固定し、実際に利用する64 IPと対応付けます。IPの連番やCIDRから未承認の接続先を自動追加しません。hosts.jsonは次の形式で全接続先を記載します。名前は重複不可、同じIPの別名は登録可能です。</p>
+<pre class="manual-code"><code>{"hosts":[
+  {"name":"portal.company.example","ip":"192.0.2.10"},
+  {"name":"dcv01.company.example","ip":"192.0.2.11"}
+]}</code></pre>
+<p>例示の値は実ホスト名・IPに置き換えてください。社内CAがある場合はその発行手順を使います。独立した検証用CAを作る場合は管理者専用ディレクトリで次を実行し、CA秘密鍵を発行環境に保持します。</p>
+<pre class="manual-code"><code>umask 077
+openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
+  -keyout ca.key -out ca.crt -subj '/CN=awsportal local CA' \
+  -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign'</code></pre></details>
+<details open><summary>2. hosts設定・CSR・サーバー証明書を生成する</summary><p>社内PKIへ申請する場合はCSR生成を使います。ツールはhosts台帳を検証し、ホストごとのRSA秘密鍵とDNS SAN付きCSR、署名用拡張設定を作ります。社内CAへserver.csrを申請し、同じDNS SAN・serverAuth付きの証明書を取得します。</p>
+<pre class="manual-code"><code>python3 generate-preparation.py --hosts hosts.json --out generated-csr</code></pre>
+<p>ローカル発行用CAの利用が許可されている場合は署名まで一括実行できます。CAは365日以上有効なものが必要です。暗号化CA鍵のパスフレーズはOpenSSLの対話入力を使い、コマンドや台帳には記載しません。</p>
+<pre class="manual-code"><code>python3 generate-preparation.py --hosts hosts.json --out generated \
+  --ca-cert /secure/ca.crt --ca-key /secure/ca.key</code></pre>
+<p>出力はhosts.jsonと、ホスト名ごとのserver.key・server.csr・server.ext・署名時のserver.crtです。証明書は365日、ホストごとに別鍵・別シリアル番号です。既存出力は上書きしません。途中失敗時は管理者が出力を確認し、新しい出力先で再実行します。サーバー証明書・秘密鍵を対象のHTTPS終端やDCVへ個別配置し、構文確認・reloadと接続を検証してください。ツールはサーバー設定やAWSを変更しません。</p></details>
+<details open><summary>3. ログイン画面へ配布を設定する</summary><ol>
+<li>Portalホストの <code>/etc/awsportal/client-preparation/</code> に、公開CAの <code>ca.crt</code> と生成済み <code>hosts.json</code> だけを配置します。生成ディレクトリ全体や秘密鍵をアップロードしないでください。</li>
+<li>Portalのsystemd設定で次の2変数を指定し、設定変更後にdaemon-reloadとPortal再起動を行います。</li>
+</ol><pre class="manual-code"><code>Environment=AWSPORTAL_PREPARATION_CA_FILE=/etc/awsportal/client-preparation/ca.crt
+Environment=AWSPORTAL_PREPARATION_HOSTS_FILE=/etc/awsportal/client-preparation/hosts.json</code></pre>
+<p><a href="/login" hx-boost="false">ログイン画面</a>の「事前準備：証明書・hosts設定」から公開CAと端末準備ZIPを配布します。ZIPには公開CA、全件のhosts対応表、WindowsとmacOS/Linuxの適用スクリプトが入ります。生成ツールや秘密鍵は含めません。CAフィンガープリントは別の管理経路でも通知します。</p>
+<p>初回端末がPortalの名前解決・CA信頼をまだ持たない場合は、既存の信頼済み社内配布経路で同じZIPを渡します。端末側は既定プレビューで確認し、管理者権限で適用してからブラウザーを再起動します。ブラウザーだけでhosts・信頼ストアを変更することはできません。</p></details>
+<details><summary>4. 更新・復旧と将来のパスキー</summary><p>IP変更時は同じ台帳を更新し、Portalを再起動して新しいZIPをログイン画面で配布します。端末で再適用すると指定した名前を更新し、他のhosts別名を保持してバックアップを作ります。台帳から削除した名前は自動削除されないため、管理者がバックアップと管理対象を照合して削除します。</p><p>サーバー証明書の更新は同じ名前で新しい出力先を生成して再配置します。同じCAでの更新なら通常は端末のCA再登録は不要です。CA交代時は新CAを端末へ先行配布し、移行後に旧CAをフィンガープリントで特定して削除します。現行配布設定はCA1枚です。</p><p>パスキーは将来対応です。PortalのHTTPSホスト名を固定し、将来のWebAuthnのRP IDと許可Originを合わせます。64件すべてを認証元にする必要はありません。証明書・hosts設定だけではパスキーは有効になりません。</p></details>
+<p class="muted">詳細・初回導入：<code>docs/deployment/setup.md</code>、配布・端末適用・復旧：<code>docs/operations/site-customization.md</code>。</p>
+</section>
 <section class="panel" id="admin-provision-guide"><p class="eyebrow">ADMIN / COMPUTE</p><h2>管理者マニュアル：EC2作成と起動時の種類選択</h2>
 <p>登録済みEC2の起動・停止と、承認済み構成からのShared自動作成は実装済みです。任意Personal EC2の作成、利用者が起動ごとにインスタンスタイプを選ぶ画面、既存EC2の種類変更は未実装です。Golden AMIを登録しても、これらの機能は有効になりません。</p>
 <details open><summary>ポータル外で作成して登録する</summary><ol>

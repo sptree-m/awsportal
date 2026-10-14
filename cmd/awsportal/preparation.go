@@ -17,10 +17,27 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/sptree-m/awsportal/internal/store"
 )
 
-//go:embed preparation/*
+//go:embed preparation/README.txt preparation/setup-unix.py preparation/setup-windows.ps1
 var preparationFiles embed.FS
+
+//go:embed adminsupport/generate-preparation.py
+var preparationGenerator []byte
+
+func (a *app) preparationGeneratorDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Value("user").(store.User).Role != "portal_admin" {
+		http.Error(w, "管理者のみ実行できます", http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Type", "text/x-python; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="generate-preparation.py"`)
+	w.Write(preparationGenerator)
+}
 
 type preparationHost struct {
 	Name string `json:"name"`
@@ -62,7 +79,7 @@ func loadClientPreparation(caPath, hostsPath string) (*clientPreparation, error)
 	if err != nil {
 		return nil, fmt.Errorf("read preparation hosts: %w", err)
 	}
-	if len(raw) > 16<<10 {
+	if len(raw) > 64<<10 {
 		return nil, fmt.Errorf("preparation hosts file too large")
 	}
 	p := &clientPreparation{certificate: pem.EncodeToMemory(block)}
@@ -77,8 +94,8 @@ func loadClientPreparation(caPath, hostsPath string) (*clientPreparation, error)
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("preparation hosts must be one JSON document")
 	}
-	if len(settings.Hosts) == 0 || len(settings.Hosts) > 32 {
-		return nil, fmt.Errorf("preparation hosts requires 1 to 32 entries")
+	if len(settings.Hosts) == 0 || len(settings.Hosts) > 128 {
+		return nil, fmt.Errorf("preparation hosts requires 1 to 128 entries")
 	}
 	seen := map[string]bool{}
 	for _, h := range settings.Hosts {

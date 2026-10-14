@@ -124,6 +124,7 @@ func TestBrowserConsole(t *testing.T) {
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
 	mux.HandleFunc("POST /admin/users/{username}/unlock", a.require(a.adminUnlockUser))
 	mux.HandleFunc("GET /manual", a.require(a.manualPage))
+	mux.HandleFunc("GET /admin/preparation/generate-preparation.py", a.require(a.preparationGeneratorDownload))
 	mux.HandleFunc("GET /admin/site", a.require(a.siteAdminPage))
 	mux.HandleFunc("POST /admin/site", a.require(a.siteAdminChange))
 	mux.HandleFunc("GET /mirrors", a.require(a.mirrorPage))

@@ -86,3 +86,30 @@ EC2をポータル外で新規作成する場合は[外部作成・種類選択�
 管理対象OSへ対応版DCVを導入し、[DCV手順](../operations/dcv.md)でAgent・外部認証・permissionを設定する。SSH／RDPはOSとSGで遮断し、外部認証はstagingで検証してから本番へ適用する。Personal／SharedとEFSは[環境運用](../operations/environments.md)の手順を併用する。
 
 一般Userは割り当て対象だけを表示・操作できること、起動／停止／schedule／DCVが動作すること、SSH／RDPと禁止転送が失敗することを確認する。管理者はTOTP必須、全EC2表示、許可された持ち出しと監査記録を確認する。監査S3・Shared自動増減・Windows Importは初期OFFで、対象環境で必要な受入を確認してから有効化する。
+
+## 64 IPの証明書・hosts生成支援
+
+Portal Adminで `/manual#admin-preparation-guide` を開くと、CA準備、台帳、生成、ログイン画面への配布設定、更新・復旧を一緒に確認できる。表示設定画面からも同手順へ移動できる。管理者だけが `/admin/preparation/generate-preparation.py` の支援ツールを取得できる。
+
+管理者専用Linux/macOS環境へPython 3とOpenSSLを用意し、実際に承認された64個のIPとホスト名を `hosts.json` に登録する。形式は配布設定と同じ `{"hosts":[{"name":"portal.company.example","ip":"192.0.2.10"}]}`。最大128件、64 KiB。各名前は一意とし、同じIPの別名は許可する。例示のIPを本番へ使ったり、CIDRから未承認のIPを自動登録したりしない。
+
+社内PKIへ申請する場合：
+
+```sh
+python3 generate-preparation.py --hosts hosts.json --out generated-csr
+```
+
+生成されるホスト別 `server.csr` を社内CAへ申請し、DNS SAN・serverAuth付き証明書を取得する。ローカル発行CAを使える環境では署名まで一括実行できる：
+
+```sh
+python3 generate-preparation.py --hosts hosts.json --out generated \
+  --ca-cert /secure/ca.crt --ca-key /secure/ca.key
+```
+
+独立した検証用CAは上のOpenSSL手順で準備する。CA証明書は365日以上の残存有効期間が必要。暗号化CA鍵はOpenSSLの対話入力を使う。出力は正規化した `hosts.json` と、ホスト名ごとのRSA 3072 bit `server.key`・DNS SAN付き `server.csr`・`server.ext`、署名時は365日有効な `server.crt`。鍵と出力ディレクトリは管理者専用権限で生成する。証明書ごとに別鍵とランダムなシリアル番号を使い、CA・接続先名を検証する。既存出力先は拒否し、失敗時の部分出力は管理者が確認して別出力先へ再実行する。
+
+ツールはCAを自動作成せず、CA秘密鍵をコピーしない。証明書と鍵はTLSを使う対象サーバーだけへ配置し、nginx/DCVの設定・reload・実接続を確認する。TLS不要の台帳エントリーにもCSRは生成されるが配置は不要。AWS・TLS設定・端末信頼ストア・hostsはツールから変更しない。Portalへ配置するのは公開 `ca.crt` と生成済み `hosts.json` だけ。生成ディレクトリ全体や秘密鍵を利用者へ配布しない。
+
+ログイン画面でのZIP配布・端末適用は[配布手順](../operations/site-customization.md#ログイン前の証明書配布とhosts設定)を使う。IPの変更は台帳と配布設定を更新して再配布する。同じ名前・CAで証明書を更新する場合、通常は端末CAの再登録は不要。台帳から削除した名前は現行スクリプトが自動削除しないため、管理者が確認して整理する。
+
+将来のパスキー対応に備え、Portalは組織の管理ドメイン配下の固定HTTPS名を使い、WebAuthnのRP IDと許可Originをその名前に合わせる。64個の接続先名すべてを認証元にする必要はない。パスキー認証自体は未実装。

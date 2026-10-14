@@ -3,12 +3,15 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http/httptest"
@@ -18,6 +21,78 @@ import (
 	"testing"
 	"time"
 )
+
+func TestPreparationHostCapacity(t *testing.T) {
+	caPath, hostsPath, _ := preparationFixture(t)
+	for _, count := range []int{64, 128, 129} {
+		hosts := make([]preparationHost, count)
+		for i := range hosts {
+			hosts[i] = preparationHost{Name: fmt.Sprintf("dcv%03d.company.example", i), IP: fmt.Sprintf("192.0.2.%d", i+1)}
+		}
+		raw, _ := json.Marshal(map[string]any{"hosts": hosts})
+		if err := os.WriteFile(hostsPath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		p, err := loadClientPreparation(caPath, hostsPath)
+		if count > 128 {
+			if err == nil {
+				t.Fatal("oversized inventory accepted")
+			}
+			continue
+		}
+		if err != nil || len(p.Hosts) != count {
+			t.Fatal("host capacity", count, err)
+		}
+		zr, err := zip.NewReader(bytes.NewReader(p.bundle), int64(len(p.bundle)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, f := range zr.File {
+			if f.Name != "client-setup.json" {
+				continue
+			}
+			r, _ := f.Open()
+			var config clientPreparation
+			err := json.NewDecoder(r).Decode(&config)
+			r.Close()
+			if err != nil || len(config.Hosts) != count {
+				t.Fatal("ZIP lost mappings", count, err)
+			}
+			found = true
+		}
+		if !found {
+			t.Fatal("missing inventory in ZIP")
+		}
+	}
+}
+
+func TestPreparationGeneratorRequiresPortalAdmin(t *testing.T) {
+	a, _ := newHandlerTestApp(t)
+	w := httptest.NewRecorder()
+	a.require(a.preparationGeneratorDownload)(w, httptest.NewRequest("GET", "/admin/preparation/generate-preparation.py", nil))
+	if w.Code != 303 {
+		t.Fatal("anonymous tool access", w.Code)
+	}
+	for _, role := range []string{"user", "group_admin", "portal_admin"} {
+		if err := a.db.CreateUser(context.Background(), role, "x", role, ""); err != nil {
+			t.Fatal(err)
+		}
+		u, err := a.db.UserByName(context.Background(), role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w = httptest.NewRecorder()
+		a.require(a.preparationGeneratorDownload)(w, requestAs(a, u, "GET", "/admin/preparation/generate-preparation.py", nil))
+		if role != "portal_admin" {
+			if w.Code != 403 {
+				t.Fatal(role, w.Code)
+			}
+		} else if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), preparationGenerator) || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("admin tool download", w.Code)
+		}
+	}
+}
 
 func preparationFixture(t *testing.T) (string, string, []byte) {
 	t.Helper()
