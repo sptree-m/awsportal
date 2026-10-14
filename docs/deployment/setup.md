@@ -19,7 +19,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o aws
 
 ## ローカルHTTPSと初回端末準備
 
-PortalのGoサーバーはHTTP待受で、証明書配布機能はTLSサーバーを自動構築しない。社内CAまたはローカル検証用CAで発行したサーバー証明書をHTTPSリバースプロキシへ設定する。社内の正式CAがある場合は組織の証明書発行手順を使う。
+Portalは既定でGo単体のHTTPS待受を使用する。HTTPSリバースプロキシで終端し、PortalをHTTPバックエンドとして動かす構成も明示的に選択できる。社内CAまたはローカル検証用CAで発行したサーバー証明書を、選択したHTTPS終端へ設定する。社内の正式CAがある場合は組織の証明書発行手順を使う。証明書配布機能は公開CAを端末へ渡す機能であり、サーバー証明書の発行やTLS設定は行わない。
 
 ローカル検証で独立CAを作る例（管理者端末の専用作業ディレクトリで実行）：
 
@@ -44,6 +44,27 @@ openssl x509 -in ca.crt -noout -fingerprint -sha256
 
 例示の名前は実ホスト名へ置き換える。ブラウザーで使う名前をSANへ含め、Proxy/DCVを同じCAで提供する場合も各ホスト名のSAN付き証明書を別途発行する。CA秘密鍵は発行用管理環境で保持し、Portalや利用者へ配布しない。portal.keyはHTTPS終端ホストだけへ配置する。ca.crtだけが端末へ配布する公開CA。
 
+### Go単体のHTTPS（デフォルト）
+
+サーバー証明書（中間CAがある場合はleafから順に連結したPEMチェーン）と秘密鍵を `/etc/awsportal/tls/` へ配置し、専用service userだけが秘密鍵を読める権限にする。配布用CAとは別の設定で、CA秘密鍵は配置しない。systemd serviceの設定例：
+
+```ini
+[Service]
+Environment=AWSPORTAL_HTTP_MODE=https
+Environment=AWSPORTAL_ADDR=:443
+Environment=AWSPORTAL_TLS_CERT=/etc/awsportal/tls/portal.crt
+Environment=AWSPORTAL_TLS_KEY=/etc/awsportal/tls/portal.key
+Environment=AWSPORTAL_WEBAUTHN_ORIGIN=https://portal.company.example
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+```
+
+`AWSPORTAL_HTTP_MODE` は未設定でも `https`、`AWSPORTAL_ADDR` はHTTPS時に未設定なら `:443`。非特権userで443へbindするため、上のsystemd capabilityを設定する。高位ポート（例 `:8443`）を使う場合はcapability不要だが、Origin・Portal URL・SGをそのポートへ合わせる。TLS 1.2以上を使用し、証明書・鍵の未設定、読込失敗、不一致はDBやworkerの開始前に起動エラーとなる。HTTPへの自動切替は行わない。
+
+設定後は `systemctl daemon-reload` と `systemctl restart awsportal` を実行し、信頼済み端末からHTTPSの `/healthz` とログインを確認する。証明書更新時もファイルを再配置してPortalを再起動する。TLS設定は `AWSPORTAL_PROXY_TLS_CERT` / `AWSPORTAL_PROXY_TLS_KEY`（別機能のフォワードプロキシ用）とは独立する。
+
+### HTTPSリバースプロキシ＋HTTPバックエンド（任意）
+
 同一ホストのnginxで終端する例：
 
 ```nginx
@@ -52,6 +73,7 @@ server {
     server_name portal.company.example;
     ssl_certificate /etc/nginx/tls/portal.crt;
     ssl_certificate_key /etc/nginx/tls/portal.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
@@ -61,7 +83,20 @@ server {
 }
 ```
 
-Portalは `AWSPORTAL_ADDR=127.0.0.1:8080` で内部待受とし、セキュアCookieの既定を維持する。v2.0.0では `AWSPORTAL_WEBAUTHN_ORIGIN=https://portal.company.example` をsystemdのEnvironmentへ必ず設定する。URLの末尾スラッシュ・パスは付けない。ブラウザーで443以外を使用する場合はOriginにそのポートも含める。RP IDはホスト名で固定され、表示設定のPortal URLとは独立する。未設定／不正Originでは起動しない。nginxの構文確認・reload、管理端末から443への疎通を確認する。別ホストで終端する場合は、組織の承認経路とバックエンド通信の保護を別途設計する。
+Portalは以下の設定で内部HTTP待受とし、`AWSPORTAL_TLS_CERT` / `AWSPORTAL_TLS_KEY` は設定しない。HTTP時の既定アドレスは `127.0.0.1:8080`。TLS設定を残したままHTTPを選ぶと起動エラーになる。
+
+```ini
+[Service]
+Environment=AWSPORTAL_HTTP_MODE=http
+Environment=AWSPORTAL_ADDR=127.0.0.1:8080
+Environment=AWSPORTAL_WEBAUTHN_ORIGIN=https://portal.company.example
+```
+
+既存のHTTP構成から更新する場合も `AWSPORTAL_HTTP_MODE=http` の明示設定が必要。ローカル検証でHTTPを使う場合も明示設定する。
+
+### 両構成共通のOrigin・端末準備
+
+セキュアCookieの既定を維持する。v2.0.0では `AWSPORTAL_WEBAUTHN_ORIGIN=https://portal.company.example` をsystemdのEnvironmentへ必ず設定する。URLの末尾スラッシュ・パスは付けない。ブラウザーで443以外を使用する場合はOriginにそのポートも含める。RP IDはホスト名で固定され、表示設定のPortal URLとは独立する。未設定／不正Originでは起動しない。リバースプロキシ構成ではnginxの構文確認・reloadを行い、両構成とも管理端末からHTTPS待受への疎通を確認する。別ホストで終端する場合は、組織の承認経路とバックエンド通信の保護を別途設計する。
 
 [ログイン前の配布設定](../operations/site-customization.md#ログイン前の証明書配布とhosts設定)でca.crtとhosts対応表を用意する。hostsは利用端末から到達できるサーバーIPを指定する。サーバーが別のPC/EC2で動く場合、利用端末の127.0.0.1へ割り当てない。初回端末はまだ名前解決・CA信頼がないため、管理者が既存の信頼済み社内配布経路でZIPと別途フィンガープリントを渡す。準備済み端末ではログイン画面下から再取得できる。
 
@@ -108,7 +143,7 @@ python3 generate-preparation.py --hosts hosts.json --out generated \
 
 独立した検証用CAは上のOpenSSL手順で準備する。CA証明書は365日以上の残存有効期間が必要。暗号化CA鍵はOpenSSLの対話入力を使う。出力は正規化した `hosts.json` と、ホスト名ごとのRSA 3072 bit `server.key`・DNS SAN付き `server.csr`・`server.ext`、署名時は365日有効な `server.crt`。鍵と出力ディレクトリは管理者専用権限で生成する。証明書ごとに別鍵とランダムなシリアル番号を使い、CA・接続先名を検証する。既存出力先は拒否し、失敗時の部分出力は管理者が確認して別出力先へ再実行する。
 
-ツールはCAを自動作成せず、CA秘密鍵をコピーしない。証明書と鍵はTLSを使う対象サーバーだけへ配置し、nginx/DCVの設定・reload・実接続を確認する。TLS不要の台帳エントリーにもCSRは生成されるが配置は不要。AWS・TLS設定・端末信頼ストア・hostsはツールから変更しない。Portalへ配置するのは公開 `ca.crt` と生成済み `hosts.json` だけ。生成ディレクトリ全体や秘密鍵を利用者へ配布しない。
+ツールはCAを自動作成せず、CA秘密鍵をコピーしない。証明書と鍵はTLSを使う対象サーバーだけへ配置し、Go HTTPS（再起動）またはnginx/DCVの設定・reload・実接続を確認する。TLS不要の台帳エントリーにもCSRは生成されるが配置は不要。AWS・TLS設定・端末信頼ストア・hostsはツールから変更しない。Portalの配布用設定へ配置するのは公開 `ca.crt` と生成済み `hosts.json` だけ。Go単体でHTTPSを終端する場合は、別途Portal自身の `server.crt` と `server.key` をTLS専用ディレクトリへ配置する。生成ディレクトリ全体や秘密鍵を利用者へ配布しない。
 
 ログイン画面でのZIP配布・端末適用は[配布手順](../operations/site-customization.md#ログイン前の証明書配布とhosts設定)を使う。IPの変更は台帳と配布設定を更新して再配布する。同じ名前・CAで証明書を更新する場合、通常は端末CAの再登録は不要。台帳から削除した名前は現行スクリプトが自動削除しないため、管理者が確認して整理する。
 

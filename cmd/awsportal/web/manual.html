@@ -105,7 +105,17 @@ openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 3650 \
 <p>ローカル発行用CAの利用が許可されている場合は署名まで一括実行できます。CAは365日以上有効なものが必要です。暗号化CA鍵のパスフレーズはOpenSSLの対話入力を使い、コマンドや台帳には記載しません。</p>
 <pre class="manual-code"><code>python3 generate-preparation.py --hosts hosts.json --out generated \
   --ca-cert /secure/ca.crt --ca-key /secure/ca.key</code></pre>
-<p>出力はhosts.jsonと、ホスト名ごとのserver.key・server.csr・server.ext・署名時のserver.crtです。証明書は365日、ホストごとに別鍵・別シリアル番号です。既存出力は上書きしません。途中失敗時は管理者が出力を確認し、新しい出力先で再実行します。サーバー証明書・秘密鍵を対象のHTTPS終端やDCVへ個別配置し、構文確認・reloadと接続を検証してください。ツールはサーバー設定やAWSを変更しません。</p></details>
+<p>出力はhosts.jsonと、ホスト名ごとのserver.key・server.csr・server.ext・署名時のserver.crtです。証明書は365日、ホストごとに別鍵・別シリアル番号です。既存出力は上書きしません。途中失敗時は管理者が出力を確認し、新しい出力先で再実行します。サーバー証明書・秘密鍵を対象のHTTPS終端やDCVへ個別配置し、Go HTTPSの場合はPortalを再起動し、リバースプロキシやDCVの場合は構文確認・reloadと接続を検証してください。ツールはサーバー設定やAWSを変更しません。</p></details>
+<details><summary>PortalのHTTPS待受を設定する</summary><p>既定はGo単体のHTTPSです。Portal用のSAN付きサーバー証明書と秘密鍵をTLS専用ディレクトリへ置き、service userだけが秘密鍵を読める権限にします。公開CAの配布設定とは別です。次のsystemd設定では非特権userによる443待受にcapabilityを使います。</p>
+<pre class="manual-code"><code>[Service]
+Environment=AWSPORTAL_HTTP_MODE=https
+Environment=AWSPORTAL_ADDR=:443
+Environment=AWSPORTAL_TLS_CERT=/etc/awsportal/tls/portal.crt
+Environment=AWSPORTAL_TLS_KEY=/etc/awsportal/tls/portal.key
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE</code></pre>
+<p>AWSPORTAL_WEBAUTHN_ORIGINはブラウザーで使う固定HTTPS Originに合わせます。高位ポートならcapabilityは不要で、Originにもポートを含めます。TLS 1.2以上を使用し、証明書・鍵の不備は起動エラーになります。HTTPへの自動切替はありません。証明書更新後はPortalを再起動してください。</p>
+<p>HTTPSリバースプロキシを使う場合はAWSPORTAL_HTTP_MODE=http、AWSPORTAL_ADDR=127.0.0.1:8080を設定し、AWSPORTAL_TLS_CERTとAWSPORTAL_TLS_KEYを解除します。外部HTTPS OriginとセキュアCookieは維持し、リバースプロキシへサーバー証明書・鍵を設定します。既存のHTTP構成から更新する場合もHTTPモードの明示設定が必要です。</p></details>
 <details open><summary>3. ログイン画面へ配布を設定する</summary><ol>
 <li>Portalホストの <code>/etc/awsportal/client-preparation/</code> に、公開CAの <code>ca.crt</code> と生成済み <code>hosts.json</code> だけを配置します。生成ディレクトリ全体や秘密鍵をアップロードしないでください。</li>
 <li>Portalのsystemd設定で次の2変数を指定し、設定変更後にdaemon-reloadとPortal再起動を行います。</li>

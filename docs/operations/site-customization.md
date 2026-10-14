@@ -30,7 +30,7 @@ Portal Adminには `/manual` の目次と本文に次の手順を表示する。
 
 ### 管理者の配布設定
 
-1. HTTPSリバースプロキシとSAN付きサーバー証明書を[構築手順](../deployment/setup.md#ローカルhttpsと初回端末準備)に従って用意する。ここで配布するのはサーバー証明書を発行した公開CAで、サーバー秘密鍵は別管理。
+1. Go単体のHTTPS（既定）またはHTTPSリバースプロキシと、SAN付きサーバー証明書を[構築手順](../deployment/setup.md#ローカルhttpsと初回端末準備)に従って用意する。ここで配布するのはサーバー証明書を発行した公開CAで、サーバー秘密鍵は別管理。
 2. 公開CAをPortalホストの `/etc/awsportal/client-preparation/ca.crt` に配置する。有効期間内のCA証明書1枚をPEMで保存する。秘密鍵・複数証明書・余分なPEMは起動時に拒否する。
 3. `/etc/awsportal/client-preparation/hosts.json` に、利用端末から到達可能な接続先を1〜128件記録する。次のIP/名前は例示。実IP、サーバー証明書のSANと一致する実ホスト名へ置き換える。Portal、Proxy、必要ならDCVホストを含める。端末上でサーバーが稼働するときだけ127.0.0.1等を指定する。
 

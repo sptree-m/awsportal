@@ -29,7 +29,7 @@ flowchart TD
 - 認証情報の参照名 `gitlab-read` に対応するファイルは `gitlab-read.json`。内容は `{"Username":"認証ユーザー名","Token":"GitLabトークン"}`。画面には参照名だけを登録し、トークンをURLやDBに保存しない。資格情報は上流fetchの子プロセス環境へ渡し、引数・ジョブ結果・監査ログには出さない。
 - GitLabに社内CAを使う場合、`AWSPORTAL_MIRROR_CA_FILE=/etc/awsportal/gitlab-ca.pem` で信頼するCAを指定。TLS検証を無効化しない。上流HTTPリダイレクトは拒否する。
 - ポータルの外向きSG/ルート/VPN等で社内GitLabのHTTPS到達性を用意。オンプレのプライベートIPでも、ポータルから直接同期できる。汎用プロキシの内部IP拒否を解除する必要はない。
-- APIとGit配布はPortalのHTTPS経路（通常443）に公開する。現在のGo Web listener自体はHTTPなので、既存TLS終端/リバースプロキシ等で保護する。ラボの平文8080へ実用トークンを流さない。
+- APIとGit配布はPortalのHTTPS経路（通常443）に公開する。既定のGo HTTPS待受、または明示的なHTTPバックエンド＋HTTPSリバースプロキシを使う。[TLS設定](../deployment/setup.md#ローカルhttpsと初回端末準備)に従う。ラボの平文8080へ実用トークンを流さない。
 - `enable_mirror_access=true` をTerraformで指定すると、管理対象EC2の専用SGからPortal SGの443受信を許可する。利用者EC2のOutboundに**ポータルのプライベートIP/32（IPv6なら/128）・tcp・443**を直接許可する。通常のプロキシ3128とは別の経路。
 - 利用者EC2からGitLabへの直接IP許可、SSH22、汎用プロキシ経由のGitLab CONNECT許可は設定しない。GitLabへ直接届く経路が残れば、ミラーによる書き込み禁止を迂回できる。
 

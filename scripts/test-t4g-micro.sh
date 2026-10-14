@@ -12,7 +12,7 @@ cleanup() {
   exit "$result"
 }
 trap cleanup EXIT
-docker run -d --name awsportal-t4g-test --memory=1g --cpus=2 -p 18080:8080 -e AWSPORTAL_WEBAUTHN_ORIGIN=http://localhost:18080 -e AWSPORTAL_DB=/tmp/test.db -e AWSPORTAL_COOKIE_SECURE=0 -v /tmp/awsportal:/usr/local/bin/awsportal:ro ubuntu:24.04 /usr/local/bin/awsportal >/dev/null
+docker run -d --name awsportal-t4g-test --memory=1g --cpus=2 -p 18080:8080 -e AWSPORTAL_HTTP_MODE=http -e AWSPORTAL_ADDR=:8080 -e AWSPORTAL_WEBAUTHN_ORIGIN=http://localhost:18080 -e AWSPORTAL_DB=/tmp/test.db -e AWSPORTAL_COOKIE_SECURE=0 -v /tmp/awsportal:/usr/local/bin/awsportal:ro ubuntu:24.04 /usr/local/bin/awsportal >/dev/null
 for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break; sleep .5; done
 curl -fsS http://127.0.0.1:18080/healthz | grep -q '^ok$'
 MEM="$(docker inspect -f '{{.HostConfig.Memory}}' awsportal-t4g-test)"
