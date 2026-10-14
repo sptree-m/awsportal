@@ -1,6 +1,6 @@
 # 現行の機能一覧
 
-対象はv1.9.2。詳細設定は各運用手順を参照してください。「実装あり」はコードが存在することを示し、AWS／DCV／Box実環境での本番受入完了を示すものではありません。過去の①〜④による調査表は[履歴](archive/README.md)に保存しています。
+対象はv1.9.2とmainの追加機能。64 IP対応・管理者向け証明書生成支援は次回リリース向けの追加機能。詳細設定は各運用手順を参照してください。「実装あり」はコードが存在することを示し、AWS／DCV／Box実環境での本番受入完了を示すものではありません。過去の①〜④による調査表は[履歴](archive/README.md)に保存しています。
 
 | 領域 | 実装されている機能 | 設定・制約 |
 |---|---|---|
@@ -18,7 +18,7 @@
 | Proxy・Outbound | 認証付きHTTP／CONNECT、許可／拒否、ユーザー／グループ別ルール、専用SGへのIP／CIDR適用 | [Proxy](operations/proxy.md)、[Outbound](operations/egress.md)。HTTPS内容の復号検査は対象外 |
 | Gitミラー | GitLab定期・手動同期、読取／同期権限、clone／fetch専用、Git LFS、完了待機CLI | [Gitミラー](operations/git-mirror.md)。push、artifact、submodule再帰取得は対象外 |
 | 監査 | 操作・ログイン成功／失敗詳細・待ち時間・ロック／解除・ログアウトのDB記録、gzip JSONLの定期S3差分出力、永続再送 | S3出力は既定OFF。[設定](operations/audit-s3-export.md)。CloudTrail／OSログ収集は別途 |
-| 表示・UI | ローカル資産のGo SSR／htmx、サイト文言・利用者マニュアル表示設定、Portal Admin向けEC2作成／Golden AMI導入・配布マニュアル、ログイン前の公開CA・hosts準備スクリプト配布 | [表示設定](operations/site-customization.md)、[UI仕様](development/ui.md)。マニュアルは未実装の作成／種類選択機能を追加しない。サーバーTLSは別途設定 |
+| 表示・UI | ローカル資産のGo SSR／htmx、サイト文言・利用者マニュアル表示設定、ログイン前のCA／hosts配布、管理者向け証明書生成手順・支援ツール（最大128件、64 IP対応）、Portal Admin向けEC2作成／Golden AMI導入・配布マニュアル、ログイン前の公開CA・hosts準備スクリプト配布 | [表示設定](operations/site-customization.md)、[UI仕様](development/ui.md)。マニュアルは未実装の作成／種類選択機能を追加しない。サーバーTLSは別途設定 |
 | 導入・AWS調査 | 既存／新規／混在リソース、管理者指定VPC／Subnet／TGW／IP範囲、preflight、CloudShell調査 | [組織構成](deployment/organization-network.md)、[調査ツール](../tools/aws-audit/README.md) |
 
 ## 未実装・別途準備するもの

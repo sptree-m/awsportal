@@ -53,8 +53,8 @@ def load_settings(directory, expected):
     if not ssl.cert_time_to_seconds(decoded['notBefore']) <= now <= ssl.cert_time_to_seconds(decoded['notAfter']):
         raise ValueError('CA is not currently valid')
     hosts = config['hosts']
-    if not 1 <= len(hosts) <= 32:
-        raise ValueError('1 to 32 host mappings required')
+    if not 1 <= len(hosts) <= 128:
+        raise ValueError('1 to 128 host mappings required')
     seen = set()
     for h in hosts:
         name = h['name']

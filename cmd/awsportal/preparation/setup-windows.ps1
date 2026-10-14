@@ -44,7 +44,7 @@ if($basic.Count -ne 1 -or -not $basic[0].CertificateAuthority) { throw 'Certific
 $now=[DateTime]::UtcNow
 if($now -lt $cert.NotBefore.ToUniversalTime() -or $now -gt $cert.NotAfter.ToUniversalTime()) { throw 'CA is not currently valid' }
 $mappings=@($config.hosts)
-if($mappings.Count -lt 1 -or $mappings.Count -gt 32) { throw '1 to 32 host mappings required' }
+if($mappings.Count -lt 1 -or $mappings.Count -gt 128) { throw '1 to 128 host mappings required' }
 $seen=@{}
 foreach($mapping in $mappings) {
     $name=$mapping.name

@@ -12,6 +12,9 @@ $mappings=@([pscustomobject]@{name='portal.company.example';ip='192.0.2.10'})
 $revised=@(Get-UpdatedHosts @('127.0.0.1 localhost','192.0.2.20 PORTAL.company.example unrelated.example # keep note') $mappings)
 if(($revised -join "`n") -notmatch 'unrelated.example # keep note' -or ($revised -join "`n") -notmatch '127.0.0.1 localhost'){throw 'Client hosts update removed unrelated entries'}
 if(($revised -join "`n") -cne ((Get-UpdatedHosts $revised $mappings) -join "`n")){throw 'Client hosts update is not idempotent'}
+$manyMappings=@(1..64 | ForEach-Object { [pscustomobject]@{name=('dcv'+$_+'.company.example');ip=('192.0.2.'+$_)} })
+$manyUpdated=@(Get-UpdatedHosts @('127.0.0.1 localhost') $manyMappings)
+if($manyUpdated.Count -ne 65 -or ($manyUpdated -join "`n") -cne ((Get-UpdatedHosts $manyUpdated $manyMappings) -join "`n")){throw '64-host Windows update failed'}
 foreach($file in Get-ChildItem -Path windows -Filter '*.ps1'){
     $tokens=$null;$errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseFile($file.FullName,[ref]$tokens,[ref]$errors)

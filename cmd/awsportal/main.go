@@ -189,6 +189,7 @@ func main() {
 	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
 	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
 	mux.HandleFunc("GET /manual", a.require(a.manualPage))
+	mux.HandleFunc("GET /admin/preparation/generate-preparation.py", a.require(a.preparationGeneratorDownload))
 	mux.HandleFunc("GET /admin/site", a.require(a.siteAdminPage))
 	mux.HandleFunc("POST /admin/site", a.require(a.siteAdminChange))
 	mux.HandleFunc("GET /mirrors", a.require(a.mirrorPage))
