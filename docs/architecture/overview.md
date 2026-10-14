@@ -5,7 +5,7 @@
 ## ID管理境界
 一般ユーザーにはAWSアカウント、IAMユーザー、Access Key、Console/CLI認証情報を付与しません。ポータルユーザーとAWS Identityは完全に分離します。
 
-ポータルのロールは `user`、`group_admin`、`portal_admin` とします。管理者はTOTP MFA必須です。一般ユーザーは本人に直接割り当てられたEC2と、所属グループに割り当てられたEC2だけを参照・操作できます。管理者は全管理対象EC2を参照できます。
+ポータルのロールは `user`、`group_admin`、`portal_admin` とします。一般User／Group Adminは本人確認必須・クラウド同期不可のパスキーのみ、Portal Adminは同じパスキーまたはパスワード＋TOTPでログインします。[認証仕様](authentication.md)を参照してください。一般ユーザーは本人に直接割り当てられたEC2と、所属グループに割り当てられたEC2だけを参照・操作できます。管理者は全管理対象EC2を参照できます。
 
 ## 接続境界
 管理対象デスクトップは、承認済み社内/VPNネットワークからDCVの指定TCPポート（既定8443）だけを公開します。SSH/22、RDP/3389は開放しません。一般ユーザーにはSSMによる対話アクセスも許可しません。
@@ -22,7 +22,7 @@ ARM64のt4g.microを基本ターゲットとします。Goのサーバーサイ�
 ## 本番運用の要件
 
 - Portal AdminとAWS基盤管理者は別ロール。管理者復旧は複数人承認、緊急操作は期限付き・記録必須とし、障害時もSSH／RDPを臨時開放しない。
-- bcryptでpasswordを保存する。TOTP Secretは本番前にKMS等による暗号化へ移行する。SQLite backup・監査ログ・TOTP Secretは機密情報として扱う。
+- 管理者のpasswordはbcryptで保存する。一般ユーザーにpasswordによる通常ログインを提供しない。パスキーはUV必須、BE／BS不可、固定RP ID／Origin検証と使い捨てチャレンジを必須とする。TOTP Secretは本番前にKMS等による暗号化へ移行する。SQLite backup・監査ログ・TOTP Secretは機密情報として扱う。
 - IMDSv2とInstance Profileを使用し、AWS APIの権限を管理対象resourceへ限定する。22／3389の禁止を自動試験し、SSM対話アクセスによる迂回も許可しない。
 - DCV制限と社内承認Firewall／ProxyのAllowlistを併用する。CloudTrail／VPC Flow Logs／中央ログ保管は管理者が別途準備する。
 - Portalの操作・認証ログはSQLiteへ記録し、[gzip付きS3出力](../operations/audit-s3-export.md)を任意に有効化する。CloudTrail・OSログの収集を代替しない。

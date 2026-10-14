@@ -47,7 +47,7 @@ func TestSiteAdminRightsBrandEscapingAndUserManual(t *testing.T) {
 		path    string
 		handler http.HandlerFunc
 		must    string
-	}{{"/", a.dashboard, "研究環境"}, {"/manual", a.manualPage, "https://portal.company.example"}, {"/instances", a.instancesPage, "利用者向け"}, {"/mfa", a.mfaPage, "利用者向け"}} {
+	}{{"/", a.dashboard, "研究環境"}, {"/manual", a.manualPage, "https://portal.company.example"}, {"/instances", a.instancesPage, "利用者向け"}, {"/passkeys", a.passkeyPage, "利用者向け"}} {
 		w = httptest.NewRecorder()
 		a.require(tc.handler)(w, requestAs(a, user, "GET", tc.path, nil))
 		body := w.Body.String()

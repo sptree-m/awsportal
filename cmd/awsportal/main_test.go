@@ -9,40 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestLabDebugMFABypass(t *testing.T) {
-	old, had := os.LookupEnv("AWSPORTAL_LAB_DEBUG_AUTH")
-	defer func() {
-		if had {
-			_ = os.Setenv("AWSPORTAL_LAB_DEBUG_AUTH", old)
-		} else {
-			_ = os.Unsetenv("AWSPORTAL_LAB_DEBUG_AUTH")
-		}
-	}()
-	cases := []struct {
-		name, flag, user string
-		want             bool
-	}{
-		{"lab flag plus labdebug", "1", "labdebug", true},
-		{"flag off", "0", "labdebug", false},
-		{"other admin never bypasses", "1", "labadmin", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_ = os.Setenv("AWSPORTAL_LAB_DEBUG_AUTH", tc.flag)
-			got := labDebugMFABypass(store.User{Username: tc.user, Role: "portal_admin"})
-			if got != tc.want {
-				t.Fatalf("got %v want %v", got, tc.want)
-			}
-		})
-	}
-}
 
 func TestStaticAssetsServed(t *testing.T) {
 	h := staticHandler(http.StripPrefix("/static/", http.FileServer(http.FS(web))))
@@ -337,7 +308,7 @@ func TestHTMXAdminDisableReturnsUpdatedUserRow(t *testing.T) {
 func TestHTMXMFADeleteRemovesDeviceWithoutRedirect(t *testing.T) {
 	a, _ := newHandlerTestApp(t)
 	ctx := context.Background()
-	if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil {
+	if err := a.db.CreateUser(ctx, "alice", "x", "portal_admin", "SECRET"); err != nil {
 		t.Fatal(err)
 	}
 	u, _ := a.db.UserByName(ctx, "alice")

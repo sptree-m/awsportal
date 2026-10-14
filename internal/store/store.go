@@ -16,6 +16,7 @@ type User struct {
 	Enabled, MustChangePassword                             bool
 	TempPasswordExpires, LastLoginAt, ExpiresAt, DisabledAt int64
 	DisabledReason                                          string
+	AuthGeneration                                          int64
 	FailedLoginAttempts                                     int
 	LockedAt, LoginRetryAt                                  int64
 }
@@ -46,7 +47,7 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.DB.Close() }
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema+jobMetricsSchema+poolSchema+billingSchema+importSchema+parquetSchema+billingJobSchema+storageSchema+goldenSchema+desktopSchema+storageMetricSchema+operationMetricSchema+inventorySchema+volumeSchema+reservationSchema); e != nil {
+	if _, e := s.DB.ExecContext(ctx, schema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema+jobMetricsSchema+poolSchema+billingSchema+importSchema+parquetSchema+billingJobSchema+storageSchema+goldenSchema+desktopSchema+storageMetricSchema+operationMetricSchema+inventorySchema+volumeSchema+reservationSchema+passkeySchema); e != nil {
 		return e
 	}
 	for _, q := range []string{"ALTER TABLE dcv_agents ADD COLUMN browser_blocked INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_policy_json TEXT NOT NULL DEFAULT ''", "ALTER TABLE instances ADD COLUMN dcv_policy_revision INTEGER NOT NULL DEFAULT 1", "ALTER TABLE dcv_agents ADD COLUMN applied_revision INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_connect_mode TEXT NOT NULL DEFAULT 'native'", "ALTER TABLE proxy_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'domain'", "ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"} {
@@ -54,7 +55,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return e
 		}
 	}
-	for _, q := range []string{"ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN locked_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN login_retry_at INTEGER NOT NULL DEFAULT 0"} {
+	for _, q := range []string{"ALTER TABLE users ADD COLUMN auth_generation INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN locked_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN login_retry_at INTEGER NOT NULL DEFAULT 0"} {
 		if _, err := s.DB.ExecContext(ctx, q); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}
@@ -66,7 +67,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 func (s *Store) UserByName(ctx context.Context, n string) (User, error) {
 	var u User
 	var en, must int
-	err := s.DB.QueryRowContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason,failed_login_attempts,locked_at,login_retry_at FROM users WHERE username=?", n).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason, &u.FailedLoginAttempts, &u.LockedAt, &u.LoginRetryAt)
+	err := s.DB.QueryRowContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason,failed_login_attempts,locked_at,login_retry_at,auth_generation FROM users WHERE username=?", n).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason, &u.FailedLoginAttempts, &u.LockedAt, &u.LoginRetryAt, &u.AuthGeneration)
 	u.Enabled = en == 1
 	u.MustChangePassword = must == 1
 	return u, err
@@ -275,8 +276,13 @@ func (s *Store) BreakGlassResetAdmin(ctx context.Context, username, hash, totpSe
 	if err = tx.QueryRowContext(ctx, "SELECT id,failed_login_attempts,locked_at,login_retry_at FROM users WHERE username=? AND role='portal_admin'", username).Scan(&id, &detail.FailedAttempts, &detail.LockedAt, &detail.RetryAt); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE users SET password_hash=?,totp_secret=?,must_change_password=1,temp_password_expires=0,failed_login_attempts=0,locked_at=0,login_retry_at=0 WHERE id=?", hash, totpSecret, id); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE users SET auth_generation=auth_generation+1,password_hash=?,totp_secret=?,must_change_password=1,temp_password_expires=0,failed_login_attempts=0,locked_at=0,login_retry_at=0 WHERE id=?", hash, totpSecret, id); err != nil {
 		return err
+	}
+	for _, table := range []string{"passkeys", "passkey_invites", "passkey_challenges", "dcv_tokens"} {
+		if _, err = tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id=?", id); err != nil {
+			return err
+		}
 	}
 	// Registered devices otherwise take precedence over the recovered TOTP secret.
 	if _, err = tx.ExecContext(ctx, "DELETE FROM mfa_devices WHERE user_id=?", id); err != nil {
@@ -405,7 +411,7 @@ func (s *Store) ReactivateUser(ctx context.Context, n string, now time.Time) err
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
-	rows, e := s.DB.QueryContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason,failed_login_attempts,locked_at,login_retry_at FROM users ORDER BY username")
+	rows, e := s.DB.QueryContext(ctx, "SELECT id,username,password_hash,role,COALESCE(totp_secret,''),enabled,must_change_password,temp_password_expires,last_login_at,expires_at,disabled_at,disabled_reason,failed_login_attempts,locked_at,login_retry_at,auth_generation FROM users ORDER BY username")
 	if e != nil {
 		return nil, e
 	}
@@ -414,7 +420,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var en, must int
-		if e = rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason, &u.FailedLoginAttempts, &u.LockedAt, &u.LoginRetryAt); e != nil {
+		if e = rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.TOTPSecret, &en, &must, &u.TempPasswordExpires, &u.LastLoginAt, &u.ExpiresAt, &u.DisabledAt, &u.DisabledReason, &u.FailedLoginAttempts, &u.LockedAt, &u.LoginRetryAt, &u.AuthGeneration); e != nil {
 			return nil, e
 		}
 		u.Enabled = en == 1

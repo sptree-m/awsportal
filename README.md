@@ -1,6 +1,6 @@
 # awsportal
 
-AWS上のEC2／Amazon DCV環境を管理する、イントラネット向け軽量ポータルです。v1.9.2の変更は[リリースノート](docs/releases/v1.9.2.md)を参照してください。
+AWS上のEC2／Amazon DCV環境を管理する、イントラネット向け軽量ポータルです。v2.0.0の変更は[リリースノート](docs/releases/v2.0.0.md)を参照してください。
 
 ## 最優先のコンセプト
 
@@ -18,11 +18,13 @@ AWS上のEC2／Amazon DCV環境を管理する、イントラネット向け軽�
 ## 基本方針
 
 - 一般UserにAWSアカウント・IAM User・Console・Access Keyを付与せず、PortalのInstance Profileで最小権限のAWS APIを実行します。
-- 本人または所属groupへ割り当てられたEC2だけを表示・操作します。Portal Adminは全体を参照でき、TOTP認証が必須です。
+- 本人または所属groupへ割り当てられたEC2だけを表示・操作します。一般User／Group Adminの通常ログインは本人確認必須・クラウド同期不可のパスキーに限定します。Portal Adminは全体を参照でき、同じパスキーまたはパスワード＋TOTPで認証します。
 - 接続はDCV（指定TCPポート、既定8443）に限定し、SSH／RDP／SCP・一般UserのSSM対話アクセスを許可しません。
 - DCVの転送・clipboard・印刷・USB等を制限し、許可された管理者の持ち出しは監査します。
 
 UIはGo SSR・同梱htmx・自前CSS・ローカルfontで構成し、外部CDNを使いません。1366×768から狭幅まで主要操作を表示し、一覧だけを横scrollさせます。
+
+認証の最終仕様は[認証仕様](docs/architecture/authentication.md)、PCごとの登録・管理者リセットは[パスキー運用](docs/operations/passkeys.md)を参照してください。v2.0.0への更新では固定HTTPS Originの設定と既存ユーザーへの登録コード配布が必要です。
 
 ## 導入・運用
 

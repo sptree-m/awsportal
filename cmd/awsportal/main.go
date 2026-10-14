@@ -13,6 +13,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/skip2/go-qrcode"
 	"github.com/sptree-m/awsportal/internal/auditexport"
 	"github.com/sptree-m/awsportal/internal/auth"
@@ -40,10 +41,13 @@ import (
 var web embed.FS
 
 type session struct {
-	User    store.User
-	Expires time.Time
+	AuthenticatedAt time.Time
+	Method          string
+	User            store.User
+	Expires         time.Time
 }
 type app struct {
+	webauthn    *webauthn.WebAuthn
 	preparation *clientPreparation
 	dcvPort     int
 	db          *store.Store
@@ -76,6 +80,10 @@ func main() {
 		log.Fatal(e)
 	}
 	a := &app{dcvPort: dcvPort, db: db, ec2: awsapi.New(cfg), cost: awsapi.NewCost(cfg), egress: awsapi.NewEgress(cfg), tpl: template.Must(template.New("").Funcs(proxyTemplateFuncs()).ParseFS(web, "web/*.html")), sessions: map[string]session{}}
+	a.webauthn, e = auth.NewWebAuthn(env("AWSPORTAL_WEBAUTHN_ORIGIN", ""))
+	if e != nil {
+		log.Fatal("passkey startup failed: ", e)
+	}
 	a.preparation, e = loadClientPreparation(env("AWSPORTAL_PREPARATION_CA_FILE", ""), env("AWSPORTAL_PREPARATION_HOSTS_FILE", ""))
 	if e != nil {
 		log.Fatal("client preparation startup failed: ", e)
@@ -177,10 +185,10 @@ func main() {
 	mux.HandleFunc("GET /preparation/ca.crt", a.preparationDownload)
 	mux.HandleFunc("GET /preparation/client-setup.zip", a.preparationDownload)
 	mux.HandleFunc("POST /login", a.login)
+	a.passkeyRoutes(mux)
 	mux.HandleFunc("POST /logout", a.logout)
 	mux.HandleFunc("GET /change-password", a.require(a.changePasswordPage))
 	mux.HandleFunc("POST /change-password", a.require(a.changePassword))
-	mux.HandleFunc("POST /admin/reset-password", a.require(a.adminResetPassword))
 	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
 	mux.HandleFunc("POST /admin/users", a.require(a.adminCreateUser))
 	mux.HandleFunc("POST /admin/users/{username}/reactivate", a.require(a.adminReactivateUser))
@@ -244,13 +252,7 @@ func health(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	a.renderPage(w, r, "login.html", map[string]any{"Preparation": a.preparation})
 }
-func labDebugMFABypass(u store.User) bool {
-	return env("AWSPORTAL_LAB_DEBUG_AUTH", "0") == "1" && u.Username == "labdebug"
-}
 func (a *app) checkLoginMFA(ctx context.Context, u store.User, code string) (bool, error) {
-	if labDebugMFABypass(u) {
-		return true, nil
-	}
 	secrets, e := a.db.VerifyMFASecrets(ctx, u.ID)
 	if e != nil {
 		return false, e
@@ -269,6 +271,10 @@ func (a *app) checkLoginMFA(ctx context.Context, u store.User, code string) (boo
 	return false, nil
 }
 func (a *app) mfaPage(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Value("user").(store.User).Role != "portal_admin" {
+		http.Error(w, "Portal Adminのみ", http.StatusForbidden)
+		return
+	}
 	u := r.Context().Value("user").(store.User)
 	ds, e := a.db.MFADevices(r.Context(), u.ID)
 	if e != nil {
@@ -286,6 +292,10 @@ func (a *app) mfaPage(w http.ResponseWriter, r *http.Request) {
 	a.renderPage(w, r, "mfa.html", data)
 }
 func (a *app) mfaAdd(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Value("user").(store.User).Role != "portal_admin" {
+		http.Error(w, "Portal Adminのみ", http.StatusForbidden)
+		return
+	}
 	u := r.Context().Value("user").(store.User)
 	_ = r.ParseForm()
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -307,6 +317,10 @@ func (a *app) mfaAdd(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/mfa?setup=%d", id), 303)
 }
 func (a *app) mfaQR(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Value("user").(store.User).Role != "portal_admin" {
+		http.Error(w, "Portal Adminのみ", http.StatusForbidden)
+		return
+	}
 	u := r.Context().Value("user").(store.User)
 	id, e := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if e != nil {
@@ -327,6 +341,10 @@ func (a *app) mfaQR(w http.ResponseWriter, r *http.Request) {
 	w.Write(png)
 }
 func (a *app) mfaVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Value("user").(store.User).Role != "portal_admin" {
+		http.Error(w, "Portal Adminのみ", http.StatusForbidden)
+		return
+	}
 	u := r.Context().Value("user").(store.User)
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	d, e := a.db.MFADevice(r.Context(), u.ID, id)
@@ -344,6 +362,10 @@ func (a *app) mfaVerify(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/mfa", 303)
 }
 func (a *app) mfaDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Value("user").(store.User).Role != "portal_admin" {
+		http.Error(w, "Portal Adminのみ", http.StatusForbidden)
+		return
+	}
 	u := r.Context().Value("user").(store.User)
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	d, e := a.db.MFADevice(r.Context(), u.ID, id)
@@ -390,14 +412,14 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		fresh, err := a.db.UserByName(r.Context(), s.User.Username)
-		if err != nil || fresh.ID != s.User.ID || !fresh.Enabled || fresh.LockedAt != 0 || a.db.AccountExpired(fresh, time.Now()) {
+		if err != nil || fresh.ID != s.User.ID || fresh.AuthGeneration != s.User.AuthGeneration || (fresh.Role != "portal_admin" && s.Method == "password_totp") || !fresh.Enabled || fresh.LockedAt != 0 || a.db.AccountExpired(fresh, time.Now()) {
 			a.mu.Lock()
 			delete(a.sessions, c.Value)
 			a.mu.Unlock()
 			loginRedirect(w, r)
 			return
 		}
-		if fresh.MustChangePassword && r.URL.Path != "/change-password" {
+		if fresh.Role == "portal_admin" && fresh.MustChangePassword && r.URL.Path != "/change-password" {
 			if r.Header.Get("HX-Request") == "true" {
 				w.Header().Set("HX-Redirect", "/change-password")
 				w.WriteHeader(401)
@@ -410,9 +432,17 @@ func (a *app) require(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 func (a *app) changePasswordPage(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Value("user").(store.User).Role != "portal_admin" {
+		http.Error(w, "Portal Adminのみ", http.StatusForbidden)
+		return
+	}
 	a.renderPage(w, r, "change-password.html", nil)
 }
 func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Context().Value("user").(store.User).Role != "portal_admin" {
+		http.Error(w, "Portal Adminのみ", http.StatusForbidden)
+		return
+	}
 	u := r.Context().Value("user").(store.User)
 	_ = r.ParseForm()
 	p := r.FormValue("password")
@@ -435,29 +465,6 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.Unlock()
 	http.Redirect(w, r, "/login", 303)
-}
-func (a *app) adminResetPassword(w http.ResponseWriter, r *http.Request) {
-	admin := r.Context().Value("user").(store.User)
-	if admin.Role != "portal_admin" {
-		http.Error(w, "管理者のみ実行できます", 403)
-		return
-	}
-	_ = r.ParseForm()
-	target := r.FormValue("username")
-	raw := make([]byte, 12)
-	if _, e := rand.Read(raw); e != nil {
-		http.Error(w, "生成失敗", 500)
-		return
-	}
-	temp := "Tmp-" + base64.RawURLEncoding.EncodeToString(raw)
-	h, e := auth.HashPassword(temp)
-	if e != nil || a.db.SetTemporaryPassword(r.Context(), target, h, time.Now().Add(30*time.Minute)) != nil {
-		a.db.Audit(r.Context(), admin.Username, "password.reset", target, "deny", "")
-		http.Error(w, "リセットできません", 400)
-		return
-	}
-	a.db.Audit(r.Context(), admin.Username, "password.reset", target, "ok", "30分/初回変更必須")
-	a.renderPage(w, r, "temporary-password.html", map[string]any{"Username": target, "Password": temp})
 }
 
 type dashboardInstance struct {
@@ -960,7 +967,7 @@ func (a *app) adminUsers(w http.ResponseWriter, r *http.Request) {
 	for _, u := range xs {
 		rows = append(rows, adminUserView(u, now))
 	}
-	a.renderPage(w, r, "users.html", map[string]any{"User": admin, "Users": rows, "Now": now})
+	a.renderPage(w, r, "users.html", map[string]any{"User": admin, "Users": rows, "Now": now, "CSRF": passkeyCSRF(r)})
 }
 func (a *app) adminReactivateUser(w http.ResponseWriter, r *http.Request) {
 	admin := r.Context().Value("user").(store.User)
@@ -983,6 +990,12 @@ func (a *app) adminReactivateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) adminCreateUser(w http.ResponseWriter, r *http.Request) {
+	if !a.passkeyForm(w, r) {
+		return
+	}
+	a.recentPasskeySession(w, r, func(_ store.User, _ string) { a.adminCreatePasskeyUser(w, r) })
+}
+func (a *app) adminCreatePasskeyUser(w http.ResponseWriter, r *http.Request) {
 	admin := r.Context().Value("user").(store.User)
 	if admin.Role != "portal_admin" {
 		http.Error(w, "管理者のみ", 403)
@@ -995,21 +1008,16 @@ func (a *app) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "入力を確認してください", 400)
 		return
 	}
-	raw := make([]byte, 12)
-	if _, e := rand.Read(raw); e != nil {
-		http.Error(w, "生成失敗", 500)
-		return
+	code, err := auth.NewPasskeyToken()
+	if err == nil {
+		err = a.db.CreatePasskeyUser(r.Context(), admin, username, role, code, time.Now())
 	}
-	temp := "Tmp-" + base64.RawURLEncoding.EncodeToString(raw)
-	h, e := auth.HashPassword(temp)
-	if e != nil || a.db.CreateUser(r.Context(), username, h, role, "") != nil {
-		a.db.Audit(r.Context(), admin.Username, "user.create", username, "deny", "")
+	if err != nil {
+		a.db.Audit(r.Context(), admin.Username, "user.create", username, "deny", "account creation rejected")
 		http.Error(w, "ユーザーを作成できません", 400)
 		return
 	}
-	_ = a.db.SetTemporaryPassword(r.Context(), username, h, time.Now().Add(30*time.Minute))
-	a.db.Audit(r.Context(), admin.Username, "user.create", username, "ok", "role="+role)
-	a.renderPage(w, r, "temporary-password.html", map[string]any{"Username": username, "Password": temp})
+	a.renderPage(w, r, "passkey-code.html", map[string]any{"Username": username, "Code": code})
 }
 func (a *app) adminDisableUser(w http.ResponseWriter, r *http.Request) {
 	admin := r.Context().Value("user").(store.User)

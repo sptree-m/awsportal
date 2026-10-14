@@ -86,6 +86,8 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		}
 	case u.TempPasswordExpires > 0 && now.Unix() > u.TempPasswordExpires:
 		reason = "temporary_password_expired"
+	case u.Role != "portal_admin":
+		reason = "passkey_required"
 	case !auth.CheckPassword(u.PasswordHash, r.PostFormValue("password")):
 		reason = "invalid_password"
 	default:
@@ -110,7 +112,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	err = a.db.RecordLogin(r.Context(), u.ID, time.Now())
 	if err == nil {
-		a.sessions[token] = session{u, time.Now().Add(8 * time.Hour)}
+		a.sessions[token] = session{User: u, Expires: time.Now().Add(8 * time.Hour), AuthenticatedAt: time.Now(), Method: "password_totp"}
 	}
 	a.mu.Unlock()
 	if err != nil {

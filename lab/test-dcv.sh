@@ -22,8 +22,8 @@ for ID in "$PORTAL_ID" "$TEST_ID"; do
   done
   [[ "$READY" == 1 ]] || { echo "FAIL: SSM is not online for $ID"; exit 1; }
 done
-# Enabling labdebug is explicit; do not bypass authentication for any other account.
-bash "$HERE/debug-auth.sh" off
+# Enable the lab-only administrator; password+TOTP remains mandatory.
+bash "$HERE/debug-auth.sh" enable
 
 remote() {
   local instance="$1" script="$2" command_id status
@@ -89,21 +89,27 @@ for attempt in range(60):
 else: raise SystemExit("FAIL: labdebug desktop is not ready")
 PY'
 
-# Get a real portal token using the MFA-free account, using a short-lived lab-only credential.
+# Get a real Portal token with the lab administrator password+TOTP.
 AUTH_FORM="$(remote "$PORTAL_ID" 'sudo python3 - <<'"'"'PY'"'"'
-import http.cookiejar, pathlib, urllib.parse, urllib.request, urllib.error
+import http.cookiejar, pathlib, urllib.parse, urllib.request, urllib.error, ssl, base64, hmac, hashlib, struct, time
 credentials=dict(line.split("=",1) for line in pathlib.Path("/var/lib/awsportal/lab-login.txt").read_text().splitlines() if "=" in line)
 cookies=http.cookiejar.CookieJar()
-client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
+tls=ssl.create_default_context(cafile="/etc/awsportal-tls/server.pem")
+client=urllib.request.build_opener(urllib.request.HTTPSHandler(context=tls),urllib.request.HTTPCookieProcessor(cookies))
+portal="https://"+credentials["portal_host"]+":8080"
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs): return None
-form=urllib.parse.urlencode({"username":"labdebug","password":credentials["debug_password"]}).encode()
-client.open("http://127.0.0.1:8080/login",form,timeout=20).read()
+secret=base64.b32decode(credentials["totp_secret"]+"="*((-len(credentials["totp_secret"]))%8))
+digest=hmac.new(secret,struct.pack(">Q",int(time.time())//30),hashlib.sha1).digest()
+offset=digest[-1]&15
+code=str((struct.unpack(">I",digest[offset:offset+4])[0]&0x7fffffff)%1000000).zfill(6)
+form=urllib.parse.urlencode({"username":"labdebug","password":credentials["debug_password"],"totp":code}).encode()
+client.open(portal+"/login",form,timeout=20).read()
 import sqlite3
 db=sqlite3.connect("/var/lib/awsportal/awsportal.db")
 instance_id=db.execute("SELECT instance_id FROM instances LIMIT 1").fetchone()[0]
-client=urllib.request.build_opener(NoRedirect(),urllib.request.HTTPCookieProcessor(cookies))
-try: client.open("http://127.0.0.1:8080/dcv/"+instance_id,timeout=20)
+client=urllib.request.build_opener(NoRedirect(),urllib.request.HTTPSHandler(context=tls),urllib.request.HTTPCookieProcessor(cookies))
+try: client.open(portal+"/dcv/"+instance_id,timeout=20)
 except urllib.error.HTTPError as e:
     if e.code!=302: raise
     destination=urllib.parse.urlsplit(e.headers["Location"])

@@ -30,3 +30,9 @@ AWSPORTAL_BROWSER_TEST=1 go test -race ./cmd/awsportal -run TestBrowserConsole -
 ```
 
 ブラウザ試験は実template・header・static asset・htmxをhttptest serverで検証し、CIにscreen captureを保存する。EC2／Cost ExplorerはmockでAWSを変更しない。軽量化は転送量・全文書reload回数で評価する。実EC2／DCV／MFA・AWS通信遅延の受入は対象環境で別途行う。
+
+## パスキー画面（v2.0.0）
+
+ログイン・登録・パスキー管理には同梱 `passkeys.js` だけを追加し、ブラウザー標準WebAuthnを使う。認証器操作のページは `hx-boost=false` で全文書へ遷移し、認証処理の重複と動的script実行を避ける。実行中のbutton無効化、キャンセル／非対応／HTTPエラーの読み上げ可能な通知、固定HTTPS接続の案内を維持する。初回登録コードはURLへ入れない。
+
+`AWSPORTAL_BROWSER_TEST=1 go test -race ./cmd/awsportal -run 'TestBrowser(Console|Passkeys)' -v` で既存Consoleと仮想認証器の登録／認証／複数キー／削除を検証し、4解像度＋狭幅のキャプチャを保存する。実配布PCのPIN／指紋／顔認証、BE=falseの鍵、社内CAでの受入は別途確認する。

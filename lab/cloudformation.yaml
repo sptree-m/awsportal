@@ -3,6 +3,7 @@ Description: awsportal isolated disposable lab
 Parameters:
   AllowedCidr: {Type: String}
   ProjectTag: {Type: String, Default: awsportal-lab}
+  LabPortalHost: {Type: String, Default: portal.awsportal.test, AllowedPattern: '^[a-z0-9][a-z0-9.-]*[a-z0-9]$'}
   LabPassword: {Type: String, NoEcho: true, MinLength: 12}
   LabTOTPSecret: {Type: String, NoEcho: true, MinLength: 16}
   InstanceType: {Type: String, Default: t4g.micro}
@@ -155,19 +156,19 @@ Resources:
               install -m 0755 /tmp/awsportal-bin/awsportal /usr/local/bin/awsportal
               install -m 0755 /tmp/awsportal-bin/awsportal-admin /usr/local/bin/awsportal-admin
               PASS="${LabPassword}"
-              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role user > /tmp/admin.txt
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labadmin -password "$PASS" -role portal_admin > /tmp/admin.txt
               sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET role='portal_admin', totp_secret='${LabTOTPSecret}' WHERE username='labadmin';"
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd add-instance -instance ${TestId} -name "Ubuntu test" -host ec2-public
               echo "${DCVAgentToken}" > /tmp/dcv-agent-token
               /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd configure-dcv -instance ${TestId} -host ec2-public -dcv-mode native -dcv-token-file /tmp/dcv-agent-token
               rm /tmp/dcv-agent-token
 
-              # Lab-only MFA-free debug user (disabled by default)
+              # Lab-only password+TOTP administrator (disabled by default)
               DEBUGPASS="Debug-$PASS"
-              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labdebug -password "$DEBUGPASS" -role user
+              /usr/local/bin/awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd create-user -user labdebug -password "$DEBUGPASS" -role portal_admin > /tmp/debug-admin.txt
 
               sqlite3 /var/lib/awsportal/awsportal.db "INSERT INTO instance_users(instance_id,user_id,can_control) SELECT i.id,u.id,1 FROM instances i,users u WHERE i.instance_id='${TestId}' AND u.username='labdebug';"
-              sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET enabled=0 WHERE username='labdebug';"
+              sqlite3 /var/lib/awsportal/awsportal.db "UPDATE users SET enabled=0,totp_secret='${LabTOTPSecret}' WHERE username='labdebug';"
 
               chown -R awsportal:awsportal /var/lib/awsportal
               cat >/var/lib/awsportal/lab-login.txt <<EOF
@@ -175,7 +176,8 @@ Resources:
               password=$PASS
               debug_username=labdebug
               debug_password=$DEBUGPASS
-              $(cat /tmp/admin.txt)
+              totp_secret=${LabTOTPSecret}
+              portal_host=${LabPortalHost}
               EOF
               chmod 600 /var/lib/awsportal/lab-login.txt
               cat >/etc/systemd/system/awsportal.service <<'UNIT'
@@ -185,10 +187,10 @@ Resources:
               User=awsportal
               WorkingDirectory=/var/lib/awsportal
               Environment=AWSPORTAL_DB=/var/lib/awsportal/awsportal.db
-              Environment=AWSPORTAL_ADDR=:8080
+              Environment=AWSPORTAL_ADDR=127.0.0.1:8081
               Environment=AWSPORTAL_DCV_PORT=${DCVPort}
-              Environment=AWSPORTAL_COOKIE_SECURE=0
-              Environment=AWSPORTAL_LAB_DEBUG_AUTH=1
+              Environment=AWSPORTAL_COOKIE_SECURE=1
+              Environment=AWSPORTAL_WEBAUTHN_ORIGIN=https://${LabPortalHost}:8080
               Environment=AWS_REGION=${AWS::Region}
               Environment=AWS_DEFAULT_REGION=${AWS::Region}
               ExecStart=/usr/local/bin/awsportal
@@ -201,15 +203,27 @@ Resources:
               echo '${LabTLSCert}' | base64 -d > /etc/awsportal-tls/server.pem
               echo '${LabTLSKey}' | base64 -d > /etc/awsportal-tls/server.key
               chmod 600 /etc/awsportal-tls/server.key
+              echo "127.0.0.1 ${LabPortalHost}" >> /etc/hosts
               rm -f /etc/nginx/sites-enabled/default
               cat > /etc/nginx/sites-available/awsportal-agent <<'NGINX'
+              server {
+                listen 8080 ssl;
+                server_name ${LabPortalHost};
+                ssl_certificate /etc/awsportal-tls/server.pem;
+                ssl_certificate_key /etc/awsportal-tls/server.key;
+                ssl_protocols TLSv1.2 TLSv1.3;
+                location / {
+                  proxy_pass http://127.0.0.1:8081;
+                  proxy_set_header Host $host;
+                }
+              }
               server {
                 listen 8444 ssl;
                 ssl_certificate /etc/awsportal-tls/server.pem;
                 ssl_certificate_key /etc/awsportal-tls/server.key;
                 ssl_protocols TLSv1.2 TLSv1.3;
                 location /api/dcv/agent/ {
-                  proxy_pass http://127.0.0.1:8080;
+                  proxy_pass http://127.0.0.1:8081;
                   proxy_set_header Authorization $http_authorization;
                   proxy_read_timeout 20s;
                 }
@@ -223,7 +237,8 @@ Resources:
               systemctl enable --now awsportal
             - {TestId: {Ref: TestInstance}, LabPassword: {Ref: LabPassword}, LabTOTPSecret: {Ref: LabTOTPSecret}, BinaryURL: {Ref: BinaryURL}}
 Outputs:
-  PortalURL: {Value: {Fn::Sub: 'http://${PortalInstance.PublicIp}:8080'}}
+  PortalURL: {Value: {Fn::Sub: 'https://${LabPortalHost}:8080'}}
+  PortalPublicIP: {Value: {Fn::GetAtt: [PortalInstance, PublicIp]}}
   PortalInstanceId: {Value: {Ref: PortalInstance}}
   TestInstanceId: {Value: {Ref: TestInstance}}
   DCVPort: {Value: {Ref: DCVPort}}

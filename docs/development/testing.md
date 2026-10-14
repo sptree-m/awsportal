@@ -18,3 +18,7 @@ CIの制約試験は実EC2そのものではありません。リリース候補
 
 ## main保護
 mainへの直接pushを禁止しPRを必須化します。必須Status Checkとして `unit-security-terraform` と `t4g-micro-arm64` を指定し、可能なら管理者による迂回も禁止します。
+
+## v2.0.0 認証試験
+
+署名付きWebAuthn応答で全ロールのパスキーログインを確認し、User／Group Adminのpassword＋TOTPを拒否、Portal Adminの従来方式を継続する。UVなし、BE／BS、Origin／RP ID／challenge／署名／counter不正、challenge再利用、登録コード再利用／期限切れ、リセットとセッション／完了処理の競合、無効化／期限／ロック／待ち時間を検証する。Chromium仮想認証器で実template・CSP・同梱JavaScriptの登録からログインまでを検証する。

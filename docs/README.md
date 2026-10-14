@@ -2,7 +2,7 @@
 
 文書整理でも[最優先のコンセプト](../README.md#最優先のコンセプト)の削除・弱体化は禁止します。定義は現行READMEに残し、設計・UI文書から参照します。
 
-現行版はv1.9.2。[機能一覧](features.md)で対応範囲を確認し、目的別の手順を参照してください。コマンドは個別の`cd`指定がない限りリポジトリrootで実行します。
+現行版はv2.0.0。[機能一覧](features.md)で対応範囲を確認し、目的別の手順を参照してください。コマンドは個別の`cd`指定がない限りリポジトリrootで実行します。
 
 | 区分 | 文書 |
 |---|---|
@@ -13,7 +13,9 @@
 | 運用 | [ユーザー・グループ・EC2管理](operations/instances.md) |
 | 運用 | [DCV接続・アカウント同期](operations/dcv.md) |
 | 運用 | [Personal／Shared・EFS・計測・費用・Windows取り込み](operations/environments.md) |
-| 運用 | [パスワード復旧](operations/password-recovery.md) |
+| 設計 | [認証仕様・ロール別方式・同期禁止](architecture/authentication.md) |
+| 運用 | [パスキー初回登録・複数PC・管理者リセット](operations/passkeys.md) |
+| 運用 | [認証・パスキー・管理者パスワード復旧](operations/password-recovery.md) |
 | 運用 | [監査ログのgzip付きS3出力](operations/audit-s3-export.md) |
 | 運用 | [Proxy](operations/proxy.md)、[EC2 Outbound](operations/egress.md) |
 | 運用 | [GitLab／Git LFSミラー](operations/git-mirror.md) |
@@ -23,6 +25,6 @@
 | 開発 | [UI・htmxの仕様と検証](development/ui.md)、[画面キャプチャ](screenshots/) |
 | 試験 | [v1.6.0 DCVラボの作成・試験・廃棄](development/dcv-release-test.md) |
 | 調査 | [CloudShellによるAWS環境・権限調査](../tools/aws-audit/README.md) |
-| 更新 | [v1.9.2リリースノート](releases/v1.9.2.md)、[v1.9.1](releases/v1.9.1.md)、[v1.9.0](releases/v1.9.0.md)、[過去の記録](archive/README.md) |
+| 更新 | [v2.0.0リリースノート・移行](releases/v2.0.0.md)、[v1.9.2リリースノート](releases/v1.9.2.md)、[v1.9.1](releases/v1.9.1.md)、[v1.9.0](releases/v1.9.0.md)、[過去の記録](archive/README.md) |
 
 新しい説明は既存の手順へ追記し、機能の有無は`features.md`に集約します。旧版の詳細は固定tagで参照し、現行文書へ複製しません。追加・移動時はこの目次と参照リンクを更新してください。実装・自動テストの成功とAWS／DCV／Box実機受入は別に扱います。

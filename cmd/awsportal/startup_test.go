@@ -25,7 +25,7 @@ func TestProductionStartup(t *testing.T) {
 	addr := listener.Addr().String()
 	listener.Close()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestProductionStartup$")
-	cmd.Env = append(os.Environ(), "AWSPORTAL_TEST_MAIN_CHILD=1", "AWSPORTAL_DB="+filepath.Join(t.TempDir(), "main.db"), "AWSPORTAL_ADDR="+addr, "AWS_REGION=ap-northeast-1", "AWS_EC2_METADATA_DISABLED=true", "AWSPORTAL_MIRROR_ROOT=", "AWSPORTAL_PROXY_ADDR=")
+	cmd.Env = append(os.Environ(), "AWSPORTAL_TEST_MAIN_CHILD=1", "AWSPORTAL_WEBAUTHN_ORIGIN=http://localhost:8080", "AWSPORTAL_DB="+filepath.Join(t.TempDir(), "main.db"), "AWSPORTAL_ADDR="+addr, "AWS_REGION=ap-northeast-1", "AWS_EC2_METADATA_DISABLED=true", "AWSPORTAL_MIRROR_ROOT=", "AWSPORTAL_PROXY_ADDR=")
 	var output bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &output, &output
 	if err := cmd.Start(); err != nil {
