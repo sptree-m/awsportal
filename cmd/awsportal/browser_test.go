@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"github.com/sptree-m/awsportal/internal/auth"
 	awsapi "github.com/sptree-m/awsportal/internal/aws"
 	"github.com/sptree-m/awsportal/internal/mirror"
 	"github.com/sptree-m/awsportal/internal/store"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -61,7 +64,7 @@ func TestBrowserConsole(t *testing.T) {
 	if os.Getenv("AWSPORTAL_BROWSER_TEST") != "1" {
 		t.Skip("set AWSPORTAL_BROWSER_TEST=1 with Node/Playwright installed")
 	}
-	a, _ := newHandlerTestApp(t)
+	a := testPasskeyApp(t)
 	caPath, hostsPath, _ := preparationFixture(t)
 	var preparationErr error
 	a.preparation, preparationErr = loadClientPreparation(caPath, hostsPath)
@@ -75,6 +78,8 @@ func TestBrowserConsole(t *testing.T) {
 		t.Fatal(err)
 	}
 	admin, _ := a.db.UserByName(ctx, "admin")
+	key := newTestAuthenticator(t)
+	enrollTestPasskey(t, a, admin, key)
 	if err := a.db.CreateUser(ctx, "alice", "x", "user", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -105,42 +110,13 @@ func TestBrowserConsole(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /admin/two-stage", a.require(a.stageTwoPage))
-	mux.HandleFunc("GET /settlements", a.require(a.settlements))
-	mux.HandleFunc("GET /environments", a.require(a.environmentPage))
-	mux.HandleFunc("GET /admin/environments", a.require(a.environmentAdminPage))
-	mux.HandleFunc("GET /", a.require(a.dashboard))
-	mux.HandleFunc("GET /instances", a.require(a.instancesPage))
-	mux.HandleFunc("GET /instances/{id}/row", a.require(a.instanceRow))
-	mux.HandleFunc("GET /instances/{id}", a.require(a.instanceDetail))
-	mux.HandleFunc("POST /instance/{id}/{action}", a.require(a.instanceAction))
-	mux.HandleFunc("GET /admin/instances", a.require(a.instanceAdminPage))
-	mux.HandleFunc("POST /admin/instances", a.require(a.instanceAdminChange))
-	mux.HandleFunc("POST /logout", a.logout)
-	mux.HandleFunc("GET /login", a.loginPage)
-	mux.HandleFunc("GET /preparation/ca.crt", a.preparationDownload)
-	mux.HandleFunc("GET /preparation/client-setup.zip", a.preparationDownload)
-	mux.HandleFunc("GET /admin/users", a.require(a.adminUsers))
-	mux.HandleFunc("POST /admin/users/{username}/unlock", a.require(a.adminUnlockUser))
-	mux.HandleFunc("GET /manual", a.require(a.manualPage))
-	mux.HandleFunc("GET /admin/preparation/generate-preparation.py", a.require(a.preparationGeneratorDownload))
-	mux.HandleFunc("GET /admin/site", a.require(a.siteAdminPage))
-	mux.HandleFunc("POST /admin/site", a.require(a.siteAdminChange))
-	mux.HandleFunc("GET /mirrors", a.require(a.mirrorPage))
-	mux.HandleFunc("POST /mirrors", a.require(a.mirrorChange))
-	mux.HandleFunc("GET /admin/egress", a.require(a.egressPage))
-	mux.HandleFunc("POST /admin/egress", a.require(a.egressChange))
-	mux.HandleFunc("GET /admin/proxy", a.require(a.proxyAdminPage))
-	mux.HandleFunc("POST /admin/proxy", a.require(a.proxyAdminChange))
-	mux.HandleFunc("GET /admin/audit", a.require(a.adminAudit))
-	mux.HandleFunc("GET /mfa", a.require(a.mfaPage))
-	mux.HandleFunc("GET /costs", a.require(a.costDashboard))
-	mux.Handle("GET /static/", staticHandler(http.StripPrefix("/static/", http.FileServer(http.FS(web)))))
-	server := httptest.NewServer(headers(mux))
+	server := httptest.NewServer(a.handler())
 	defer server.Close()
-	cmd := exec.Command("node", "../../tests/browser-console.cjs", server.URL)
-	cmd.Env = os.Environ()
+	origin := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+	a.webauthn, _ = auth.NewWebAuthn(origin)
+	privateKey, _ := x509.MarshalPKCS8PrivateKey(key.key)
+	cmd := exec.Command("node", "../../tests/browser-console.cjs", origin)
+	cmd.Env = append(os.Environ(), "AWSPORTAL_TEST_KEY_ID="+base64.StdEncoding.EncodeToString(key.id), "AWSPORTAL_TEST_PRIVATE_KEY="+base64.StdEncoding.EncodeToString(privateKey), "AWSPORTAL_TEST_USER_HANDLE="+base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("awsportal-user-%d", admin.ID))))
 	out, err := cmd.CombinedOutput()
 	t.Log(string(out))
 	if err != nil {

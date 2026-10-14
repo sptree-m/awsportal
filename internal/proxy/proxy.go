@@ -164,6 +164,10 @@ func (p *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	audit := func(result string) {
 		p.DB.Audit(r.Context(), u.Username, "proxy.request", net.JoinHostPort(host, port), result, r.Method)
 	}
+	if err := p.DB.Audit(r.Context(), u.Username, "proxy.request", net.JoinHostPort(host, port), "attempt", r.Method); err != nil {
+		http.Error(w, "audit unavailable", 503)
+		return
+	}
 	dial := p.dial
 	if dial == nil {
 		dial = func(ctx context.Context, network, address string) (net.Conn, error) {

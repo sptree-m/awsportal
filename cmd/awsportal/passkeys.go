@@ -28,6 +28,7 @@ func (u passkeyUser) WebAuthnDisplayName() string                { return u.User
 func (u passkeyUser) WebAuthnCredentials() []webauthn.Credential { return u.keys }
 
 type passkeyChallenge struct {
+	Action                        string
 	Username                      string
 	Generation                    int64
 	Session                       webauthn.SessionData
@@ -295,7 +296,12 @@ func (a *app) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 		start(input.Username, store.DCVTokenHash(input.Code), "")
 		return
 	}
-	a.recentPasskeySession(w, r, func(u store.User, hash string) { start(u.Username, "", hash) })
+	a.recentPasskeySession(w, r, func(u store.User, hash string) {
+		if !a.consumeStepUp(w, r, "/passkeys/register") {
+			return
+		}
+		start(u.Username, "", hash)
+	})
 }
 
 func (a *app) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
@@ -368,6 +374,9 @@ func (a *app) passkeyDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.recentPasskeySession(w, r, func(u store.User, _ string) {
+		if !a.consumeStepUp(w, r, r.URL.Path) {
+			return
+		}
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err == nil {
 			err = a.db.DeletePasskey(r.Context(), u, id)
@@ -387,6 +396,9 @@ func (a *app) adminPasskeyInvite(w http.ResponseWriter, r *http.Request) {
 	a.recentPasskeySession(w, r, func(admin store.User, _ string) {
 		if admin.Role != "portal_admin" {
 			http.Error(w, "管理者のみ", 403)
+			return
+		}
+		if !a.consumeStepUp(w, r, r.URL.Path) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)

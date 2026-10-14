@@ -191,7 +191,7 @@ func (m *Manager) Tick(ctx context.Context) {
 	}
 	if e == nil {
 		task, cancel := context.WithTimeout(ctx, 10*time.Minute)
-		e = m.Sync(task, repo)
+		e = m.DB.AuditedEffect(task, "mirror-worker", "mirror.sync", strconv.FormatInt(repo.ID, 10), func() error { return m.Sync(task, repo) })
 		cancel()
 	}
 	m.DB.FinishMirrorJob(context.Background(), job, repo.Revision, e)

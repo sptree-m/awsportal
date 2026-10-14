@@ -6,6 +6,7 @@ const assert=require('node:assert/strict');
  const context=await browser.newContext();const base=process.argv[2];
  await context.addCookies([{name:'awsportal_session',value:'browser-session',url:base}]);
  const page=await context.newPage();const errors=[],external=[];let documents=0,requests=0;
+ await require('./browser-reauth.cjs').install(page,context);
  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{requests++;if(r.isNavigationRequest())documents++;if(!r.url().startsWith(base))external.push(r.url())});
  await page.goto(base);await page.locator('nav a[href="/instances"]').click();await page.waitForURL(base+'/instances');
  await page.locator('#instance-filter').fill('ADAS');assert.equal(await page.locator('tr[data-instance]:visible').count(),1);

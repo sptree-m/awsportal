@@ -266,6 +266,12 @@ func (s *Store) CompletePasskeyRegistration(ctx context.Context, u User, name st
 
 // RecordPasskeyLogin persists the counter and account login in one transaction.
 func (s *Store) RecordPasskeyLogin(ctx context.Context, u User, c *webauthn.Credential, now time.Time) error {
+	return s.recordPasskeyAuthentication(ctx, u, c, now, "login")
+}
+func (s *Store) RecordPasskeyReauthentication(ctx context.Context, u User, c *webauthn.Credential, now time.Time) error {
+	return s.recordPasskeyAuthentication(ctx, u, c, now, "reauth.passkey")
+}
+func (s *Store) recordPasskeyAuthentication(ctx context.Context, u User, c *webauthn.Credential, now time.Time, action string) error {
 	if err := auth.CheckDevicePasskey(c); err != nil {
 		return err
 	}
@@ -300,7 +306,7 @@ func (s *Store) RecordPasskeyLogin(ctx context.Context, u User, c *webauthn.Cred
 	if n != 1 {
 		return sql.ErrNoRows
 	}
-	if err = passkeyAudit(ctx, tx, u.Username, "login", u.Username, "passkey"); err != nil {
+	if err = passkeyAudit(ctx, tx, u.Username, action, u.Username, "passkey"); err != nil {
 		return err
 	}
 	return tx.Commit()

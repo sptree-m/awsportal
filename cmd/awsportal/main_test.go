@@ -111,7 +111,29 @@ func requestAs(a *app, u store.User, method, target string, body *strings.Reader
 	a.sessions[token] = session{User: u, Expires: time.Now().Add(time.Hour), AuthenticatedAt: time.Now(), LastSeen: time.Now(), Method: "passkey"}
 	r.AddCookie(&http.Cookie{Name: "awsportal_session", Value: token})
 	r.Header.Set("X-CSRF-Token", passkeyCSRF(r))
+	if method == "POST" {
+		authorizeTestStepUp(a, r, r.URL.Path)
+	}
 	return r
+}
+
+// Fixtures for non-authentication handler tests; security tests use the real
+// reauthentication endpoints and explicitly omit this fixture when attacking.
+func authorizeTestStepUp(a *app, r *http.Request, action string) {
+	if strings.HasPrefix(action, "/passkeys/register/") {
+		action = "/passkeys/register"
+	}
+	cookie, err := r.Cookie("awsportal_session")
+	if err != nil {
+		return
+	}
+	token, _ := auth.NewPasskeyToken()
+	s := a.sessions[cookie.Value]
+	s.StepUpHash = store.DCVTokenHash(token)
+	s.StepUpAction = action
+	s.StepUpExpires = time.Now().Add(time.Minute)
+	a.sessions[cookie.Value] = s
+	r.Header.Set("X-Step-Up", token)
 }
 
 func TestPortalAdminLoginRequiresTOTP(t *testing.T) {

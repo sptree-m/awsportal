@@ -102,6 +102,9 @@ func passkeyRequest(a *app, handler http.HandlerFunc, path string, body []byte, 
 		r.AddCookie(c)
 	}
 	r.Header.Set("X-CSRF-Token", passkeyCSRF(r))
+	if strings.HasPrefix(path, "/admin/") || strings.HasSuffix(path, "/delete") {
+		authorizeTestStepUp(a, r, path)
+	}
 	w := httptest.NewRecorder()
 	handler(w, r)
 	return w
@@ -396,6 +399,7 @@ func TestAdminPasskeyInviteFormRequiresRoleRecentLoginAndCSRF(t *testing.T) {
 				post.Header.Set("Origin", "https://evil.example.com")
 			}
 			post.AddCookie(cookie)
+			authorizeTestStepUp(a, post, "/admin/passkeys/invite")
 			w := httptest.NewRecorder()
 			a.require(a.adminPasskeyInvite)(w, post)
 			if mode == "valid" {

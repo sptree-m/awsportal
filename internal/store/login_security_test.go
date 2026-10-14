@@ -297,7 +297,16 @@ func TestBreakGlassClearsAdminLockWithAudit(t *testing.T) {
 	admin, _ = s.UserByName(ctx, admin.Username)
 	devices, _ := s.MFADevices(ctx, admin.ID)
 	entries, _ := s.AuditEntries(ctx, 200)
-	if admin.LockedAt != 0 || admin.FailedLoginAttempts != 0 || !admin.MustChangePassword || admin.TOTPSecret != "NEW" || len(devices) != 0 || len(entries) != 2 {
+	var recoveries, unlocks int
+	for _, entry := range entries {
+		if entry.Action == "admin.recovery" {
+			recoveries++
+		}
+		if entry.Action == "account.unlock" {
+			unlocks++
+		}
+	}
+	if admin.LockedAt != 0 || admin.FailedLoginAttempts != 0 || !admin.MustChangePassword || admin.TOTPSecret != "NEW" || len(devices) != 0 || recoveries != 1 || unlocks != 1 {
 		t.Fatalf("invalid recovery: %+v devices=%d events=%d", admin, len(devices), len(entries))
 	}
 }

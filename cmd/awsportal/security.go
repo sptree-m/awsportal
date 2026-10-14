@@ -19,6 +19,7 @@ func (a *app) browserMutation(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method == "GET" || r.Method == "HEAD" || r.Method == "OPTIONS" {
 		return true
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
 	origin := r.Header.Get("Origin")
 	if a.webauthn != nil && origin != "" && origin != "null" && origin != a.webauthn.Config.RPOrigins[0] {
 		http.Error(w, "接続先を確認してください", http.StatusForbidden)
@@ -62,6 +63,12 @@ func (a *app) requireRecentAdmin(next http.HandlerFunc) http.HandlerFunc {
 		a.mu.Unlock()
 		if s.AuthenticatedAt.IsZero() || time.Since(s.AuthenticatedAt) > 10*time.Minute {
 			loginRedirect(w, r)
+			return
+		}
+		// A password+TOTP recovery login can perform only its mandatory first
+		// password change. All other operations need a separate proof.
+		recovery := u.MustChangePassword && r.URL.Path == "/change-password" && s.Method == "password_totp" && time.Since(s.AuthenticatedAt) < 2*time.Minute
+		if r.Method == "POST" && !recovery && !a.consumeStepUp(w, r, r.URL.Path) {
 			return
 		}
 		next(w, r)
@@ -143,7 +150,7 @@ func (a *app) limitAuthentication(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if r.Method == "POST" && (r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/passkeys/login/") || strings.HasPrefix(r.URL.Path, "/passkeys/register/")) {
+		if r.Method == "POST" && (r.URL.Path == "/login" || r.URL.Path == "/reauthenticate" || strings.HasPrefix(r.URL.Path, "/passkeys/reauth/") || strings.HasPrefix(r.URL.Path, "/passkeys/login/") || strings.HasPrefix(r.URL.Path, "/passkeys/register/")) {
 			if !a.limiter.allow(a.limiter.peer(r), time.Now()) {
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, "試行が多すぎます。少し待って再試行してください", http.StatusTooManyRequests)

@@ -1,5 +1,8 @@
 (()=>{"use strict";
 const csrf=()=>document.querySelector('meta[name="csrf-token"]')?.content||"";
+const stepup=action=>{try{const proof=JSON.parse(sessionStorage.getItem('awsportal-stepup')||'null');return proof?.action===action?proof.token:''}catch{return ''}};
+document.addEventListener("submit",e=>{const form=e.target;if(form.method.toLowerCase()!=="post")return;const action=new URL(form.action,location.href).pathname;const token=stepup(action);if(token){let field=form.querySelector('input[name="stepup"]');if(!field){field=document.createElement("input");field.type="hidden";field.name="stepup";form.append(field)}field.value=token}},true);
+document.addEventListener("htmx:configRequest",e=>{const action=new URL(e.detail.path,location.href).pathname;const token=stepup(action);if(token)e.detail.headers["X-Step-Up"]=token});
 document.addEventListener("submit",e=>{const form=e.target;if(form.method.toLowerCase()!=="post")return;let field=form.querySelector('input[name="csrf"]');if(!field){field=document.createElement("input");field.type="hidden";field.name="csrf";form.append(field)}field.value=csrf()},true);
 document.addEventListener("htmx:configRequest",e=>{e.detail.headers["X-CSRF-Token"]=csrf()});
 // Document listeners survive boosted navigation and resolve the current controls.

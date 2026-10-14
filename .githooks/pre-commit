@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 echo '=== awsportal: コミット前必須テスト ==='
-./scripts/test-all.sh
+(
+  # Git exports worktree/index locations to hooks. Integration tests create
+  # their own repositories and must never inherit the caller's Git directory.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
+  unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX GIT_IMPLICIT_WORK_TREE
+  ./scripts/test-all.sh
+)
 echo '=== 全テスト成功: コミットを許可します ==='

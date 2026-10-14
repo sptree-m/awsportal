@@ -75,7 +75,7 @@ func Open(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.DB.Close() }
 func (s *Store) Migrate(ctx context.Context) error {
-	if _, e := s.DB.ExecContext(ctx, schema+securitySchema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema+jobMetricsSchema+poolSchema+billingSchema+importSchema+parquetSchema+billingJobSchema+storageSchema+goldenSchema+desktopSchema+storageMetricSchema+operationMetricSchema+inventorySchema+volumeSchema+reservationSchema+passkeySchema); e != nil {
+	if _, e := s.DB.ExecContext(ctx, schema+securitySchema+auditOperationSchema+proxySchema+egressSchema+mirrorSchema+siteSchema+dcvAgentSchema+environmentSchema+jobMetricsSchema+poolSchema+billingSchema+importSchema+parquetSchema+billingJobSchema+storageSchema+goldenSchema+desktopSchema+storageMetricSchema+operationMetricSchema+inventorySchema+volumeSchema+reservationSchema+passkeySchema); e != nil {
 		return e
 	}
 	for _, q := range []string{"ALTER TABLE dcv_agents ADD COLUMN browser_blocked INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_policy_json TEXT NOT NULL DEFAULT ''", "ALTER TABLE instances ADD COLUMN dcv_policy_revision INTEGER NOT NULL DEFAULT 1", "ALTER TABLE dcv_agents ADD COLUMN applied_revision INTEGER NOT NULL DEFAULT 0", "ALTER TABLE instances ADD COLUMN dcv_connect_mode TEXT NOT NULL DEFAULT 'native'", "ALTER TABLE proxy_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'domain'", "ALTER TABLE users ADD COLUMN last_login_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_at INTEGER NOT NULL DEFAULT 0", "ALTER TABLE users ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''"} {
@@ -178,8 +178,12 @@ func (s *Store) DueSchedules(ctx context.Context, t time.Time) ([]struct {
 	}
 	return out, rows.Err()
 }
-func (s *Store) Audit(ctx context.Context, actor, action, target, result, detail string) {
-	_, _ = s.DB.ExecContext(ctx, "INSERT INTO audit_log(actor,action,target,result,detail) VALUES(?,?,?,?,?)", actor, action, target, result, detail)
+func (s *Store) Audit(ctx context.Context, actor, action, target, result, detail string) error {
+	_, err := s.DB.ExecContext(ctx, "INSERT INTO audit_log(actor,action,target,result,detail) VALUES(?,?,?,?,?)", actor, action, target, result, detail)
+	if err != nil {
+		AuditFailure(action)
+	}
+	return err
 }
 
 const schema = `PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;
@@ -264,6 +268,9 @@ func (s *Store) consumeDCVToken(ctx context.Context, tokenHash, sessionID, awsID
 	if n != 1 {
 		return "", false
 	}
+	if e = passkeyAudit(ctx, tx, username, "dcv.auth", awsID, "instance-bound one-time token consumed"); e != nil {
+		return "", false
+	}
 	if e = tx.Commit(); e != nil {
 		return "", false
 	}
@@ -332,6 +339,13 @@ func (s *Store) changePassword(ctx context.Context, userID int64, hash string, g
 		return sql.ErrNoRows
 	}
 	if err = revokeCredentialsTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	var username string
+	if err = tx.QueryRowContext(ctx, "SELECT username FROM users WHERE id=?", userID).Scan(&username); err != nil {
+		return err
+	}
+	if err = passkeyAudit(ctx, tx, username, "password.change", username, "credentials revoked"); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -406,18 +420,34 @@ func (s *Store) AddMFADevice(ctx context.Context, userID int64, name, secret str
 	if sealErr != nil {
 		return 0, sealErr
 	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
 	var n int
-	if e := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM mfa_devices WHERE user_id=?", userID).Scan(&n); e != nil {
+	if e := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM mfa_devices WHERE user_id=?", userID).Scan(&n); e != nil {
 		return 0, e
 	}
 	if n >= 3 {
 		return 0, fmt.Errorf("MFA device limit reached")
 	}
-	res, e := s.DB.ExecContext(ctx, "INSERT INTO mfa_devices(user_id,name,secret,verified) VALUES(?,?,?,0)", userID, name, secret)
+	res, e := tx.ExecContext(ctx, "INSERT INTO mfa_devices(user_id,name,secret,verified) VALUES(?,?,?,0)", userID, name, secret)
 	if e != nil {
 		return 0, e
 	}
-	return res.LastInsertId()
+	id, e := res.LastInsertId()
+	if e != nil {
+		return 0, e
+	}
+	var username string
+	if e = tx.QueryRowContext(ctx, "SELECT username FROM users WHERE id=?", userID).Scan(&username); e != nil {
+		return 0, e
+	}
+	if e = passkeyAudit(ctx, tx, username, "mfa.enroll.start", username, name); e != nil {
+		return 0, e
+	}
+	return id, tx.Commit()
 }
 func (s *Store) MFADevice(ctx context.Context, userID, id int64) (MFADevice, error) {
 	var d MFADevice
@@ -457,6 +487,13 @@ func (s *Store) DeleteMFADevice(ctx context.Context, userID, id int64) error {
 		return err
 	}
 	if err = revokeCredentialsTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	var username string
+	if err = tx.QueryRowContext(ctx, "SELECT username FROM users WHERE id=?", userID).Scan(&username); err != nil {
+		return err
+	}
+	if err = passkeyAudit(ctx, tx, username, "mfa.device.delete", username, "credentials revoked"); err != nil {
 		return err
 	}
 	return tx.Commit()

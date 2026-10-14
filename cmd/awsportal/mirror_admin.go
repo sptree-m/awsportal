@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (a *app) mirrorPage(w http.ResponseWriter, r *http.Request) { a.mirrorRender(w, r, "") }
@@ -86,6 +87,17 @@ func (a *app) mirrorChange(w http.ResponseWriter, r *http.Request) {
 	} else {
 		if u.Role != "portal_admin" {
 			http.Error(w, "管理者のみ実行できます", 403)
+			return
+		}
+		cookie, _ := r.Cookie("awsportal_session")
+		a.mu.Lock()
+		s := a.sessions[cookie.Value]
+		a.mu.Unlock()
+		if s.AuthenticatedAt.IsZero() || time.Since(s.AuthenticatedAt) > 10*time.Minute {
+			loginRedirect(w, r)
+			return
+		}
+		if !a.consumeStepUp(w, r, "/mirrors") {
 			return
 		}
 		switch op {
