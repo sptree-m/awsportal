@@ -15,7 +15,7 @@ bash lab/destroy.sh
 
 専用VPC / public subnet / IGW / route table / Portal SG / Test SG / Portal・Test IAM role + profile / t4g.micro x2 / encrypted gp3 8GiB + 16GiBを作成します。NAT Gateway・ALB・EIPは作成しません。SSMは管理者の導入・試験用で、利用者にAWS権限を付与しません。
 
-一時ラボでは8080/TCP（Portal）と指定TCPポート（DCV、既定8443）をALLOWED_CIDR（既定0.0.0.0/0）に許可します。CloudShellのヘルス確認とブラウザ接続元の両方を許可する必要があります。Portal内部認証用8444/TCPはTest SGからだけ許可します。認証通信は専用証明書を検証するHTTPSです。Portalは固定ホスト名 `portal.awsportal.test` と自己署名HTTPS（8080）を使用します。create.shが表示する公開CAを試験PCで信頼し、表示されたIPとホスト名をhostsへ登録してください。`LAB_PORTAL_HOST`で名前を変更できます。DCVも一時試験用HTTPSです。認証の迂回は提供せず、管理者password＋TOTPまたは同期しないパスキーを使用します。
+一時ラボでは8080/TCP（Portal）と指定TCPポート（DCV、既定8443）をALLOWED_CIDR（既定0.0.0.0/0）に許可します。CloudShellのヘルス確認とブラウザ接続元の両方を許可する必要があります。Portal内部認証用8444/TCPはTest SGからだけ許可します。認証通信は専用証明書を検証するHTTPSです。Portalは固定ホスト名 `portal.awsportal.test` と自己署名HTTPS（8080）を使用します。create.shが表示する公開CAを試験PCで信頼し、表示されたIPとホスト名をhostsへ登録してください。`LAB_PORTAL_HOST`で名前を変更できます。ラボはDCV Agent用の経路制限も行うnginxを使い、Portalに `AWSPORTAL_HTTP_MODE=http` を明示して内部HTTP待受とします。通常の導入は[Go単体のHTTPS](../docs/deployment/setup.md#go単体のhttpsデフォルト)が既定です。DCVも一時試験用HTTPSです。認証の迂回は提供せず、管理者password＋TOTPまたは同期しないパスキーを使用します。
 
 create.shはARM64・EC2 running・Portal healthを検証します。test-dcv.shは実DCVサービス・OSユーザー／仮想セッション・ポータルトークンによる外部認証と再利用拒否を検証します。画面描画と入力はDCVネイティブクライアントで確認してください。
 

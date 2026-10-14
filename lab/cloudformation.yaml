@@ -188,6 +188,7 @@ Resources:
               WorkingDirectory=/var/lib/awsportal
               Environment=AWSPORTAL_DB=/var/lib/awsportal/awsportal.db
               Environment=AWSPORTAL_ADDR=127.0.0.1:8081
+              Environment=AWSPORTAL_HTTP_MODE=http
               Environment=AWSPORTAL_DCV_PORT=${DCVPort}
               Environment=AWSPORTAL_COOKIE_SECURE=1
               Environment=AWSPORTAL_WEBAUTHN_ORIGIN=https://${LabPortalHost}:8080

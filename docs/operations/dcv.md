@@ -80,7 +80,7 @@ sudo systemctl status awsportal-dcv-agent --no-pager
 sudo dcv list-sessions
 ```
 
-5. SGに利用端末からの指定TCPポート（既定8443）を許可します。ポータルAPIはDCV EC2からだけ到達できるHTTPS経路で公開し、信頼できるリバースプロキシでTLSを終端し、Authorizationを引き継いでください。22/3389の開放・利用者へのSSM権限付与は不要です。
+5. SGに利用端末からの指定TCPポート（既定8443）を許可します。ポータルAPIはDCV EC2からだけ到達できるHTTPS経路で公開し、既定のGo HTTPS待受でTLSを終端してください。HTTPSリバースプロキシ構成も選択でき、その場合はAuthorizationを引き継いでください。[TLS設定](../deployment/setup.md#ローカルhttpsと初回端末準備)を参照してください。22/3389の開放・利用者へのSSM権限付与は不要です。
 6. ユーザー／グループを割り当て、準備済みユーザーIDを確認して接続します。ネイティブ方式では利用端末へのDCVクライアント導入が必要です。
 
 EC2のIAMロールには、当該リージョンの `arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*` に対する `s3:GetObject` を許可してください。DCVからS3へのHTTPS到達性も必要です。ラボではこの読み取り権限を設定済みで、S3バケットは新規作成しません。

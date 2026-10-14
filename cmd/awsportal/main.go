@@ -62,6 +62,10 @@ type app struct {
 }
 
 func main() {
+	transport, err := loadPortalTransport()
+	if err != nil {
+		log.Fatal("portal transport startup failed: ", err)
+	}
 	dcvPort, err := parseDCVPort(env("AWSPORTAL_DCV_PORT", "8443"))
 	if err != nil {
 		log.Fatal(err)
@@ -244,9 +248,9 @@ func main() {
 	mux.HandleFunc("POST /api/dcv/agent/heartbeat", a.dcvAgentHeartbeat)
 	mux.HandleFunc("POST /api/dcv/agent/auth", a.dcvAgentAuth)
 	mux.Handle("GET /static/", staticHandler(http.StripPrefix("/static/", http.FileServer(http.FS(web)))))
-	s := &http.Server{Addr: env("AWSPORTAL_ADDR", ":8080"), Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
-	log.Printf("listen %s", s.Addr)
-	log.Fatal(s.ListenAndServe())
+	s := &http.Server{Addr: transport.addr, Handler: headers(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, TLSConfig: transport.tlsConfig}
+	log.Printf("portal listen %s://%s", transport.mode, s.Addr)
+	log.Fatal(transport.serve(s))
 }
 func health(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
