@@ -29,8 +29,13 @@ const {chromium}=require('playwright');
    await context.clearCookies();
   }
   await page.goto(base+'/login');await page.locator('details summary').first().click();await page.locator('form[action="/login"] [name=username]').fill('portal_admin');await page.locator('form[action="/login"] [name=password]').fill('Correct-Password-42');await page.locator('form[action="/login"] [name=totp]').fill(process.env.AWSPORTAL_TEST_TOTP);await page.locator('form[action="/login"] button').click();await page.waitForURL(base+'/passkeys');
+  await context.clearCookies();await page.goto(base+'/login');
+  await page.route('**/passkeys/login/begin',()=>{});
+  await page.locator('form[data-passkey] [name=username]').fill('user');await page.locator('form[data-passkey] button').click();
+  await page.locator('[data-passkey-error]').filter({hasText:'通信がタイムアウトしました'}).waitFor({state:'visible',timeout:25000});
+  assert.equal(await page.locator('form[data-passkey] button').isEnabled(),true,'timeout must allow retry');await page.unroute('**/passkeys/login/begin');
   assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
   await cdp.send('WebAuthn.removeVirtualAuthenticator',{authenticatorId:authenticator.authenticatorId});
-  console.log('PASS: enrollment, no enrollment session, user/admin passkey login, admin TOTP, multiple keys, deletion, five widths, CSP and local resources');
+  console.log('PASS: enrollment, no enrollment session, user/admin passkey login, admin TOTP, multiple keys, deletion, timeout/retry, five widths, CSP and local resources');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exit(1)});

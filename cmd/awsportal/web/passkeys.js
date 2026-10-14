@@ -2,10 +2,14 @@
 const decode=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
 const encode=b=>b==null?null:btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 async function request(path,data){
- const response=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
- if(response.redirected){location.assign(response.url);throw new Error('ログインし直してください');}
- if(!response.ok)throw new Error(await response.text());
- return response.json();
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),20000);
+ try{
+  const response=await fetch(path,{method:'POST',credentials:'same-origin',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  if(response.redirected){location.assign(response.url);throw new Error('ログインし直してください');}
+  if(!response.ok)throw new Error(await response.text());
+  return await response.json();
+ }catch(error){if(error.name==='AbortError')throw new Error('通信がタイムアウトしました。接続を確認して再試行してください。');throw error;}
+ finally{clearTimeout(timer);}
 }
 document.addEventListener('submit',async event=>{
  const form=event.target;if(!form.matches('form[data-passkey]'))return;
