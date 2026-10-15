@@ -1,6 +1,6 @@
 # awsportal
 
-AWS上のEC2／Amazon DCV環境を管理する、イントラネット向け軽量ポータルです。v2.1.1の変更と移行手順は[リリースノート](docs/releases/v2.1.1.md)を参照してください。
+AWS上のEC2／Amazon DCV環境を管理する、イントラネット向け軽量ポータルです。v2.1.2の変更と移行手順は[リリースノート](docs/releases/v2.1.2.md)を参照してください。
 
 ## 最優先のコンセプト
 
@@ -30,7 +30,7 @@ UIはGo SSR・同梱htmx・自前CSS・ローカルfontで構成し、外部CDN�
 
 PortalはGo単体のHTTPS待受が既定です。サーバー証明書と秘密鍵を設定します。HTTPSリバースプロキシを使う場合は `AWSPORTAL_HTTP_MODE=http` で内部HTTP待受へ切り替えます。既存のHTTP構成から更新する場合も明示設定が必要です。[TLS設定](docs/deployment/setup.md#ローカルhttpsと初回端末準備)を参照してください。
 
-[クイック導入ガイド](docs/deployment/quickstart.md)でv2.1.1の新規導入を進められます。[文書目次](docs/README.md)から[現行機能](docs/features.md)、[構築・初期設定](docs/deployment/setup.md)、[管理者指定ネットワーク](docs/deployment/organization-network.md)も参照してください。監査S3出力、Shared自動増減、Windows取り込みは既定OFFです。
+[クイック導入ガイド](docs/deployment/quickstart.md)でv2.1.2の新規導入を進められます。[文書目次](docs/README.md)から[現行機能](docs/features.md)、[構築・初期設定](docs/deployment/setup.md)、[管理者指定ネットワーク](docs/deployment/organization-network.md)も参照してください。監査S3出力、Shared自動増減、Windows取り込みは既定OFFです。
 
 ## 開発
 

@@ -1,6 +1,6 @@
 # 構築・初期設定
 
-新規導入の流れは[v2.1.1 クイック導入ガイド](quickstart.md)を参照。この文書では構成ごとの詳細を扱う。
+新規導入の流れは[v2.1.2 クイック導入ガイド](quickstart.md)を参照。この文書では構成ごとの詳細を扱う。
 
 コマンドはリポジトリrootで実行する。指定VPC・Subnet・TGW・IP範囲は[組織ネットワーク](organization-network.md)、設計・権限境界は[アーキテクチャ](../architecture/overview.md)を参照。
 
