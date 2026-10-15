@@ -19,6 +19,7 @@ docs/architecture/authentication.md
 docs/architecture/overview.md
 docs/archive/README.md
 docs/deployment/organization-network.md
+docs/deployment/quickstart.md
 docs/deployment/setup.md
 docs/development/dcv-release-test.md
 docs/development/testing.md

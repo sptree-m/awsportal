@@ -6,6 +6,7 @@
 
 | 区分 | 文書 |
 |---|---|
+| 導入 | [v2.1.1 クイック導入ガイド（配布物・HTTPS・初回ログイン・DCV）](deployment/quickstart.md) |
 | 導入 | [構築・アカウント・EC2初期設定](deployment/setup.md) |
 | 導入 | [ローカルHTTPSの設定](deployment/setup.md#ローカルhttpsと初回端末準備)、[ログイン前のCA証明書・hosts更新スクリプト配布](operations/site-customization.md#ログイン前の証明書配布とhosts設定) |
 | 導入 | [管理者指定VPC・Subnet・TGW・IP範囲](deployment/organization-network.md)、[差し替え設定例](../terraform/examples/org-existing/README.md) |
