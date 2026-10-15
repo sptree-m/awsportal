@@ -1,6 +1,6 @@
-# v2.1.1 クイック導入ガイド
+# v2.1.2 クイック導入ガイド
 
-新規のPortal EC2へARM64配布物を配置し、管理者ログインと最初のDCV接続までを確認します。以下はUbuntu 24.04／ARM64、Go単体のHTTPS待受を使う例です。配布バイナリを使うためGoのインストールは不要です。既存環境の更新は[リリースノート](../releases/v2.1.1.md#更新受入)、構成の詳細は[構築・初期設定](setup.md)を参照してください。
+新規のPortal EC2へARM64配布物を配置し、管理者ログインと最初のDCV接続までを確認します。以下はUbuntu 24.04／ARM64、Go単体のHTTPS待受を使う例です。配布バイナリを使うためGoのインストールは不要です。既存環境の更新は[リリースノート](../releases/v2.1.2.md#更新受入)、構成の詳細は[構築・初期設定](setup.md)を参照してください。
 
 | 目的 | 進め方 |
 |---|---|
@@ -28,22 +28,22 @@
 
 IAMの管理対象ARNと通信先は[組織ネットワーク](organization-network.md)で限定します。Agent APIの経路ごとの接続元制限は、組織の承認済みL7制御等で設定します。nginx等でHTTPSを終端する構成は[別の設定例](setup.md#httpsリバースプロキシhttpバックエンド任意)を使ってください。
 
-## 2. v2.1.1の配布物を取得する
+## 2. v2.1.2の配布物を取得する
 
-Portal EC2の管理者用Bashで実行します。`$HOME/awsportal-v211-package`は新しい作業ディレクトリとして作成します。
+Portal EC2の管理者用Bashで実行します。`$HOME/awsportal-v212-package`は新しい作業ディレクトリとして作成します。
 
 ```bash
 set -euo pipefail
 umask 077
-mkdir -m 700 "$HOME/awsportal-v211-package"
-cd "$HOME/awsportal-v211-package"
-ASSET=awsportal-v2.1.1-linux-arm64.tar.gz
+mkdir -m 700 "$HOME/awsportal-v212-package"
+cd "$HOME/awsportal-v212-package"
+ASSET=awsportal-v2.1.2-linux-arm64.tar.gz
 ```
 
 GitHubへ接続できる場合は、同じBashで取得します。
 
 ```bash
-RELEASE=https://github.com/sptree-m/awsportal/releases/download/v2.1.1
+RELEASE=https://github.com/sptree-m/awsportal/releases/download/v2.1.2
 curl -fL --retry 5 "$RELEASE/$ASSET" -o "$ASSET"
 curl -fL --retry 5 "$RELEASE/$ASSET.sha256" -o "$ASSET.sha256"
 ```
@@ -51,7 +51,7 @@ curl -fL --retry 5 "$RELEASE/$ASSET.sha256" -o "$ASSET.sha256"
 **GitHubへ接続できない場合:** 上のcurlは実行せず、接続できる管理端末で同じ2ファイルを取得・検証し、非公開S3や社内配布サーバーなど承認済みの経路で上記ディレクトリへ搬入します。AWS CLIと対象オブジェクトへの読取権限がある場合のS3からの取得例：
 
 ```bash
-ARTIFACTS_S3=s3://YOUR-PRIVATE-BUCKET/awsportal/v2.1.1
+ARTIFACTS_S3=s3://YOUR-PRIVATE-BUCKET/awsportal/v2.1.2
 aws s3 cp "$ARTIFACTS_S3/$ASSET" "$ASSET" --region ap-northeast-1
 aws s3 cp "$ARTIFACTS_S3/$ASSET.sha256" "$ASSET.sha256" --region ap-northeast-1
 ```
@@ -61,26 +61,26 @@ aws s3 cp "$ARTIFACTS_S3/$ASSET.sha256" "$ASSET.sha256" --region ap-northeast-1
 搬入の場合も、同じBashで以下の検証から続けます。チェックサムの配布元も管理し、検証失敗時は配置しません。
 
 ```bash
-cd "$HOME/awsportal-v211-package"
-ASSET=awsportal-v2.1.1-linux-arm64.tar.gz
+cd "$HOME/awsportal-v212-package"
+ASSET=awsportal-v2.1.2-linux-arm64.tar.gz
 # 公開チェックサムのファイル名にはdist/が付くため、ハッシュを比較する。
 EXPECTED="$(awk 'NR==1 {print $1}' "$ASSET.sha256")"
 [[ "$EXPECTED" =~ ^[0-9a-fA-F]{64}$ ]]
 test "$EXPECTED" = "$(sha256sum "$ASSET" | awk '{print $1}')"
 mkdir -m 700 package
 tar -xzf "$ASSET" -C package
-test "$(tr -d '[:space:]' < package/VERSION)" = 2.1.1
+test "$(tr -d '[:space:]' < package/VERSION)" = 2.1.2
 test -s package/awsportal
 test -s package/awsportal-admin
 ```
 
 ## 3. バイナリとHTTPS証明書を配置する
 
-以下は新規ホスト用です。既存のサービスやDBへ上書きせず、更新時は[バックアップ・鍵管理・切り戻し](../releases/v2.1.1.md#更新受入)を先に行ってください。
+以下は新規ホスト用です。既存のサービスやDBへ上書きせず、更新時は[バックアップ・鍵管理・切り戻し](../releases/v2.1.2.md#更新受入)を先に行ってください。
 
 ```bash
 test "$(uname -m)" = aarch64
-cd "$HOME/awsportal-v211-package"
+cd "$HOME/awsportal-v212-package"
 sudo useradd --system --user-group --home-dir /var/lib/awsportal --shell /usr/sbin/nologin awsportal
 sudo install -d -o awsportal -g awsportal -m 0700 /var/lib/awsportal /var/lib/awsportal-secrets
 sudo install -d -o root -g awsportal -m 0750 /etc/awsportal /etc/awsportal/tls
@@ -153,9 +153,9 @@ curl --fail --show-error --cacert company-ca.pem https://portal.company.example/
 ## 5. 初回ログインと最初のDCV接続を確認する
 
 1. 信頼済みHTTPSの固定名でPortalを開き、`admin01`のpassword＋TOTPでログインします。初回password変更を求められた場合は変更して再ログインします。TOTPは直前に成功したコードを再利用せず次のコードを使います。
-2. 「パスキー」で管理者端末の鍵を登録します。v2.1.1では追加・削除や保護された管理操作ごとに本人確認が必要です。最初は現在のpassword＋TOTPで確認し、戻った画面でもう一度操作します。確認結果は2分以内・1回限りです。登録後はパスキーでもログインできることを確認します。
+2. 「パスキー」で管理者端末の鍵を登録します。v2.1.1以降は追加・削除や保護された管理操作ごとに本人確認が必要です。最初は現在のpassword＋TOTPで確認し、戻った画面でもう一度操作します。確認結果は2分以内・1回限りです。登録後はパスキーでもログインできることを確認します。
 3. Usersで通常ユーザーを作成し、本人確認後に30分有効の登録コードを渡します。本人のPCで`/passkeys/enroll`から端末固定型パスキーを登録します。通常User／Group Adminの通常ログインはパスキーのみです。
-4. Instance Adminで管理対象EC2のID・名前・DCVホストを登録し、EC2専用認証キーを発行します。対象EC2へ同じv2.1.1の検証済み配布物を展開し、[DCV導入手順](../operations/dcv.md#導入手順)に従って`dcv/install.sh`、root所有0600の`/etc/awsportal-dcv/config.json`、公開CA、Agentサービスを設定します。認証キーはEC2ごとに分けます。
+4. Instance Adminで管理対象EC2のID・名前・DCVホストを登録し、EC2専用認証キーを発行します。対象EC2へ同じv2.1.2の検証済み配布物を展開し、[DCV導入手順](../operations/dcv.md#導入手順)に従って`dcv/install.sh`、root所有0600の`/etc/awsportal-dcv/config.json`、公開CA、Agentサービスを設定します。認証キーはEC2ごとに分けます。
 5. ユーザーまたはグループをEC2へ割り当て、Agentの同期と準備完了を待ちます。本人でログインして「接続」を押し、ネイティブクライアントでデスクトップが開くことを確認します。DCVの表示用証明書も対象ホストを検証できるよう準備してください。
 
 導入完了の確認項目：
@@ -165,7 +165,7 @@ curl --fail --show-error --cacert company-ca.pem https://portal.company.example/
 - 割り当て解除後の同期で対象セッションを終了し、新しい接続を拒否する。
 - 管理者の両ログイン方式、操作単位の本人確認、監査記録を確認する。監査S3出力・Shared自動増減・Windows取り込みは必要な受入後に有効化する。
 
-詳細な受入は[DCV試験手順](../development/dcv-release-test.md#ポータルネイティブクライアント試験)と[v2.1.1の受入項目](../releases/v2.1.1.md#検証)を参照してください。
+詳細な受入は[DCV試験手順](../development/dcv-release-test.md#ポータルネイティブクライアント試験)と[v2.1.2の受入項目](../releases/v2.1.2.md#検証)を参照してください。
 
 ## 困ったとき
 
