@@ -34,6 +34,8 @@ PortalはGo単体のHTTPS待受が既定です。サーバー証明書と秘密�
 
 本番構築では[制約確認・既存資源利用・CloudFormation・受入と復旧の手順](docs/deployment/production/README.md)を参照してください。付属のCloudFormationは全新規基盤の例で、既存資源切替・アプリ設定・バックアップは含みません。
 
+組織内の基本構成はPrivate Subnetと社内／VPN経由です。固定Portal・DCV EC2の公開IPv4例は別構成であり、Shared／Windows動的起動の非公開ネットワーク契約には適用しません。
+
 ## 開発
 
 `./scripts/setup-dev.sh`でpre-commit hookを有効化します。コミット前の`./scripts/test-all.sh`成功が必須で、`--no-verify`は禁止です。GitHub側でもPR・必須CI成功を要求します。[テスト方針](docs/development/testing.md)を参照してください。

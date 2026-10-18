@@ -1,6 +1,6 @@
 # awsportal 本番環境立ち上げマニュアル
 
-版：1.0／対象アプリケーション：v2.1.3／対象：AWS基盤管理者・Portal管理者
+版：1.1／対象アプリケーション：v2.1.3／対象：AWS基盤管理者・Portal管理者
 
 この文書は、既存リソースや組織の指定値を優先し、awsportalと管理対象EC2・Amazon DCVを本番稼働させるための作業手順です。作業場所、設定の意味、確認方法、次へ進める条件を順に記載します。
 
@@ -9,8 +9,8 @@
 | 項目 | 今回の方針／調整条件 |
 |---|---|
 | リージョン | 東京 `ap-northeast-1` を例とする。組織指定があれば置き換える |
-| 利用経路 | VPNなし。PortalとDCVの固定公開IPv4へ接続する |
-| 接続元 | 現在の希望は全IPv4 `0.0.0.0/0`。対象ポートはPortal TCP/443・DCV TCP/8443のみ。組織の指定値があればそちらに合わせる |
+| 利用経路 | 本書の具体例はVPNなしの公開IPv4構成。Portalと固定DCV EC2のEIPへ接続する |
+| 接続元 | 付属テンプレートの例は全IPv4 `0.0.0.0/0`。対象ポートはPortal TCP/443・DCV TCP/8443のみ。組織の指定値があればそちらに合わせる |
 | 名前と証明書 | 公開ドメイン購入なし。固定内部名とMacのhosts、専用CAまたは組織CAを使用する |
 | 初期規模 | Portal 1台・DCV 1台。人数・アプリ・CPUアーキテクチャの要件でサイジングする |
 | データと可用性 | 単一AZは停止・障害時の中断を許容する構成。必要なRPO/RTOや可用性を満たせなければ設計を変更する |
@@ -19,7 +19,17 @@
 
 「ドメインなし」は「ホスト名なし」ではありません。PortalのWebAuthnには固定ホスト名が必要です。例は `portal.awsportal.internal` と `desktop01.awsportal.internal` です。hostsだけで接続できるのは、設定済みの端末に限られます。専用CAの信頼設定も端末ごとに必要です。
 
-### 1.1 既存ファイルの位置付け
+### 1.1 既存の構築手順との関係
+
+| 構成 | 使用する手順 | 適用範囲 |
+|---|---|---|
+| 組織管理のPrivate Subnet・社内/VPN/TGW経由 | [構築・初期設定](../setup.md)、[組織ネットワーク](../organization-network.md) | 既存の基本構成。Public IPなし・直接IGW/NATなし等のネットワーク契約を維持する |
+| 公開IPv4による固定Portal・固定DCV EC2 | 本書の公開構成例 | 公開接続を採用できる独立した構成。付属CloudFormationは全新規基盤のみで、組織Private構成へそのまま適用しない |
+| Shared自動増減・Windows Importの動的起動 | [組織ネットワーク](../organization-network.md)と[環境運用](../../operations/environments.md) | 本書の公開EC2は、非公開ネットワークの検査を伴う`managed-profile`／`approved_pools`に登録しない。検査を無効化しない |
+
+所有権・既存参照・変更セット・復旧の確認手順は共通です。Private構成ではEIP、Internet Gateway、全IPv4公開等を採用せず、組織の承認経路へ読み替えます。公開構成でも[アーキテクチャの本番運用要件](../../architecture/overview.md#本番運用の要件)は維持し、外向き通信のAllowlist、監査・監視・バックアップを別途実装します。付属SGのTCP/80・443全IPv4送信許可だけでは、宛先Allowlist要件を満たしません。
+
+### 1.2 既存ファイルの位置付け
 
 | ファイル | 役割 | そのまま使える範囲 |
 |---|---|---|
@@ -124,8 +134,8 @@ AccessDeniedのときは対象API、実行主体、時刻、Request IDを記録�
 
 | 接続元 | 接続先 | ポート | 設定する意味 |
 |---|---|---|---|
-| 利用端末（現希望：全IPv4） | PortalのEIP | TCP/443 | nginxのHTTPS。ログインと利用画面 |
-| 利用端末（現希望：全IPv4） | DCVのEIP | TCP/8443 | DCVネイティブクライアント。Web Viewerは使用しない |
+| 利用端末（公開例：全IPv4） | PortalのEIP | TCP/443 | nginxのHTTPS。ログインと利用画面 |
+| 利用端末（公開例：全IPv4） | DCVのEIP | TCP/8443 | DCVネイティブクライアント。Web Viewerは使用しない |
 | DCVのprivate IP/SG | Portalのprivate IP | TCP/8444 | TLSで保護したAgent APIのみ |
 | nginx | 同じPortal EC2の`127.0.0.1` | TCP/8080 | 公開しないPortalバックエンド |
 | DCVサービス | 同じDCV EC2の`127.0.0.1` | TCP/8444 | ローカル外部認証ブローカー。Portal側8444とは別ホストの別サービス |
@@ -262,7 +272,7 @@ test "$EXPECTED" = "$(sha256sum "$ASSET" | awk '{print $1}')"
 
 ### 7.2 systemd設定例
 
-以下は**同一EC2のnginxでTLS終端する構成**です。Go単体HTTPSの設定と混在させません。既存unitへの統合方法は管理標準に合わせます。nginx導入・証明書配置は承認済みの配布経路を使います。
+以下は**同一EC2のnginxでTLS終端する構成**です。[クイック導入](../quickstart.md)と[構築手順](../setup.md)の既定はGo単体HTTPSですが、本書では公開画面とprivate Agent APIの経路を同一ホストで分離するためnginxを選択します。Go単体HTTPSのunitやTLS環境変数と混在させません。新規unitは`/etc/systemd/system/awsportal.service`へ配置し、既存unitへの統合方法は管理標準に合わせます。nginx導入・証明書配置は承認済みの配布経路を使います。
 
 ```ini
 [Unit]
@@ -341,21 +351,34 @@ SGによるprivate TCP/8444の接続元制限と、公開443上のAgent経路拒
 
 ```bash
 sudo nginx -t
-sudo systemctl daemon-reload
-sudo systemctl enable --now awsportal
-sudo systemctl reload nginx
-sudo systemctl status awsportal nginx --no-pager
 ```
 
-`reload`は既に稼働するnginxへの例です。新規導入では、検証後に組織手順でサービスを起動・自動起動設定します。PIDやportだけでなく、後述のHTTPS応答で準備完了を判定します。
+ここでは構文確認までとし、Portalの起動は次節の初期管理者登録後に行います。既存サービスを変更する場合は保守時間と停止影響を確認してください。
 
 ### 7.4 初期管理者
 
-最初の管理者作成はPortalを停止した保守状態で管理CLIを使い、12文字以上のパスワードとTOTPを設定します。実際のコマンド形はリポジトリの[クイック導入ガイド](../quickstart.md)に従います。
+最初の管理者作成はPortalを停止した保守状態で管理CLIを使い、12文字以上のパスワードとTOTPを設定します。unit配置後に次を実行し、管理CLIのコマンド形は[クイック導入ガイドの初期管理者作成](../quickstart.md#4-初期管理者を作成しサービスを起動する)に従います。同ガイドのGo単体HTTPS用unitはコピーせず、本書7.2のnginx用unitを使います。
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl stop awsportal
+```
 
 管理CLIとサービスには**同じDB・同じ`AWSPORTAL_TOTP_KEY_FILE`**を指定します。パスワードは対話入力し、履歴へリテラルで残しません。CLIはパスワードを引数で受けるため、プロセス引数が見える環境の制約も確認します。表示するTOTP URIは秘密です。SSM Session ManagerやRun Commandのログ、端末録画、共有画面へ保存されない初期登録・受渡し方法を決めてから実行します。組織の記録要件を勝手に無効化せず、保護された出力保存・秘密管理経路を用意します。
 
 全管理者がログイン不能になった場合の復旧は[パスワード復旧手順](../../operations/password-recovery.md)へつなぎます。管理CLI操作の実行者・理由は秘密値を除いて記録します。
+
+初期管理者登録後に起動・自動起動設定とnginxの設定反映を行います。
+
+```bash
+sudo nginx -t
+sudo systemctl enable --now awsportal
+sudo systemctl enable --now nginx
+sudo systemctl reload nginx
+sudo systemctl status awsportal nginx --no-pager
+```
+
+通常の保護操作では、直近のログインまたは本人確認から10分以内という認証鮮度に加え、操作ごとに既存パスキー、または管理者のpassword＋TOTPで本人確認します。確認結果は同じセッション・同じ操作に限り2分間・1回だけ使えます。10分を超えて再ログインした場合も、通常の保護操作ではこの確認が必要です。強制初回password変更の限定例外は[認証仕様](../../architecture/authentication.md#v211の操作単位の本人確認)に従います。
 
 **工程完了条件：** 公開HTTPSのhealth/login画面、private Agentの到達制限、非公開バックエンド、管理者認証が動作し、秘密情報が共有ログに残らない。
 
@@ -454,7 +477,7 @@ CloudFormationのstack termination protection、重要Resourceの保持方針、
 | A04 | HTTP経路分離 | 公開443のAgent APIを拒否。private8444はAgent API以外を拒否。Agentキー不正も拒否 |
 | A05 | 管理者認証 | 正しいpassword＋TOTPで成功。誤り、TOTPなし、消費済みTOTPで失敗 |
 | A06 | パスキー | 一般ユーザーの端末固定型・本人確認付きで成功。同期型・不正応答を拒否 |
-| A07 | 操作単位本人確認 | 保護操作で再認証が必要。確認結果の期限切れ・別操作流用・再利用を拒否 |
+| A07 | 操作単位本人確認 | 通常の保護操作では10分以内の認証鮮度に加え、操作別の本人確認が必要。2分の期限切れ・別操作流用・再利用を拒否。強制初回password変更の限定例外も照合 |
 | A08 | 権限分離 | 通常Userは割当EC2だけ表示・操作。一般Userのpassword＋TOTPや管理画面アクセスを拒否 |
 | A09 | DCV実接続 | ネイティブアプリで画面・マウス・キーボード。本人のOSユーザー・セッションである |
 | A10 | 利用者間隔離 | 他ユーザーのホーム・セッションへ入れず、sudo/SSM等の管理権限を持たない |

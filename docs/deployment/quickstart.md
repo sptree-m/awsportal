@@ -6,11 +6,14 @@
 |---|---|
 | まず一時環境で試す | [CloudShellラボの作成・試験・廃棄](../development/dcv-release-test.md)。試験後はスタックを削除する |
 | 社内向けに新規導入する | 以下の手順。承認済みのEC2・ネットワーク・証明書を用意する |
+| 制約確認から運用開始まで進める／固定EC2を公開IPv4で使う | [本番立ち上げマニュアル](production/README.md)。既存参照と変更権限を確認し、選んだネットワーク・TLS構成の手順を使う |
 | github.comへ接続できない | 手順2で配布物とチェックサムを搬入する。ラボを使う場合は[ソース一式も搬入](../development/dcv-release-test.md#githubcomへ接続できない場合)する |
 
 ## 1. EC2・名前・証明書を用意する
 
 管理者が以下を準備します。EC2等の作成は[組織ネットワークとTerraform設定](organization-network.md)に従い、planを確認してから適用してください。
+
+以下は組織Private構成・Go単体HTTPSの例です。本番マニュアルの公開IPv4・nginx構成では、ネットワークとサービス設定をそちらに統一し、以下のPrivate SubnetやGo HTTPS用unitを混在させないでください。配布物の検証、専用ユーザー、DB・元のTOTP鍵の管理、認証仕様は共通です。
 
 - Private Subnet内のPortal用新規ARM64 Linux EC2。t4g.microを基準とし、容量・swapは[構築手順](setup.md#準備と配布)を確認します。専用の非特権ユーザーで稼働させ、IAM Instance Profileを付与します。固定Access Keyは保存しません。
 - 管理対象のUbuntu 24.04 EC2、DCVライセンス用S3の読取権限と到達経路。[DCV導入手順](../operations/dcv.md#導入手順)を参照してください。
