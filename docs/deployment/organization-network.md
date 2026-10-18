@@ -2,6 +2,8 @@
 
 v1.8.0-rc.2で追加した組織ネットワーク構成の現行導入手順。Personal/Shared、HOME/Group EFS、Dataset cache、Job保護、動的増減、計測、CUR配賦、Windows Box Importは[環境運用](../operations/environments.md)を参照する。本書では指定済みVPC・Subnet・IP範囲・TGW/ルートテーブルを使う構成を扱う。値の差し替えは[Terraform例](../../terraform/examples/org-existing/README.md)を参照。将来拡張と明記されたGPU、FSx、予測起動、Software Catalog等は二段階の範囲に含めない。
 
+制約・所有権・変更権限の確認と受入・復旧の共通手順は[本番立ち上げマニュアル](production/README.md)を参照する。同マニュアルの公開IPv4基盤例は、固定Portal・固定DCV EC2の別構成であり、本書の非公開ネットワーク契約や`managed-profile`／`approved_pools`の代替ではない。Shared・Windowsの動的起動検査を公開構成に合わせて無効化しない。
+
 ## 所有権と選択
 
 リソースごとに新規作成と既存利用を選ぶ。既存利用はIDを参照し、組織のTerraform stateへimportしない。新規と既存は同じ構成内で混在できる。提供済みリソースへpolicyやrouteを上書きしない。

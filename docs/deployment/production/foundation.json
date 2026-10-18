@@ -1,0 +1,627 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "awsportal production foundation only. Creates billable EC2, EBS and Elastic IPs. Application, TLS and backups must be configured before production use.",
+  "Parameters": {
+    "ClientCidr": {
+      "Type": "String",
+      "Default": "0.0.0.0/0",
+      "Description": "Allowed user IPv4 CIDR; default deliberately permits all IPv4 clients."
+    },
+    "UbuntuAmi": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"
+    },
+    "PortalInstanceType": {
+      "Type": "String",
+      "Default": "t4g.small",
+      "AllowedValues": [
+        "t4g.micro",
+        "t4g.small",
+        "t4g.medium"
+      ]
+    },
+    "DesktopInstanceType": {
+      "Type": "String",
+      "Default": "t4g.medium",
+      "AllowedValues": [
+        "t4g.small",
+        "t4g.medium",
+        "t4g.large",
+        "t4g.xlarge"
+      ]
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.42.0.0/16",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod"
+          }
+        ]
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod"
+          }
+        ]
+      }
+    },
+    "GatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PublicSubnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "CidrBlock": "10.42.1.0/24",
+        "AvailabilityZone": {
+          "Fn::Select": [
+            0,
+            {
+              "Fn::GetAZs": ""
+            }
+          ]
+        },
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod-public"
+          }
+        ]
+      }
+    },
+    "RouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod-public"
+          }
+        ]
+      }
+    },
+    "SubnetAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTable"
+        }
+      }
+    },
+    "InternetRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "GatewayAttachment",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTable"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "PortalSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "awsportal production Portal public service only",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": {
+              "Ref": "ClientCidr"
+            },
+            "Description": "User requested unrestricted IPv4 service access"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Package installation and HTTPS service access"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Package installation and HTTPS service access"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod-portal"
+          }
+        ]
+      }
+    },
+    "PortalRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          }
+        ]
+      }
+    },
+    "PortalProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "PortalRole"
+          }
+        ]
+      }
+    },
+    "PortalInstance": {
+      "Type": "AWS::EC2::Instance",
+      "DependsOn": [
+        "InternetRoute",
+        "SubnetAssociation"
+      ],
+      "Properties": {
+        "ImageId": {
+          "Ref": "UbuntuAmi"
+        },
+        "InstanceType": {
+          "Ref": "PortalInstanceType"
+        },
+        "SubnetId": {
+          "Ref": "PublicSubnet"
+        },
+        "PrivateIpAddress": "10.42.1.10",
+        "SecurityGroupIds": [
+          {
+            "Ref": "PortalSecurityGroup"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "PortalProfile"
+        },
+        "MetadataOptions": {
+          "HttpEndpoint": "enabled",
+          "HttpTokens": "required",
+          "HttpPutResponseHopLimit": 1
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/sda1",
+            "Ebs": {
+              "Encrypted": true,
+              "VolumeType": "gp3",
+              "VolumeSize": 16,
+              "DeleteOnTermination": true
+            }
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": "#!/bin/bash\nset -euo pipefail\nexport DEBIAN_FRONTEND=noninteractive\napt-get -o Acquire::Retries=10 update\napt-get -o Acquire::Retries=10 install -y ca-certificates curl\nsnap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic\nsnap start amazon-ssm-agent\n"
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod-portal"
+          }
+        ]
+      }
+    },
+    "PortalAddress": {
+      "Type": "AWS::EC2::EIP",
+      "DependsOn": "GatewayAttachment",
+      "Properties": {
+        "Domain": "vpc",
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod-portal"
+          }
+        ]
+      }
+    },
+    "PortalAddressAssociation": {
+      "Type": "AWS::EC2::EIPAssociation",
+      "Properties": {
+        "AllocationId": {
+          "Fn::GetAtt": [
+            "PortalAddress",
+            "AllocationId"
+          ]
+        },
+        "InstanceId": {
+          "Ref": "PortalInstance"
+        }
+      }
+    },
+    "DesktopSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "awsportal production Desktop public service only",
+        "VpcId": {
+          "Ref": "Vpc"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 8443,
+            "ToPort": 8443,
+            "CidrIp": {
+              "Ref": "ClientCidr"
+            },
+            "Description": "User requested unrestricted IPv4 service access"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Package installation and HTTPS service access"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0",
+            "Description": "Package installation and HTTPS service access"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod-desktop"
+          }
+        ]
+      }
+    },
+    "DesktopRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          }
+        ]
+      }
+    },
+    "DesktopProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "DesktopRole"
+          }
+        ]
+      }
+    },
+    "DesktopInstance": {
+      "Type": "AWS::EC2::Instance",
+      "DependsOn": [
+        "InternetRoute",
+        "SubnetAssociation"
+      ],
+      "Properties": {
+        "ImageId": {
+          "Ref": "UbuntuAmi"
+        },
+        "InstanceType": {
+          "Ref": "DesktopInstanceType"
+        },
+        "SubnetId": {
+          "Ref": "PublicSubnet"
+        },
+        "PrivateIpAddress": "10.42.1.11",
+        "SecurityGroupIds": [
+          {
+            "Ref": "DesktopSecurityGroup"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "DesktopProfile"
+        },
+        "MetadataOptions": {
+          "HttpEndpoint": "enabled",
+          "HttpTokens": "required",
+          "HttpPutResponseHopLimit": 1
+        },
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/sda1",
+            "Ebs": {
+              "Encrypted": true,
+              "VolumeType": "gp3",
+              "VolumeSize": 40,
+              "DeleteOnTermination": true
+            }
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": "#!/bin/bash\nset -euo pipefail\nexport DEBIAN_FRONTEND=noninteractive\napt-get -o Acquire::Retries=10 update\napt-get -o Acquire::Retries=10 install -y ca-certificates curl\nsnap list amazon-ssm-agent >/dev/null 2>&1 || snap install amazon-ssm-agent --classic\nsnap start amazon-ssm-agent\n"
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod-desktop"
+          }
+        ]
+      }
+    },
+    "DesktopAddress": {
+      "Type": "AWS::EC2::EIP",
+      "DependsOn": "GatewayAttachment",
+      "Properties": {
+        "Domain": "vpc",
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "awsportal-production"
+          },
+          {
+            "Key": "Name",
+            "Value": "awsportal-prod-desktop"
+          }
+        ]
+      }
+    },
+    "DesktopAddressAssociation": {
+      "Type": "AWS::EC2::EIPAssociation",
+      "Properties": {
+        "AllocationId": {
+          "Fn::GetAtt": [
+            "DesktopAddress",
+            "AllocationId"
+          ]
+        },
+        "InstanceId": {
+          "Ref": "DesktopInstance"
+        }
+      }
+    },
+    "AgentIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": {
+          "Ref": "PortalSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": 8444,
+        "ToPort": 8444,
+        "SourceSecurityGroupId": {
+          "Ref": "DesktopSecurityGroup"
+        },
+        "Description": "Desktop agent to private Portal TLS listener only"
+      }
+    },
+    "AgentEgress": {
+      "Type": "AWS::EC2::SecurityGroupEgress",
+      "Properties": {
+        "GroupId": {
+          "Ref": "DesktopSecurityGroup"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": 8444,
+        "ToPort": 8444,
+        "DestinationSecurityGroupId": {
+          "Ref": "PortalSecurityGroup"
+        },
+        "Description": "Private Portal agent API"
+      }
+    },
+    "PortalPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "ManagedDesktopControl",
+        "Roles": [
+          {
+            "Ref": "PortalRole"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:DescribeInstances",
+                "ec2:DescribeInstanceStatus"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+              ],
+              "Resource": {
+                "Fn::Sub": [
+                  "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${DesktopId}",
+                  {
+                    "DesktopId": {
+                      "Ref": "DesktopInstance"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": "ce:GetCostAndUsage",
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "DesktopLicensePolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "PolicyName": "RegionalDcvLicense",
+        "Roles": [
+          {
+            "Ref": "DesktopRole"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "s3:GetObject",
+              "Resource": {
+                "Fn::Sub": "arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "PortalPublicIp": {
+      "Value": {
+        "Ref": "PortalAddress"
+      }
+    },
+    "DesktopPublicIp": {
+      "Value": {
+        "Ref": "DesktopAddress"
+      }
+    },
+    "PortalInstanceId": {
+      "Value": {
+        "Ref": "PortalInstance"
+      }
+    },
+    "DesktopInstanceId": {
+      "Value": {
+        "Ref": "DesktopInstance"
+      }
+    },
+    "PortalSecurityGroupId": {
+      "Value": {
+        "Ref": "PortalSecurityGroup"
+      }
+    },
+    "DesktopSecurityGroupId": {
+      "Value": {
+        "Ref": "DesktopSecurityGroup"
+      }
+    },
+    "PortalPrivateIp": {
+      "Value": {
+        "Fn::GetAtt": [
+          "PortalInstance",
+          "PrivateIp"
+        ]
+      }
+    },
+    "DesktopPrivateIp": {
+      "Value": {
+        "Fn::GetAtt": [
+          "DesktopInstance",
+          "PrivateIp"
+        ]
+      }
+    }
+  }
+}

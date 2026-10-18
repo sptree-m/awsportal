@@ -1,6 +1,8 @@
 # 構築・初期設定
 
-新規導入の流れは[v2.1.2 クイック導入ガイド](quickstart.md)を参照。この文書では構成ごとの詳細を扱う。
+新規導入の流れは[v2.1.3 クイック導入ガイド](quickstart.md)を参照。この文書では構成ごとの詳細を扱う。
+
+本節の基本構成はPrivate Subnetと社内／VPN経由の接続。制約の確認から運用開始までの共通手順と、公開接続を採用する固定Portal・DCV EC2の別構成は[本番立ち上げマニュアル](production/README.md)を参照する。公開構成例を組織ネットワークの非公開契約へそのまま適用しない。
 
 コマンドはリポジトリrootで実行する。指定VPC・Subnet・TGW・IP範囲は[組織ネットワーク](organization-network.md)、設計・権限境界は[アーキテクチャ](../architecture/overview.md)を参照。
 
@@ -95,6 +97,8 @@ Environment=AWSPORTAL_ADDR=127.0.0.1:8080
 Environment=AWSPORTAL_WEBAUTHN_ORIGIN=https://portal.company.example
 ```
 
+上のnginx例はTLS終端の基本設定で、DCV Agent APIの接続元・経路制限は別途必要。公開画面の443から`/api/dcv/agent/`を拒否し、管理対象EC2だけが到達できるprivate HTTPSリスナーへ分離する具体例は[本番手順](production/README.md#73-nginxの経路分離例)を参照する。Go単体HTTPSを選ぶ場合も、組織のL7制御等で同じ接続元制限を実装する。
+
 既存のHTTP構成から更新する場合も `AWSPORTAL_HTTP_MODE=http` の明示設定が必要。ローカル検証でHTTPを使う場合も明示設定する。
 
 ### 両構成共通のOrigin・端末準備
@@ -115,7 +119,7 @@ Portal停止中、またはDB排他を考慮した保守時間に管理CLIを使
 ./awsportal-admin -db /var/lib/awsportal/awsportal.db -cmd assign-group -instance i-0123456789abcdef0 -group ADAS
 ```
 
-管理者作成時は表示されるTOTP URIをAuthenticatorへ登録し、password＋TOTPでログインする。初期passwordを必要に応じて変更し、ログイン後10分以内に「パスキー」でこのPCの鍵を登録する。User／Group Admin作成時は30分有効の登録コードが表示される。本人確認後にコードを配布し、利用者が `/passkeys/enroll` で端末固定型パスキーを登録してからログインする。一般ユーザーへのpassword配布は不要。[複数PC・復旧手順](../operations/passkeys.md)を参照。Userのgroup所属追加／除外、EC2の直接／group割り当てはPortal Adminの`/admin/instances`で管理する。[権限と無効化](../operations/instances.md)を参照。
+管理者作成時は表示されるTOTP URIをAuthenticatorへ登録し、password＋TOTPでログインする。初期passwordを必要に応じて変更し、「パスキー」でこのPCの鍵を登録する。直近のログインまたは本人確認から10分以内でも、追加・削除や通常の保護操作には操作別の本人確認が必要。管理者の初回追加は現在のpassword＋TOTPで確認し、戻った画面で2分以内・1回限りの確認結果を使って操作する。User／Group Admin作成時は30分有効の登録コードが表示される。本人確認後にコードを配布し、利用者が `/passkeys/enroll` で端末固定型パスキーを登録してからログインする。一般ユーザーへのpassword配布は不要。[複数PC・復旧手順](../operations/passkeys.md)を参照。Userのgroup所属追加／除外、EC2の直接／group割り当てはPortal Adminの`/admin/instances`で管理する。[権限と無効化](../operations/instances.md)を参照。
 
 ## デスクトップ・受入
 

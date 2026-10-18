@@ -2,11 +2,12 @@
 
 文書整理でも[最優先のコンセプト](../README.md#最優先のコンセプト)の削除・弱体化は禁止します。定義は現行READMEに残し、設計・UI文書から参照します。
 
-現行版はv2.1.2。[機能一覧](features.md)で対応範囲を確認し、目的別の手順を参照してください。コマンドは個別の`cd`指定がない限りリポジトリrootで実行します。
+現行版はv2.1.3。[機能一覧](features.md)で対応範囲を確認し、目的別の手順を参照してください。コマンドは個別の`cd`指定がない限りリポジトリrootで実行します。
 
 | 区分 | 文書 |
 |---|---|
-| 導入 | [v2.1.2 クイック導入ガイド（配布物・HTTPS・初回ログイン・DCV）](deployment/quickstart.md) |
+| 導入 | [v2.1.3 クイック導入ガイド（配布物・HTTPS・初回ログイン・DCV）](deployment/quickstart.md) |
+| 導入 | [本番立ち上げマニュアル・制約確認シート・CloudFormation基盤例](deployment/production/README.md) |
 | 導入 | [構築・アカウント・EC2初期設定](deployment/setup.md) |
 | 導入 | [ローカルHTTPSの設定](deployment/setup.md#ローカルhttpsと初回端末準備)、[ログイン前のCA証明書・hosts更新スクリプト配布](operations/site-customization.md#ログイン前の証明書配布とhosts設定) |
 | 導入 | [管理者指定VPC・Subnet・TGW・IP範囲](deployment/organization-network.md)、[差し替え設定例](../terraform/examples/org-existing/README.md) |
@@ -26,6 +27,6 @@
 | 開発 | [UI・htmxの仕様と検証](development/ui.md)、[画面キャプチャ](screenshots/) |
 | 試験 | [v2.1.2 DCVラボの作成・試験・廃棄、GitHub接続制限時の資材搬入](development/dcv-release-test.md) |
 | 調査 | [CloudShellによるAWS環境・権限調査](../tools/aws-audit/README.md) |
-| 更新 | [v2.1.2リリースノート・受入](releases/v2.1.2.md)、[v2.1.1](releases/v2.1.1.md)、[v2.1.0の移行](releases/v2.1.0.md)、[v2.0.0](releases/v2.0.0.md)、[v1.9.2リリースノート](releases/v1.9.2.md)、[v1.9.1](releases/v1.9.1.md)、[v1.9.0](releases/v1.9.0.md)、[過去の記録](archive/README.md) |
+| 更新 | [v2.1.3リリースノート・受入](releases/v2.1.3.md)、[v2.1.2リリースノート・受入](releases/v2.1.2.md)、[v2.1.1](releases/v2.1.1.md)、[v2.1.0の移行](releases/v2.1.0.md)、[v2.0.0](releases/v2.0.0.md)、[v1.9.2リリースノート](releases/v1.9.2.md)、[v1.9.1](releases/v1.9.1.md)、[v1.9.0](releases/v1.9.0.md)、[過去の記録](archive/README.md) |
 
 新しい説明は既存の手順へ追記し、機能の有無は`features.md`に集約します。旧版の詳細は固定tagで参照し、現行文書へ複製しません。追加・移動時はこの目次と参照リンクを更新してください。実装・自動テストの成功とAWS／DCV／Box実機受入は別に扱います。
